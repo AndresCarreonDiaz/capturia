@@ -7,7 +7,7 @@ interface Props {
 
 export default function LowerThird({ name, subtitle }: Props) {
   return (
-    <div className="animate-in fade-in slide-in-from-left-8 duration-500">
+    <div className="overlay-enter-left">
       <div className="flex items-stretch">
         <div className="w-1 bg-blue-500 rounded-full mr-3 shadow-[0_0_8px_#3b82f6]" />
         <div className="bg-black/80 backdrop-blur-md border border-white/20 px-5 py-3 rounded-r-xl">

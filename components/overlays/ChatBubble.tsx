@@ -7,7 +7,7 @@ interface Props {
 
 export default function ChatBubble({ text, author }: Props) {
   return (
-    <div className="animate-in fade-in slide-in-from-bottom-4 duration-400 max-w-xs">
+    <div className="overlay-enter-bottom max-w-xs">
       <div className="relative bg-black/75 backdrop-blur-md border border-white/20 rounded-2xl rounded-bl-sm px-4 py-3">
         {author && (
           <p className="text-blue-300 text-xs font-bold mb-1 uppercase tracking-wide">{author}</p>

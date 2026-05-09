@@ -172,6 +172,99 @@ function LiveStage() {
     },
   });
 
+  // A2UI Action: smoothly relocate an overlay to a new anchor position
+  useCopilotAction({
+    name: "move_overlay",
+    description:
+      "Move an existing overlay to a new anchor position. The overlay slides smoothly between positions. Cannot be used on Letterbox.",
+    parameters: [
+      { name: "id", type: "string", description: "The overlay id to move", required: true },
+      {
+        name: "position",
+        type: "string",
+        description:
+          "New anchor: top-left | top-right | top-center | center-left | center-right | bottom-left | bottom-right | bottom-center | full-bottom",
+        required: true,
+      },
+    ],
+    handler: ({ id, position }) => {
+      setOverlays((prev) =>
+        prev.map((o) => {
+          if (o.id !== id || o.type === "Letterbox") return o;
+          return { ...o, position: position as OverlayPosition } as OverlaySpec;
+        })
+      );
+    },
+  });
+
+  // A2UI Action: append values to a FloatingChart's data array (live-growing chart)
+  useCopilotAction({
+    name: "append_chart_data",
+    description:
+      "Append one or more numeric values to a FloatingChart's data series. Use to grow charts over time as new data points come in. Pass values as a JSON array of numbers, e.g. '[42, 47, 51]'.",
+    parameters: [
+      { name: "id", type: "string", description: "The FloatingChart id", required: true },
+      {
+        name: "values",
+        type: "string",
+        description: "JSON array of numbers to append, e.g. '[42, 47]'",
+        required: true,
+      },
+    ],
+    handler: ({ id, values: valuesStr }) => {
+      let values: number[] = [];
+      try {
+        const parsed = JSON.parse(valuesStr);
+        if (Array.isArray(parsed)) {
+          values = parsed
+            .map((v) => (typeof v === "number" ? v : Number(v)))
+            .filter((v) => Number.isFinite(v));
+        }
+      } catch {
+        return;
+      }
+      if (values.length === 0) return;
+      setOverlays((prev) =>
+        prev.map((o) => {
+          if (o.id !== id || o.type !== "FloatingChart") return o;
+          const next = [...o.props.data, ...values].slice(-30);
+          return { ...o, props: { ...o.props, data: next } };
+        })
+      );
+    },
+  });
+
+  // A2UI Action: update a single metric row in a MetricsPanel
+  useCopilotAction({
+    name: "bump_metric",
+    description:
+      "Update a single metric row in an existing MetricsPanel by label. The new value count-ups smoothly and the row flashes green/red based on direction. Use this to show live KPI changes.",
+    parameters: [
+      { name: "id", type: "string", description: "The MetricsPanel id", required: true },
+      { name: "label", type: "string", description: "The metric row label to update", required: true },
+      { name: "value", type: "string", description: "New value, e.g. '$1.2M' or '47%'", required: true },
+      {
+        name: "delta",
+        type: "string",
+        description: "Optional new delta, e.g. '+12%' or '-3'. Pass empty string to clear.",
+        required: false,
+      },
+    ],
+    handler: ({ id, label, value, delta }) => {
+      setOverlays((prev) =>
+        prev.map((o) => {
+          if (o.id !== id || o.type !== "MetricsPanel") return o;
+          const metrics = o.props.metrics.map((m) =>
+            m.label === label
+              ? { ...m, value, ...(delta !== undefined ? { delta: delta || undefined } : {}) }
+              : m
+          );
+          return { ...o, props: { ...o.props, metrics } };
+        })
+      );
+    },
+  });
+
   return (
     <div className="relative w-screen h-screen bg-black overflow-hidden">
       {/* Layer 0: webcam */}

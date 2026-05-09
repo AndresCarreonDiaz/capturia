@@ -1,4 +1,5 @@
 "use client";
+import { useNumberArrayTween } from "@/hooks/useNumberTween";
 
 interface Props {
   data: number[];
@@ -7,28 +8,32 @@ interface Props {
 }
 
 export default function FloatingChart({ data, chartType, label }: Props) {
+  const tweened = useNumberArrayTween(data, 600);
   const max = Math.max(...data, 1);
   const W = 140;
   const H = 48;
 
-  const points = data
+  const points = tweened
     .map((v, i) => {
-      const x = (i / (data.length - 1)) * W;
+      const x = tweened.length === 1 ? W / 2 : (i / (tweened.length - 1)) * W;
       const y = H - (v / max) * H;
       return `${x},${y}`;
     })
     .join(" ");
 
   return (
-    <div className="bg-black/70 backdrop-blur-md border border-white/20 rounded-xl p-3 min-w-[180px] animate-in fade-in duration-300">
+    <div className="overlay-enter bg-black/70 backdrop-blur-md border border-white/20 rounded-xl p-3 min-w-[180px]">
       <p className="text-white/50 text-xs font-mono mb-2 uppercase tracking-wider">{label}</p>
       {chartType === "bar" ? (
         <div className="flex items-end gap-1 h-12">
-          {data.map((v, i) => (
+          {tweened.map((v, i) => (
             <div
               key={i}
-              className="flex-1 bg-blue-400 rounded-sm opacity-80"
-              style={{ height: `${(v / max) * 100}%` }}
+              className="flex-1 bg-blue-400 rounded-sm opacity-80 origin-bottom transition-transform duration-500 ease-out"
+              style={{
+                height: "100%",
+                transform: `scaleY(${Math.max(0.001, v / max)})`,
+              }}
             />
           ))}
         </div>

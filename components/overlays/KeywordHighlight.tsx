@@ -14,16 +14,17 @@ function toText(kw: Keyword): string {
 
 export default function KeywordHighlight({ keywords, color }: Props) {
   return (
-    <div className="flex flex-wrap gap-2 animate-in fade-in duration-300">
+    <div className="flex flex-wrap gap-2">
       {keywords.map((kw, i) => (
         <span
-          key={i}
-          className="px-3 py-1 rounded-full text-sm font-bold uppercase tracking-widest border"
+          key={`${toText(kw)}-${i}`}
+          className="overlay-enter-scale px-3 py-1 rounded-full text-sm font-bold uppercase tracking-widest border"
           style={{
             color,
             borderColor: color,
             boxShadow: `0 0 12px ${color}80, inset 0 0 8px ${color}20`,
             backgroundColor: `${color}15`,
+            animationDelay: `${i * 70}ms`,
           }}
         >
           {toText(kw)}
