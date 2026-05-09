@@ -1,65 +1,179 @@
-import Image from "next/image";
+"use client";
+import { useState } from "react";
+import { CopilotKit } from "@copilotkit/react-core";
+import {
+  useCopilotReadable,
+  useCopilotAction,
+} from "@copilotkit/react-core";
+import WebcamFeed from "@/components/WebcamFeed";
+import OverlayLayer from "@/components/OverlayLayer";
+import CommandBar from "@/components/CommandBar";
+import type { OverlaySpec, OverlayPosition } from "@/lib/types";
 
 export default function Home() {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+    <CopilotKit runtimeUrl="/api/copilotkit">
+      <LiveStage />
+    </CopilotKit>
+  );
+}
+
+function LiveStage() {
+  const [overlays, setOverlays] = useState<OverlaySpec[]>([]);
+
+  // AG-UI Shared State: agent always knows what's currently on screen
+  useCopilotReadable({
+    description:
+      "Current overlay components on the live video feed. Each has an id, type, position, and props.",
+    value: overlays.map((o) => ({
+      id: o.id,
+      type: o.type,
+      position: o.type !== "Letterbox" ? o.position : "full-screen",
+      props: o.props,
+    })),
+  });
+
+  // A2UI Action: add a new spatial overlay component
+  useCopilotAction({
+    name: "add_overlay",
+    description:
+      "Add a new overlay component to the live video feed. Use the A2UI catalog component types and positions.",
+    parameters: [
+      {
+        name: "id",
+        type: "string",
+        description: "Unique id like 'metrics-1' or 'lower-third-main'",
+        required: true,
+      },
+      {
+        name: "type",
+        type: "string",
+        description:
+          "Component type: MetricsPanel | Timeline | LowerThird | ProgressBar | KeywordHighlight | FloatingChart | ChatBubble | Letterbox",
+        required: true,
+      },
+      {
+        name: "position",
+        type: "string",
+        description:
+          "Anchor: top-left | top-right | top-center | center-left | center-right | bottom-left | bottom-right | bottom-center | full-bottom (omit for Letterbox)",
+        required: false,
+      },
+      {
+        name: "props",
+        type: "string",
+        description: "JSON string of component-specific props matching the catalog schema",
+        required: true,
+      },
+    ],
+    handler: ({ id, type, position, props: propsStr }) => {
+      let props: Record<string, unknown>;
+      try {
+        props = JSON.parse(propsStr);
+      } catch {
+        console.error("Invalid props JSON:", propsStr);
+        return;
+      }
+      // Normalize KeywordHighlight: keywords may arrive as [{text:"..."}, ...] or "word1, word2"
+      if (type === "KeywordHighlight") {
+        const kws = props.keywords;
+        if (typeof kws === "string") {
+          props.keywords = kws.split(",").map((s: string) => s.trim());
+        } else if (Array.isArray(kws)) {
+          props.keywords = kws.map((k: unknown) =>
+            typeof k === "string" ? k : (k as Record<string, string>)?.text ?? String(k)
+          );
+        }
+      }
+      // Normalize FloatingChart: data may arrive as [{value:n}, ...]
+      if (type === "FloatingChart" && Array.isArray(props.data)) {
+        props.data = (props.data as unknown[]).map((d) =>
+          typeof d === "number" ? d : Number((d as Record<string, unknown>)?.value ?? d)
+        );
+      }
+      setOverlays((prev) => {
+        const filtered = prev.filter((o) => o.id !== id);
+        return [
+          ...filtered,
+          { id, type, position: position as OverlayPosition, props } as OverlaySpec,
+        ];
+      });
+    },
+  });
+
+  // A2UI Action: modify an existing overlay's props
+  useCopilotAction({
+    name: "modify_overlay",
+    description: "Update props of an existing overlay without changing its type or position.",
+    parameters: [
+      {
+        name: "id",
+        type: "string",
+        description: "The id of the overlay to modify",
+        required: true,
+      },
+      {
+        name: "props",
+        type: "string",
+        description: "New props as JSON string (merged with existing props)",
+        required: true,
+      },
+    ],
+    handler: ({ id, props: propsStr }) => {
+      let newProps: Record<string, unknown>;
+      try {
+        newProps = JSON.parse(propsStr);
+      } catch {
+        return;
+      }
+      setOverlays((prev) =>
+        prev.map((o) =>
+          o.id === id ? ({ ...o, props: { ...o.props, ...newProps } } as OverlaySpec) : o
+        )
+      );
+    },
+  });
+
+  // A2UI Action: remove an overlay
+  useCopilotAction({
+    name: "remove_overlay",
+    description: "Remove an overlay from the video by id. Use 'all' to clear everything.",
+    parameters: [
+      {
+        name: "id",
+        type: "string",
+        description: "The overlay id to remove, or 'all' to remove every overlay",
+        required: true,
+      },
+    ],
+    handler: ({ id }) => {
+      if (id === "all") {
+        setOverlays([]);
+      } else {
+        setOverlays((prev) => prev.filter((o) => o.id !== id));
+      }
+    },
+  });
+
+  return (
+    <div className="relative w-screen h-screen bg-black overflow-hidden">
+      {/* Layer 0: webcam */}
+      <WebcamFeed />
+
+      {/* Layer 1: A2UI overlay components */}
+      <OverlayLayer overlays={overlays} />
+
+      {/* Layer 2: command bar */}
+      <CommandBar
+        overlays={overlays.map((o) => ({ id: o.id, type: o.type }))}
+        onClear={() => setOverlays([])}
+      />
+
+      {/* Branding */}
+      <div className="absolute top-3 right-4 z-10 flex items-center gap-2 pointer-events-none">
+        <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse shadow-[0_0_8px_#ef4444]" />
+        <span className="text-white/60 text-xs font-mono tracking-widest uppercase">LiveStage</span>
+      </div>
     </div>
   );
 }
