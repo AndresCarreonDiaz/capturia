@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "LiveStage — AI Video Overlays",
+  title: "Capturia — AI Video Overlays",
   description: "Live video overlays composed by AI using AG-UI + A2UI",
 };
 

@@ -32,7 +32,7 @@ const definitions = catalogDefinitions as unknown as CatalogDefinitions;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const adapt = <P,>(C: React.ComponentType<P>) => ({ props }: { props: any }) => <C {...props} />;
 
-export const liveStageCatalog = createCatalog(
+export const capturiaCatalog = createCatalog(
   definitions,
   {
     MetricsPanel: adapt(MetricsPanel),
@@ -48,5 +48,5 @@ export const liveStageCatalog = createCatalog(
     StatRing: adapt(StatRing),
     BigCounter: adapt(BigCounter),
   },
-  { catalogId: "livestage" }
+  { catalogId: "capturia" }
 );

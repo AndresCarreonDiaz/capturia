@@ -16,11 +16,11 @@ import AmbientParticles from "@/components/AmbientParticles";
 // Real A2UI catalog object: createCatalog() is invoked at module load,
 // registering all 12 component renderers against the typed Zod definitions.
 // Currently exposed for future <A2UIRenderer/> use; runtime stays AG-UI.
-import { liveStageCatalog } from "@/lib/a2ui-catalog";
+import { capturiaCatalog } from "@/lib/a2ui-catalog";
 
 if (typeof window !== "undefined") {
   // Surface the catalog for inspection / future A2UI surface hosting.
-  (window as unknown as { liveStageCatalog?: unknown }).liveStageCatalog = liveStageCatalog;
+  (window as unknown as { capturiaCatalog?: unknown }).capturiaCatalog = capturiaCatalog;
 }
 import { useVoiceCapture } from "@/hooks/useVoiceCapture";
 import { useRecorder } from "@/hooks/useRecorder";
@@ -29,7 +29,7 @@ import type { OverlaySpec, OverlayPosition } from "@/lib/types";
 export default function Home() {
   return (
     <CopilotKit runtimeUrl="/api/copilotkit">
-      <LiveStage />
+      <Capturia />
     </CopilotKit>
   );
 }
@@ -116,7 +116,7 @@ function normalizeProps(type: string, props: Record<string, unknown>): Record<st
   return out;
 }
 
-function LiveStage() {
+function Capturia() {
   const [overlays, setOverlays] = useState<OverlaySpec[]>([]);
   const [lastSent, setLastSent] = useState("");
   const { appendMessage } = useCopilotChat();

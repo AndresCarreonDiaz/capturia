@@ -65,7 +65,7 @@ export function useRecorder(): RecorderState {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `livestage-${Date.now()}.webm`;
+        a.download = `capturia-${Date.now()}.webm`;
         a.click();
         setTimeout(() => URL.revokeObjectURL(url), 60_000);
         setIsRecording(false);
