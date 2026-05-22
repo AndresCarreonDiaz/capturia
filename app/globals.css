@@ -1,10 +1,10 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #08090a;
+  --foreground: #fdfdff;
 
-  /* Brand palette — used by overlays for accents, gradients, glows. */
+  /* Brand palette: used by overlays for accents, gradients, glows. */
   --c-cyan: #38bdf8;
   --c-violet: #a78bfa;
   --c-fuchsia: #e879f9;
@@ -13,6 +13,21 @@
   --c-lime: #a3e635;
   --c-emerald: #34d399;
   --c-sky: #60a5fa;
+
+  /* Studio / broadcast palette: used by the landing page. */
+  --studio-black:    #08090a;
+  --studio-mist:     #0e1014;
+  --studio-grid:     #15181d;
+  --studio-line:     #262a31;
+  --studio-line-2:   #3a3f47;
+  --studio-ink:      #fdfdff;
+  --studio-graphite: #9aa7b8;
+  --studio-fade:     #5a6675;
+  --tally:           #ff2d4f;
+  --phosphor:        #52ff8b;
+  --signal:          #22d3ee;
+  --amber-cue:       #fcb454;
+  --magenta-sweep:   #ff4fc1;
 }
 
 @theme inline {
@@ -20,20 +35,15 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-serif: var(--font-instrument-serif);
 }
 
 body {
-  background: #000;
+  background: var(--studio-black);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
-  overflow: hidden;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 @keyframes voice-bar {
@@ -151,7 +161,7 @@ body {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   Energy pass — extra keyframes & utilities
+   Energy pass: extra keyframes & utilities
    ───────────────────────────────────────────────────────────── */
 
 /* Ring ripple radiates outward (LiveBadge, milestones) */
@@ -161,14 +171,14 @@ body {
 }
 .ring-ripple { animation: ring-ripple 1.6s cubic-bezier(0, 0.55, 0.45, 1) infinite; }
 
-/* Idle bob — subtle vertical float for chips, badges */
+/* Idle bob: subtle vertical float for chips, badges */
 @keyframes idle-bob {
   0%, 100% { transform: translateY(0); }
   50%      { transform: translateY(-3px); }
 }
 .idle-bob { animation: idle-bob 2.6s ease-in-out infinite; }
 
-/* Digit-roll — flips a single character vertically when it changes */
+/* Digit-roll: flips a single character vertically when it changes */
 @keyframes digit-roll {
   0%   { transform: translateY(-100%); opacity: 0; }
   60%  { opacity: 1; }
@@ -176,14 +186,14 @@ body {
 }
 .digit-roll { animation: digit-roll 360ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 
-/* Sparkle — tiny twinkling stars (StatRing ≥85%, milestone burst) */
+/* Sparkle: tiny twinkling stars (StatRing ≥85%, milestone burst) */
 @keyframes sparkle {
   0%, 100% { transform: scale(0);   opacity: 0; }
   50%      { transform: scale(1);   opacity: 1; }
 }
 .sparkle { animation: sparkle 1.4s ease-in-out infinite; }
 
-/* Particle drift — ambient floating dots when voice is active */
+/* Particle drift: ambient floating dots when voice is active */
 @keyframes particle-drift {
   0%   { transform: translate(0, 0)            scale(0.7); opacity: 0; }
   20%  {                                                   opacity: 0.7; }
@@ -191,7 +201,7 @@ body {
 }
 .particle { animation: particle-drift var(--dur, 8s) linear var(--delay, 0s) infinite; }
 
-/* Cycling-hue gradient — smoothly rotates colors across a fill */
+/* Cycling-hue gradient: smoothly rotates colors across a fill */
 @keyframes hue-cycle {
   0%   { background-position:   0% 50%; }
   100% { background-position: 200% 50%; }
@@ -206,7 +216,7 @@ body {
   animation: hue-cycle 6s linear infinite;
 }
 
-/* Underline sweep — left → right reveal */
+/* Underline sweep: left → right reveal */
 @keyframes underline-sweep {
   from { transform: scaleX(0); }
   to   { transform: scaleX(1); }
@@ -216,14 +226,14 @@ body {
   animation: underline-sweep 600ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
-/* Milestone burst — radiating glow halo (BigCounter, StatRing 100%) */
+/* Milestone burst: radiating glow halo (BigCounter, StatRing 100%) */
 @keyframes milestone-burst {
   0%   { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.6); }
   100% { box-shadow: 0 0 0 32px rgba(255, 255, 255, 0); }
 }
 .milestone-burst { animation: milestone-burst 900ms ease-out both; }
 
-/* Bounce-arrow — small bounce for delta direction icons */
+/* Bounce-arrow: small bounce for delta direction icons */
 @keyframes arrow-bounce-up {
   0%, 100% { transform: translateY(0); }
   50%      { transform: translateY(-3px); }
@@ -244,9 +254,183 @@ body {
   -webkit-text-fill-color: transparent;
 }
 
-/* Typing dots — three dots that bounce sequentially (ChatBubble) */
+/* Typing dots: three dots that bounce sequentially (ChatBubble) */
 @keyframes typing-dot {
   0%, 80%, 100% { transform: translateY(0);    opacity: 0.4; }
   40%           { transform: translateY(-3px); opacity: 1; }
 }
 .typing-dot { animation: typing-dot 1.2s ease-in-out infinite; }
+
+/* ─────────────────────────────────────────────────────────────
+   Landing page: broadcast / control room atmosphere
+   ───────────────────────────────────────────────────────────── */
+
+/* CRT scanlines: ultra-thin horizontal striping over the demo surface */
+.crt-scanlines {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.025) 0px,
+    rgba(255, 255, 255, 0.025) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  pointer-events: none;
+}
+
+/* Vertical chroma scanlines, even subtler: only over the demo card. */
+.crt-grid {
+  background-image:
+    repeating-linear-gradient(to right,  rgba(255,255,255,0.012) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(to bottom, rgba(255,255,255,0.012) 0 1px, transparent 1px 4px);
+  pointer-events: none;
+}
+
+/* Slow sweep: a single bright row scrolling down the camera card. */
+@keyframes scanline-sweep {
+  0%   { transform: translateY(-100%); opacity: 0; }
+  10%  { opacity: 0.6; }
+  90%  { opacity: 0.6; }
+  100% { transform: translateY(120%);  opacity: 0; }
+}
+.scanline-sweep {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(82, 255, 139, 0.06) 48%,
+    rgba(82, 255, 139, 0.14) 50%,
+    rgba(82, 255, 139, 0.06) 52%,
+    transparent 100%
+  );
+  animation: scanline-sweep 7s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* Background grid for the page itself: desktop blueprint feel */
+.studio-grid-bg {
+  background-image:
+    linear-gradient(to right,  rgba(255,255,255,0.025) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,0.025) 1px, transparent 1px);
+  background-size: 80px 80px;
+  background-position: -1px -1px;
+}
+
+/* SVG noise grain: generated inline, no extra request */
+.grain-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.04;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='160' height='160' filter='url(%23n)' opacity='0.55'/></svg>");
+}
+
+/* Tally pulse: slow breathing red glow for the ON-AIR lamp. */
+@keyframes tally-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 45, 79, 0.55), 0 0 18px rgba(255, 45, 79, 0.35); }
+  50%      { box-shadow: 0 0 0 6px rgba(255, 45, 79, 0),    0 0 28px rgba(255, 45, 79, 0.55); }
+}
+.tally-pulse { animation: tally-pulse 1.8s ease-in-out infinite; }
+
+/* Tally halo pulse for SVG marks (box-shadow doesn't apply to SVG circles, so
+   we breathe opacity on the halo ring instead). */
+@keyframes tally-halo-pulse {
+  0%, 100% { opacity: 0.25; }
+  50%      { opacity: 0.65; }
+}
+.tally-halo-pulse { animation: tally-halo-pulse 1.8s ease-in-out infinite; }
+
+/* Caret blink for command rail */
+@keyframes caret-blink {
+  0%, 49%   { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.caret-blink { animation: caret-blink 1.1s steps(1) infinite; }
+
+/* Phosphor signature underline */
+.phosphor-text { color: var(--phosphor); text-shadow: 0 0 14px rgba(82, 255, 139, 0.35); }
+.signal-text   { color: var(--signal);   text-shadow: 0 0 14px rgba(34, 211, 238, 0.30); }
+
+/* Section number: small uppercase mono tags above each block */
+.section-tag {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--studio-fade);
+}
+
+/* Editorial display: tight tracking, serif italic accent */
+.display-serif {
+  font-family: var(--font-instrument-serif), Georgia, serif;
+  letter-spacing: -0.02em;
+  line-height: 0.98;
+}
+
+/* Subtle in-view reveal: opacity + 8px up */
+@keyframes reveal-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.reveal-up { animation: reveal-up 600ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+
+/* Slot card: the periodic-table tile for catalog */
+.slot-card {
+  background: linear-gradient(180deg, rgba(255,255,255,0.025) 0%, rgba(255,255,255,0.005) 100%);
+  border: 1px solid rgba(255,255,255,0.06);
+  transition: border-color 240ms ease, transform 240ms ease, background 240ms ease;
+}
+.slot-card:hover {
+  border-color: rgba(255,255,255,0.16);
+  background: linear-gradient(180deg, rgba(255,255,255,0.045) 0%, rgba(255,255,255,0.010) 100%);
+  transform: translateY(-1px);
+}
+
+/* Hairline divider that fades from edges */
+.fade-rule {
+  height: 1px;
+  background: linear-gradient(to right, transparent, rgba(255,255,255,0.12), transparent);
+}
+
+/* Subtle horizontal title-safe marker line (broadcast frame guides) */
+.safe-marker {
+  position: absolute;
+  background: rgba(255,255,255,0.07);
+}
+
+/* Director's cue button: phosphor outline that warms on hover */
+.cue-btn {
+  background: var(--studio-mist);
+  color: var(--studio-ink);
+  border: 1px solid rgba(82, 255, 139, 0.35);
+  transition: all 220ms ease;
+  position: relative;
+  overflow: hidden;
+}
+.cue-btn::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at center, rgba(82,255,139,0.18) 0%, transparent 65%);
+  opacity: 0;
+  transition: opacity 240ms ease;
+}
+.cue-btn:hover {
+  border-color: rgba(82, 255, 139, 0.8);
+  box-shadow: 0 0 30px rgba(82, 255, 139, 0.18);
+  transform: translateY(-1px);
+}
+.cue-btn:hover::before { opacity: 1; }
+
+/* Mono caret bar: replaces underline for inline links */
+.cue-link {
+  position: relative;
+  color: var(--studio-ink);
+  border-bottom: 1px dotted rgba(255,255,255,0.3);
+  transition: color 200ms, border-color 200ms;
+}
+.cue-link:hover { color: var(--phosphor); border-color: var(--phosphor); }
+
+/* Smooth scrollbar treatment */
+html { scroll-behavior: smooth; }
