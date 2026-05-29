@@ -2,19 +2,29 @@
 // In dev: points at http://localhost:3000/studio (Next.js dev server).
 // In prod (later): will load a bundled build. Until then, packaged builds are
 // not supported by this file.
-//
-// First-scaffold scope: validate the renderer works in Electron with camera
-// and mic permissions. No virtual camera publishing, no IPC bridge, no custom
-// chrome. Those come in later Phase 1 steps.
 
-const { app, BrowserWindow, session, globalShortcut, ipcMain } = require("electron");
+const {
+  app,
+  BrowserWindow,
+  session,
+  globalShortcut,
+  ipcMain,
+  shell,
+} = require("electron");
 const path = require("path");
 const { transcribeWav } = require("./whisper");
 const keychain = require("./keychain");
+const deckGen = require("./deck-generate");
+const {
+  isTrustedSender,
+  isAllowedUrl,
+  assertProvider,
+  assertNonEmptyString,
+  assertBytes,
+} = require("./ipc-schemas");
 
 // Push-to-talk hotkey. Cmd+Alt+Space on Mac, Ctrl+Alt+Space elsewhere.
-// Chosen to avoid Spotlight (Cmd+Space) and the macOS character viewer
-// (Cmd+Ctrl+Space). User-configurable in a later Phase 1 step.
+// Chosen to avoid Spotlight (Cmd+Space) and the macOS character viewer.
 const HOTKEY_TOGGLE_VOICE = "CmdOrCtrl+Alt+Space";
 
 const isDev = !app.isPackaged;
@@ -23,6 +33,61 @@ const STUDIO_URL = isDev
   : `file://${path.join(__dirname, "../out/studio.html")}`;
 
 let mainWindow = null;
+
+// Wrap every privileged IPC handler so it first rejects calls from an
+// untrusted sender (a navigated-away or injected renderer), then runs the
+// handler. Errors propagate back to the renderer's invoke() as a rejection.
+function guarded(handler) {
+  return async (event, ...args) => {
+    if (!isTrustedSender(event, { isDev })) {
+      throw new Error("Capturia: IPC rejected from an untrusted sender.");
+    }
+    return handler(event, ...args);
+  };
+}
+
+function registerIpc() {
+  // Renderer → main: transcribe an in-memory WAV buffer with local whisper.
+  ipcMain.handle(
+    "whisper:transcribe",
+    guarded((_event, wavBuffer) => transcribeWav(assertBytes(wavBuffer, "WAV")))
+  );
+
+  // Encrypted BYOK key vault. The plaintext key only leaves main via keys:get,
+  // and only to a trusted sender (the BYOK header path).
+  ipcMain.handle(
+    "keys:save",
+    guarded((_event, payload) => {
+      const provider = assertProvider(payload && payload.provider);
+      const key = assertNonEmptyString(payload && payload.key, "Key");
+      keychain.saveKey(provider, key);
+      return keychain.listKeys();
+    })
+  );
+  ipcMain.handle(
+    "keys:clear",
+    guarded((_event, provider) => {
+      keychain.clearKey(assertProvider(provider));
+      return keychain.listKeys();
+    })
+  );
+  ipcMain.handle("keys:list", guarded(() => keychain.listKeys()));
+  ipcMain.handle(
+    "keys:get",
+    guarded((_event, provider) => keychain.getKey(assertProvider(provider)))
+  );
+
+  // Deck codegen on the user's key, in main. Returns raw model text (JSON the
+  // renderer validates). The prompt is built in the renderer (lib/deck/prompt).
+  ipcMain.handle(
+    "deck:generate",
+    guarded((_event, payload) => {
+      const provider = assertProvider(payload && payload.provider);
+      const prompt = assertNonEmptyString(payload && payload.prompt, "Prompt");
+      return deckGen.generateCues(prompt, provider);
+    })
+  );
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -37,8 +102,20 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webSecurity: true,
       preload: path.join(__dirname, "preload.js"),
     },
+  });
+
+  // Navigation lockdown: never let the renderer navigate away from the studio
+  // origin, and never spawn in-app windows. External links open in the user's
+  // real browser instead (CVE-2026-34765: unscoped window.open is a risk).
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (!isAllowedUrl(url, { isDev })) event.preventDefault();
+  });
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: "deny" };
   });
 
   mainWindow.once("ready-to-show", () => {
@@ -66,32 +143,16 @@ if (!gotTheLock) {
   });
 
   app.whenReady().then(() => {
-    // Auto-grant camera + mic for the studio. Later phases will scope this
-    // by URL once we have a settings UI for first-launch permission flow.
+    // Grant camera + mic only to the trusted studio origin, deny everything
+    // else (so a navigated-to or injected page can't reach the camera).
     session.defaultSession.setPermissionRequestHandler(
-      (_webContents, permission, callback) => {
-        callback(permission === "media");
+      (webContents, permission, callback) => {
+        const url = webContents && typeof webContents.getURL === "function" ? webContents.getURL() : "";
+        callback(permission === "media" && isAllowedUrl(url, { isDev }));
       }
     );
 
-    // Renderer → main: transcribe an in-memory WAV buffer with local whisper.
-    // Returns plain transcript string (timestamps stripped).
-    ipcMain.handle("whisper:transcribe", async (_event, wavBuffer) => {
-      return await transcribeWav(wavBuffer);
-    });
-
-    // Renderer → main: encrypted BYOK key vault. The plaintext key is never
-    // returned across IPC; listKeys returns only presence + a masked tail.
-    ipcMain.handle("keys:save", (_event, payload) => {
-      keychain.saveKey(payload.provider, payload.key);
-      return keychain.listKeys();
-    });
-    ipcMain.handle("keys:clear", (_event, provider) => {
-      keychain.clearKey(provider);
-      return keychain.listKeys();
-    });
-    ipcMain.handle("keys:list", () => keychain.listKeys());
-
+    registerIpc();
     createWindow();
 
     // Global push-to-talk hotkey. Works even when Capturia isn't focused,

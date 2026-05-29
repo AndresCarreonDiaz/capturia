@@ -64,9 +64,11 @@ npx nodejs-whisper download    # pick base.en (142MB), decline CUDA
 npm run electron-dev
 ```
 
-Press `Cmd+,` to open Settings and paste BYOK API keys (encrypted via OS Keychain). The desktop wrapper is the foundation of the planned **virtual camera** path that publishes Capturia's composited feed (webcam + overlays) into Zoom, Teams, Meet, Loom, OBS, similar to how mmhmm and NVIDIA Broadcast work. That milestone requires the macOS Camera Extension entitlement and is on the roadmap.
+Press `Cmd+,` to open Settings, paste your own API key (encrypted via OS Keychain), and pick which provider drives the agent. **The desktop agent now runs entirely on your key (BYOK)**: the renderer attaches it as a per-request header and the runtime builds the model per request, so Capturia incurs no LLM cost for you. The web demo still uses the project's env key.
 
-> Note: BYOK runtime routing (using your stored key for LLM calls instead of the env var) lands in a follow-up. For now the desktop agent still reads `GOOGLE_GENERATIVE_AI_API_KEY` from `.env.local`.
+**Show Capturia in a real call today.** Click **Output** (or `Cmd+Shift+O`) for a chrome-free Program Output feed, then publish it through OBS Virtual Camera and pick it in Zoom, Teams, or Meet. See [docs/virtual-camera.md](docs/virtual-camera.md). A native "Capturia" camera device (no OBS) is the next step and needs the macOS Camera Extension entitlement (Apple Developer account).
+
+**Drop your pitch deck.** Drag a PDF onto the studio (or click **Deck**). Capturia reads it on your device, primes the agent with your real titles and numbers, and builds a rail of cue cards you trigger by click or by voice.
 
 ---
 

@@ -434,3 +434,90 @@ body {
 
 /* Smooth scrollbar treatment */
 html { scroll-behavior: smooth; }
+
+/* Anchor scroll offset so the sticky nav never covers section tops */
+[id] { scroll-margin-top: 5rem; }
+
+/* ─────────────────────────────────────────────────────────────
+   On Air landing redesign: consumer-product launch utilities
+   ───────────────────────────────────────────────────────────── */
+
+/* Ghost / secondary button: quiet outline that brightens on hover */
+.ghost-btn {
+  background: transparent;
+  color: var(--studio-ink);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  transition: border-color 220ms ease, background 220ms ease, transform 220ms ease;
+}
+.ghost-btn:hover {
+  border-color: rgba(255, 255, 255, 0.42);
+  background: rgba(255, 255, 255, 0.03);
+  transform: translateY(-1px);
+}
+
+/* Phosphor primary: solid confident CTA on the dark canvas */
+.cta-solid {
+  background: var(--phosphor);
+  color: #06140b;
+  border: 1px solid var(--phosphor);
+  transition: box-shadow 220ms ease, transform 220ms ease, filter 220ms ease;
+}
+.cta-solid:hover {
+  box-shadow: 0 0 38px rgba(82, 255, 139, 0.42);
+  filter: brightness(1.05);
+  transform: translateY(-1px);
+}
+
+/* Product card: soft glass tile that lifts on hover (use cases, pricing) */
+.product-card {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.006) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  transition: border-color 240ms ease, transform 240ms ease, background 240ms ease;
+}
+.product-card:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.012) 100%);
+  transform: translateY(-2px);
+}
+
+/* Step numeral: big confident phosphor index for "How it works" */
+.step-numeral {
+  font-family: var(--font-instrument-serif), Georgia, serif;
+  font-style: italic;
+  line-height: 0.9;
+  color: var(--phosphor);
+  text-shadow: 0 0 28px rgba(82, 255, 139, 0.22);
+}
+
+/* Trust strip pip */
+.trust-pip {
+  width: 4px;
+  height: 4px;
+  border-radius: 9999px;
+  background: var(--studio-fade);
+}
+
+/* Soft phosphor wash behind the hero focal point */
+@keyframes phosphor-breathe {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50%      { opacity: 0.85; transform: scale(1.04); }
+}
+.phosphor-wash {
+  position: absolute;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, rgba(82, 255, 139, 0.16) 0%, transparent 62%);
+  filter: blur(8px);
+  animation: phosphor-breathe 7.5s ease-in-out infinite;
+}
+
+/* Pill / chip used in hero eyebrow and trust strip */
+.studio-pill {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/* Featured (Pro) pricing card outline glow */
+.pro-card {
+  background: linear-gradient(180deg, rgba(82, 255, 139, 0.045) 0%, rgba(82, 255, 139, 0.008) 100%);
+  border: 1px solid rgba(82, 255, 139, 0.28);
+}

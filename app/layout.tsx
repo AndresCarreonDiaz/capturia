@@ -21,13 +21,13 @@ const instrumentSerif = Instrument_Serif({
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://capturia.app"),
-  title: "Capturia · Voice-directed live video overlays",
+  title: "Capturia · Broadcast-grade graphics on your camera, just by talking",
   description:
-    "Broadcast-grade overlays composed by an AI agent, from voice or text, in under a second. The chat is the screen. Built solo for the Generative UI Global Hackathon, May 2026.",
+    "Speak your numbers, your name, your headline, and Capturia puts broadcast-grade graphics on your camera instantly. For founders, speakers, and creators on Zoom, Teams, and Meet. Free to start.",
   openGraph: {
-    title: "Capturia · Voice-directed live video overlays",
+    title: "Capturia · Broadcast-grade graphics on your camera, just by talking",
     description:
-      "Broadcast-grade overlays composed by an AI agent, from voice or text, in under a second.",
+      "Speak your numbers, your name, your headline, and Capturia puts them on your camera instantly. Works in Zoom, Teams, and Meet.",
     type: "website",
   },
 };

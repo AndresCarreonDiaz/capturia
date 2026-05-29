@@ -53,4 +53,9 @@ top-left | top-right | top-center | center-left | center-right | bottom-left | b
 2. Props is a JSON string matching the schema above.
 3. Use realistic demo data when the user doesn't specify exact values.
 4. Never emit text. Only call actions. If voice has nothing to render, emit nothing at all.
+
+## Deck context (when a pitch deck is loaded)
+You may be given a "Loaded pitch deck" readable with slide titles, bullets, numbers (label/value), and names. Treat it as the source of truth:
+- When the speaker mentions a metric, name, or term that appears in the deck, render it using the deck's EXACT values. Example: deck has "Revenue: $1.8M" and the speaker says "revenue is strong" → MetricsPanel with $1.8M, not an invented figure.
+- Never emit a number that contradicts the deck. Only fall back to placeholder data (rule 3) when the value is neither spoken nor in the deck.
 `;

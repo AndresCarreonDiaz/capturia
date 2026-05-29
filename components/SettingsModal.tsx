@@ -9,6 +9,8 @@ interface Props {
   isReady: boolean;
   save: (provider: KeyProvider, key: string) => Promise<void>;
   clear: (provider: KeyProvider) => Promise<void>;
+  activeProvider: KeyProvider;
+  onSelectProvider: (provider: KeyProvider) => void;
 }
 
 const PROVIDER_META: Record<
@@ -44,6 +46,8 @@ export default function SettingsModal({
   isReady,
   save,
   clear,
+  activeProvider,
+  onSelectProvider,
 }: Props) {
   const [drafts, setDrafts] = useState<Partial<Record<KeyProvider, string>>>({});
   const [busy, setBusy] = useState<KeyProvider | null>(null);
@@ -116,6 +120,40 @@ export default function SettingsModal({
           <p className="text-white/50 text-xs mb-5 leading-relaxed">
             Bring your own LLM keys. Stored locally and encrypted via OS Keychain. Never sent to a Capturia server.
           </p>
+
+          {isReady && keys.some((k) => k.has) && (
+            <div className="mb-5">
+              <div className="mb-2 text-white/40 text-[10px] font-mono uppercase tracking-[0.2em]">
+                Active model
+              </div>
+              <div className="flex gap-2">
+                {PROVIDER_ORDER.map((provider) => {
+                  const has = keys.find((k) => k.provider === provider)?.has ?? false;
+                  const isActive = activeProvider === provider;
+                  return (
+                    <button
+                      key={provider}
+                      onClick={() => has && onSelectProvider(provider)}
+                      disabled={!has}
+                      className={`flex-1 px-3 py-2 rounded-lg border text-xs font-medium transition-all ${
+                        isActive
+                          ? "bg-white/15 border-white/40 text-white"
+                          : has
+                          ? "bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white"
+                          : "bg-white/[0.02] border-white/5 text-white/25 cursor-not-allowed"
+                      }`}
+                      title={has ? `Use ${PROVIDER_META[provider].name}` : "Add a key first"}
+                    >
+                      {PROVIDER_META[provider].name.split(" ").pop()}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-2 text-white/40 text-[11px] leading-relaxed">
+                Capturia runs every command on this key. Your key, your bill, on your machine.
+              </p>
+            </div>
+          )}
 
           {!isReady && (
             <div className="text-white/40 text-xs font-mono">Loading…</div>
@@ -194,7 +232,7 @@ export default function SettingsModal({
         </div>
 
         <div className="px-6 py-3 border-t border-white/10 text-white/30 text-[10px] font-mono">
-          Esc to close. Cmd+, to reopen. Routing of agent calls to your key ships next.
+          Esc to close. Cmd+, to reopen. Commands run on your selected key.
         </div>
       </div>
     </div>

@@ -20,7 +20,12 @@ interface CapturiaBridge {
     save: (provider: KeyProvider, key: string) => Promise<KeyEntry[]>;
     clear: (provider: KeyProvider) => Promise<KeyEntry[]>;
     list: () => Promise<KeyEntry[]>;
+    // Returns the plaintext key for the active provider, or null. Desktop-only,
+    // origin-checked in main; used to attach the BYOK request header.
+    get: (provider: KeyProvider) => Promise<string | null>;
   };
+  // Deck codegen: run a prompt on the stored key in main, return raw model text.
+  generateCues: (prompt: string, provider: KeyProvider) => Promise<string>;
 }
 
 declare global {

@@ -305,8 +305,6 @@ export default function LiveDemo() {
     };
   }, []);
 
-  const scene = SCENES[sceneIdx];
-
   return (
     <div className="relative w-full max-w-[1200px] mx-auto">
       {/* Camera card */}
@@ -314,13 +312,9 @@ export default function LiveDemo() {
         {/* Top chrome: camera ID + take + timecode + ON AIR */}
         <div className="absolute top-0 inset-x-0 h-10 z-30 flex items-center justify-between px-3 sm:px-4 border-b border-white/[0.04] bg-black/40 backdrop-blur-md">
           <div className="flex items-center gap-2 sm:gap-3 font-mono text-[9px] sm:text-[10px] tracking-[0.18em] uppercase text-[var(--studio-graphite)]">
-            <span>Cam&nbsp;01</span>
-            <span className="text-[var(--studio-fade)]">·</span>
-            <span className="hidden xs:inline">Take&nbsp;03</span>
-            <span className="hidden xs:inline text-[var(--studio-fade)]">·</span>
-            <span>16:9 · 4K</span>
+            <span>Your&nbsp;camera</span>
             <span className="hidden sm:inline text-[var(--studio-fade)]">·</span>
-            <span className="hidden sm:inline">60&nbsp;fps</span>
+            <span className="hidden sm:inline">Zoom · Teams · Meet</span>
           </div>
           <div className="flex items-center gap-2 sm:gap-3">
             <span className="font-mono text-[9px] sm:text-[10px] tracking-[0.18em] uppercase text-[var(--studio-graphite)] tabular-nums">
@@ -387,18 +381,8 @@ export default function LiveDemo() {
             />
           </span>
 
-          {/* Scene indicator */}
+          {/* Progress indicator */}
           <div className="ml-auto pl-3 flex items-center gap-2 sm:gap-3 shrink-0">
-            <span className="hidden sm:inline font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
-              Scene
-            </span>
-            <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-ink)] tabular-nums">
-              {String(sceneIdx + 1).padStart(2, "0")}
-              <span className="text-[var(--studio-fade)]"> / {String(SCENES.length).padStart(2, "0")}</span>
-            </span>
-            <span className="hidden md:inline font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-graphite)]">
-              {scene.name}
-            </span>
             <span className="flex gap-1">
               {SCENES.map((_, i) => (
                 <span
@@ -416,10 +400,10 @@ export default function LiveDemo() {
       {/* External caption strip below card: gives context without crowding it */}
       <div className="mt-3 flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-1.5 px-1">
         <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
-          Live composition · same components as the studio · zero cuts
+          A real session, on a loop · every graphic here lands from a spoken line
         </span>
         <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
-          Loop · ~35s
+          You speak · it appears
         </span>
       </div>
     </div>

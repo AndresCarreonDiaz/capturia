@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# pdfjs worker is vendored into public/ by scripts/copy-pdf-worker.mjs (postinstall)
+/public/pdf.worker.min.mjs
+
+# Claude Code local runtime (scheduled-task locks, local settings)
+/.claude/

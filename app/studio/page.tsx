@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CopilotKit } from "@copilotkit/react-core";
 import {
   useCopilotReadable,
@@ -26,7 +26,13 @@ import { useStudioVoice } from "@/hooks/useStudioVoice";
 import { useRecorder } from "@/hooks/useRecorder";
 import { useDesktopHotkey } from "@/hooks/useDesktopHotkey";
 import { useKeyVault } from "@/hooks/useKeyVault";
+import type { KeyProvider } from "@/hooks/useDesktopHotkey";
 import SettingsModal from "@/components/SettingsModal";
+import DeckDropzone from "@/components/DeckDropzone";
+import CueDeck from "@/components/CueDeck";
+import { normalizeProps } from "@/lib/normalize";
+import { matchCue } from "@/lib/deck/cues";
+import type { CueCard, DeckFacts } from "@/lib/deck/types";
 import type { OverlaySpec, OverlayPosition } from "@/lib/types";
 
 export default function Studio() {
@@ -39,119 +45,120 @@ export default function Studio() {
       document.body.style.overflow = prev;
     };
   }, []);
+
+  // BYOK: which stored key drives the agent. The active provider is the user's
+  // explicit pick, else the first provider with a saved key, else gemini.
+  const vault = useKeyVault();
+  const [pickedProvider, setPickedProvider] = useState<KeyProvider | null>(null);
+  const firstWithKey = vault.keys.find((k) => k.has)?.provider;
+  const activeProvider: KeyProvider = pickedProvider ?? firstWithKey ?? "gemini";
+
+  // The plaintext key must live in STATE, not a ref. CopilotKit resolves the
+  // `headers` prop during render and rebuilds its request config when the
+  // headers object identity changes, so a ref (which never triggers a
+  // re-render) would leave it stuck with the mount-time empty headers and the
+  // key would never reach the route. State -> re-render -> new headers object.
+  const [byokKey, setByokKey] = useState<string>("");
+
+  useEffect(() => {
+    let cancelled = false;
+    if (typeof window === "undefined" || !window.capturia?.keys?.get) {
+      setByokKey("");
+      return;
+    }
+    window.capturia.keys
+      .get(activeProvider)
+      .then((k) => {
+        if (!cancelled) setByokKey(k ?? "");
+      })
+      .catch(() => {
+        if (!cancelled) setByokKey("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProvider, vault.keys]);
+
+  // On desktop with a key, send provider + key as request headers; the route's
+  // agents factory reads them per request. On web there is no bridge, so we
+  // send nothing and the route falls back to the env key.
+  const headers = useMemo<Record<string, string>>(() => {
+    const h: Record<string, string> = {};
+    if (typeof window !== "undefined" && window.capturia?.isDesktop && byokKey) {
+      h["x-capturia-provider"] = activeProvider;
+      h["x-capturia-key"] = byokKey;
+    }
+    return h;
+  }, [activeProvider, byokKey]);
+
+  // Remount the provider when the active key/provider becomes available or
+  // changes, so CopilotKit always builds its request client with the current
+  // headers (it caches the client at mount). This only changes at load or on a
+  // deliberate provider switch, before any overlays are on screen.
   return (
-    <CopilotKit runtimeUrl="/api/copilotkit">
-      <Capturia />
+    <CopilotKit
+      key={`${activeProvider}:${byokKey ? "byok" : "env"}`}
+      runtimeUrl="/api/copilotkit"
+      headers={headers}
+    >
+      <Capturia
+        vault={vault}
+        activeProvider={activeProvider}
+        setActiveProvider={setPickedProvider}
+      />
     </CopilotKit>
   );
 }
 
-/**
- * Normalize agent-provided props for a given overlay type. Runs on both
- * add_overlay (full props) and modify_overlay (merged props), so a partial
- * update can't poison the existing overlay's shape.
- */
-function normalizeProps(type: string, props: Record<string, unknown>): Record<string, unknown> {
-  const out = { ...props };
-
-  if (type === "KeywordHighlight") {
-    const kws = out.keywords;
-    if (typeof kws === "string") {
-      out.keywords = kws.split(",").map((s) => s.trim()).filter(Boolean);
-    } else if (Array.isArray(kws)) {
-      out.keywords = kws.map((k: unknown) =>
-        typeof k === "string" ? k : (k as Record<string, string>)?.text ?? String(k)
-      );
-    }
-  }
-
-  if (type === "FloatingChart" && Array.isArray(out.data)) {
-    out.data = (out.data as unknown[])
-      .map((d) => (typeof d === "number" ? d : Number((d as Record<string, unknown>)?.value ?? d)))
-      .filter((n) => Number.isFinite(n));
-  }
-
-  if (type === "MetricsPanel") {
-    const raw = out.metrics;
-    out.metrics = Array.isArray(raw)
-      ? (raw as unknown[])
-          .map((m) => {
-            if (!m || typeof m !== "object") return null;
-            const r = m as Record<string, unknown>;
-            if (typeof r.label !== "string") return null;
-            return {
-              label: r.label,
-              value: typeof r.value === "string" ? r.value : String(r.value ?? ""),
-              delta:
-                r.delta == null
-                  ? undefined
-                  : typeof r.delta === "string"
-                  ? r.delta
-                  : String(r.delta),
-            };
-          })
-          .filter(Boolean)
-      : [];
-  }
-
-  if (type === "Timeline") {
-    const raw = out.steps;
-    out.steps = Array.isArray(raw)
-      ? (raw as unknown[])
-          .map((s) => {
-            if (typeof s === "string") return { label: s };
-            if (s && typeof s === "object") {
-              const label = (s as Record<string, unknown>).label;
-              if (typeof label === "string") return { label };
-            }
-            return null;
-          })
-          .filter(Boolean)
-      : [];
-    const cs = out.currentStep;
-    out.currentStep = typeof cs === "number" ? cs : Number(cs ?? 0) || 0;
-  }
-
-  if (type === "Ticker") {
-    const raw = out.items;
-    if (typeof raw === "string") {
-      out.items = raw.split(",").map((s) => s.trim()).filter(Boolean);
-    } else if (Array.isArray(raw)) {
-      out.items = (raw as unknown[]).map((it) =>
-        typeof it === "string" ? it : (it as Record<string, string>)?.text ?? String(it)
-      );
-    } else {
-      out.items = [];
-    }
-  }
-
-  return out;
+interface CapturiaProps {
+  vault: ReturnType<typeof useKeyVault>;
+  activeProvider: KeyProvider;
+  setActiveProvider: (p: KeyProvider) => void;
 }
 
-function Capturia() {
+function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
   const [overlays, setOverlays] = useState<OverlaySpec[]>([]);
   const [lastSent, setLastSent] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const firstRunCheckedRef = useRef(false);
   const { appendMessage } = useCopilotChat();
   const { isRecording, startRecording, stopRecording } = useRecorder();
-  const vault = useKeyVault();
 
-  // Cmd+, opens settings (Mac standard). Works while studio window has focus.
+  // Deck state: cue cards to trigger, plus a compact view shared with the agent.
+  const [cues, setCues] = useState<CueCard[]>([]);
+  const [deckFacts, setDeckFacts] = useState<DeckFacts | null>(null);
+  const [deckName, setDeckName] = useState<string | null>(null);
+  const cuesRef = useRef<CueCard[]>([]);
+  useEffect(() => {
+    cuesRef.current = cues;
+  }, [cues]);
+
+  // Program Output: a chrome-free view (just webcam + overlays) that OBS (or a
+  // future native camera extension) captures as the published feed.
+  const [outputMode, setOutputMode] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("out") === "1") setOutputMode(true);
+  }, []);
+
+  // Cmd+, opens settings; Cmd/Ctrl+Shift+O toggles clean Program Output.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === ",") {
         e.preventDefault();
         setSettingsOpen((v) => !v);
       }
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "o") {
+        e.preventDefault();
+        setOutputMode((v) => !v);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // First-run: if desktop and no BYOK keys saved yet, open Settings once on
-  // mount. firstRunCheckedRef makes this fire exactly once per app session
-  // even if the keys list updates as the user saves.
+  // First-run: if desktop and no BYOK keys saved yet, open Settings once.
   useEffect(() => {
     if (firstRunCheckedRef.current) return;
     if (!vault.isReady) return;
@@ -161,17 +168,32 @@ function Capturia() {
     }
   }, [vault.isReady, vault.isDesktop, vault.keys]);
 
+  // Apply a cue card's pre-built overlays (merge by id, like add_overlay).
+  const applyCue = useCallback((card: CueCard) => {
+    setOverlays((prev) => {
+      const ids = new Set(card.specs.map((s) => s.id));
+      const kept = prev.filter((o) => !ids.has(o.id));
+      return [...kept, ...card.specs];
+    });
+  }, []);
+
   const { isListening, interimTranscript, speechStatus, lastError, isSupported, startListening, stopListening } =
     useStudioVoice((text) => {
       if (text.split(/\s+/).length < 2) return;
       setLastSent(text);
+      // Deterministic, offline cue match first: "show my revenue slide" fires a
+      // pre-built card without a model call. Falls through to the agent on miss.
+      const card = matchCue(cuesRef.current, text);
+      if (card) {
+        applyCue(card);
+        return;
+      }
       appendMessage(
         new TextMessage({ content: `[VOICE] ${text}`, role: MessageRole.User })
       );
     });
 
   // Desktop push-to-talk: Cmd+Alt+Space toggles voice from anywhere on the OS.
-  // No-op on web (window.capturia is only present inside Electron renderer).
   useDesktopHotkey("toggle-voice", () => {
     if (!isSupported) return;
     if (isListening) stopListening();
@@ -188,6 +210,14 @@ function Capturia() {
       position: o.type !== "Letterbox" ? o.position : "full-screen",
       props: o.props,
     })),
+  });
+
+  // Deck priming: the agent uses the speaker's real titles/numbers/names as the
+  // source of truth, so spoken metrics render with deck values, not invented ones.
+  useCopilotReadable({
+    description:
+      "Loaded pitch deck (if any). Slide titles, bullets, detected numbers (label/value), and names. When the speaker mentions something that appears here, render it using THESE exact values. Never invent numbers that contradict the deck.",
+    value: deckFacts,
   });
 
   // A2UI Action: add a new spatial overlay component
@@ -395,86 +425,143 @@ function Capturia() {
   return (
     <div
       className={`relative w-screen h-screen bg-black overflow-hidden ${
-        isListening ? "mic-glow" : ""
+        isListening && !outputMode ? "mic-glow" : ""
       }`}
     >
       {/* Layer 0: webcam */}
       <WebcamFeed />
 
-      {/* Layer 0.5: ambient floating particles when voice is active */}
-      <AmbientParticles active={isListening} />
+      {/* Layer 0.5: ambient floating particles when voice is active (hidden in clean output) */}
+      {!outputMode && <AmbientParticles active={isListening} />}
 
-      {/* Layer 1: A2UI overlay components */}
+      {/* Layer 1: A2UI overlay components (the published feed) */}
       <OverlayLayer overlays={overlays} />
 
-      {/* Layer 2: live voice captions (above overlays, below command bar) */}
-      <LiveCaptions text={interimTranscript} lastSent={lastSent} speechStatus={speechStatus} lastError={lastError} isListening={isListening} />
-
-      {/* Layer 3: command bar */}
-      <CommandBar
-        overlays={overlays.map((o) => ({ id: o.id, type: o.type }))}
-        onClear={() => setOverlays([])}
-        isListening={isListening}
-        onToggleVoice={() => (isListening ? stopListening() : startListening())}
-        isVoiceSupported={isSupported}
-      />
-
-      {/* Top-right HUD: settings + LIVE pill + clock + record */}
-      <div className="absolute top-3 right-4 z-30 flex items-center gap-3">
-        {/* Settings (desktop only) */}
-        {vault.isDesktop && (
-          <button
-            onClick={() => setSettingsOpen(true)}
-            title="Settings (Cmd+,)"
-            aria-label="Settings"
-            className="w-8 h-8 flex items-center justify-center rounded-full bg-white/10 text-white/50 hover:bg-white/20 hover:text-white/90 border border-white/10 transition-all"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
-          </button>
-        )}
-
-        {/* Record toggle */}
-        <button
-          onClick={() => (isRecording ? stopRecording() : startRecording())}
-          className={`flex items-center gap-1.5 text-xs font-mono uppercase tracking-widest px-3 py-1.5 rounded-full transition-all ${
-            isRecording
-              ? "bg-red-600 text-white"
-              : "bg-white/10 text-white/50 hover:bg-white/20 hover:text-white/80 border border-white/10"
-          }`}
-        >
-          <span
-            className={`w-2 h-2 rounded-full ${
-              isRecording ? "bg-white live-dot-pulse" : "bg-red-500"
-            }`}
+      {/* Everything below is operator chrome, hidden in Program Output so OBS /
+          the virtual camera capture only the webcam + overlays. */}
+      {!outputMode && (
+        <>
+          {/* Layer 2: live voice captions */}
+          <LiveCaptions
+            text={interimTranscript}
+            lastSent={lastSent}
+            speechStatus={speechStatus}
+            lastError={lastError}
+            isListening={isListening}
           />
-          {isRecording ? "Stop" : "Rec"}
+
+          {/* Layer 3: command bar */}
+          <CommandBar
+            overlays={overlays.map((o) => ({ id: o.id, type: o.type }))}
+            onClear={() => setOverlays([])}
+            isListening={isListening}
+            onToggleVoice={() => (isListening ? stopListening() : startListening())}
+            isVoiceSupported={isSupported}
+          />
+
+          {/* Left rail: deck cue cards */}
+          <CueDeck
+            cards={cues}
+            fileName={deckName}
+            onTrigger={applyCue}
+            onClear={() => {
+              setCues([]);
+              setDeckFacts(null);
+              setDeckName(null);
+            }}
+          />
+
+          {/* Top-right HUD: deck + output + settings + LIVE pill + clock + record */}
+          <div className="absolute top-3 right-4 z-30 flex items-center gap-3">
+            {/* Load a pitch deck (PDF), client-side */}
+            <DeckDropzone
+              provider={activeProvider}
+              onLoaded={({ cards, facts, fileName }) => {
+                setCues(cards);
+                setDeckFacts(facts);
+                setDeckName(fileName);
+              }}
+            />
+
+            {/* Enter clean Program Output (for OBS / virtual camera) */}
+            <button
+              onClick={() => setOutputMode(true)}
+              title="Program Output for OBS / virtual camera (Cmd+Shift+O)"
+              className="text-[11px] font-mono uppercase tracking-widest px-3 py-1.5 rounded-full bg-white/10 text-white/60 hover:bg-white/20 hover:text-white border border-white/10 transition-all"
+            >
+              Output
+            </button>
+
+            {/* Settings (desktop only) */}
+            {vault.isDesktop && (
+              <button
+                onClick={() => setSettingsOpen(true)}
+                title="Settings (Cmd+,)"
+                aria-label="Settings"
+                className="w-8 h-8 flex items-center justify-center rounded-full bg-white/10 text-white/50 hover:bg-white/20 hover:text-white/90 border border-white/10 transition-all"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+              </button>
+            )}
+
+            {/* Record toggle */}
+            <button
+              onClick={() => (isRecording ? stopRecording() : startRecording())}
+              className={`flex items-center gap-1.5 text-xs font-mono uppercase tracking-widest px-3 py-1.5 rounded-full transition-all ${
+                isRecording
+                  ? "bg-red-600 text-white"
+                  : "bg-white/10 text-white/50 hover:bg-white/20 hover:text-white/80 border border-white/10"
+              }`}
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  isRecording ? "bg-white live-dot-pulse" : "bg-red-500"
+                }`}
+              />
+              {isRecording ? "Stop" : "Rec"}
+            </button>
+
+            {/* Live clock */}
+            <div className="px-2.5 py-1 rounded-md bg-black/40 border border-white/10 backdrop-blur-md pointer-events-none">
+              <HudClock />
+            </div>
+
+            {/* LIVE pill */}
+            <div className="flex items-center gap-1.5 bg-red-600/95 px-2.5 py-1 rounded-md shadow-[0_0_12px_rgba(239,68,68,0.4)] pointer-events-none">
+              <span className="w-1.5 h-1.5 rounded-full bg-white live-dot-pulse" />
+              <span className="text-white text-[10px] font-bold tracking-[0.2em] uppercase">
+                Live
+              </span>
+            </div>
+          </div>
+
+          <SettingsModal
+            open={settingsOpen}
+            onClose={() => setSettingsOpen(false)}
+            keys={vault.keys}
+            isReady={vault.isReady}
+            save={vault.save}
+            clear={vault.clear}
+            activeProvider={activeProvider}
+            onSelectProvider={setActiveProvider}
+          />
+        </>
+      )}
+
+      {/* Program Output: a single hover-revealed control to exit, so the
+          captured feed stays clean but the operator can leave the mode. */}
+      {outputMode && (
+        <button
+          onClick={() => setOutputMode(false)}
+          className="absolute top-3 right-3 z-30 text-[10px] font-mono uppercase tracking-widest px-2.5 py-1 rounded-full bg-black/50 text-white/40 border border-white/10 opacity-0 hover:opacity-100 transition-opacity"
+          title="Exit Program Output (Cmd+Shift+O)"
+        >
+          Exit output
         </button>
-
-        {/* Live clock */}
-        <div className="px-2.5 py-1 rounded-md bg-black/40 border border-white/10 backdrop-blur-md pointer-events-none">
-          <HudClock />
-        </div>
-
-        {/* LIVE pill */}
-        <div className="flex items-center gap-1.5 bg-red-600/95 px-2.5 py-1 rounded-md shadow-[0_0_12px_rgba(239,68,68,0.4)] pointer-events-none">
-          <span className="w-1.5 h-1.5 rounded-full bg-white live-dot-pulse" />
-          <span className="text-white text-[10px] font-bold tracking-[0.2em] uppercase">
-            Live
-          </span>
-        </div>
-      </div>
-
-      <SettingsModal
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        keys={vault.keys}
-        isReady={vault.isReady}
-        save={vault.save}
-        clear={vault.clear}
-      />
+      )}
     </div>
   );
 }

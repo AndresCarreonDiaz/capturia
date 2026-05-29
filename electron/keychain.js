@@ -44,6 +44,17 @@ function saveKey(provider, key) {
       "OS-level encryption is not available on this platform. Refusing to store plaintext keys."
     );
   }
+  // On Linux without a real secret store, safeStorage silently falls back to
+  // "basic_text" (a hardcoded password). That is not real encryption, so refuse
+  // rather than give a false sense of safety.
+  if (
+    typeof safeStorage.getSelectedStorageBackend === "function" &&
+    safeStorage.getSelectedStorageBackend() === "basic_text"
+  ) {
+    throw new Error(
+      "No OS secret store is available (basic_text backend). Refusing to store keys insecurely. Install gnome-keyring / kwallet, or use the GOOGLE_GENERATIVE_AI_API_KEY env var instead."
+    );
+  }
   const vault = readVault();
   vault[provider] = safeStorage.encryptString(key.trim()).toString("base64");
   writeVault(vault);

@@ -20,6 +20,15 @@ const TIMESTAMP_RE = /\[\d{2}:\d{2}:\d{2}\.\d{3}\s+-->\s+\d{2}:\d{2}:\d{2}\.\d{3
 let busy = false;
 
 async function transcribeWav(wavBuffer) {
+  // Defensive: callers go through ipc-schemas.assertBytes, but guard here too
+  // so a bad buffer can't reach Buffer.from() and emit a confusing error.
+  if (
+    !(wavBuffer instanceof ArrayBuffer) &&
+    !ArrayBuffer.isView(wavBuffer) &&
+    !Buffer.isBuffer(wavBuffer)
+  ) {
+    throw new Error("transcribeWav expects ArrayBuffer/TypedArray WAV bytes.");
+  }
   if (busy) {
     throw new Error("A transcription is already in progress.");
   }
@@ -37,8 +46,12 @@ async function transcribeWav(wavBuffer) {
     );
   }
 
-  const tmpPath = path.join(os.tmpdir(), `capturia-${randomUUID()}.wav`);
-  fs.writeFileSync(tmpPath, Buffer.from(wavBuffer));
+  // Spoken audio is sensitive. Write it into a 0700 private temp dir (mkdtemp
+  // already restricts to the owner) with a 0600 file, and remove the whole
+  // dir afterwards so nothing survives a crash on shared /tmp.
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `capturia-${randomUUID()}-`));
+  const tmpPath = path.join(tmpDir, "audio.wav");
+  fs.writeFileSync(tmpPath, Buffer.from(wavBuffer), { mode: 0o600 });
 
   try {
     const raw = await nodewhisper(tmpPath, {
@@ -75,7 +88,7 @@ async function transcribeWav(wavBuffer) {
   } finally {
     busy = false;
     try {
-      fs.unlinkSync(tmpPath);
+      fs.rmSync(tmpDir, { recursive: true, force: true });
     } catch {
       // ignore cleanup errors
     }

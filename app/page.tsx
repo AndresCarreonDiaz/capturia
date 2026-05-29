@@ -4,575 +4,529 @@ import SlotPreview, { type SlotCode } from "@/components/landing/SlotPreview";
 import { CapturiaLogo } from "@/components/landing/Brand";
 
 /* ─────────────────────────────────────────────────────────────
-   Capturia landing. A broadcast-magazine page. The hero IS the
-   product, looping. Sections after are issues of a technical
-   journal: catalog, wiring, what's next.
+   Capturia landing. Direction A, "On Air": a confident consumer
+   product launch page. Broadcast DNA kept as polish (tally red,
+   phosphor green, the live-on-air feeling). Every word written for
+   founders and speakers, not crew or developers. Server component.
    ───────────────────────────────────────────────────────────── */
+
+const GITHUB = "https://github.com/AndresCarreonDiaz/capturia";
+const LICENSE = "https://github.com/AndresCarreonDiaz/capturia/blob/main/LICENSE";
 
 export default function Landing() {
   return (
     <main className="min-h-screen bg-[var(--studio-black)] text-[var(--studio-ink)] selection:bg-[var(--phosphor)]/30 selection:text-white">
-      <TallyBar />
+      <TopNav />
       <Hero />
-      <PullQuote />
-      <IssueCatalog />
-      <IssueWiring />
-      <IssueRoadmap />
-      <CueClose />
+      <HumanCaption />
+      <HowItWorks />
+      <OnScreen />
+      <UseCases />
+      <Pricing />
+      <FinalCta />
       <SiteFooter />
     </main>
   );
 }
 
-/* ───── 1. Sticky tally bar across the very top of the page ───── */
+/* ───── 1. Slim sticky nav ───── */
 
-function TallyBar() {
+function TopNav() {
   return (
-    <header className="sticky top-0 z-50 backdrop-blur-md bg-[var(--studio-black)]/85 border-b border-white/[0.06]">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 h-12 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3 sm:gap-5 min-w-0">
-          {/* Brand mark + wordmark, links to top */}
-          <Link
-            href="/"
-            aria-label="Capturia home"
-            className="flex items-center text-[var(--studio-ink)] hover:opacity-90 transition-opacity"
-          >
-            <CapturiaLogo style={{ height: 22, width: "auto" }} />
-          </Link>
-
-          {/* Vertical hairline divider */}
-          <span aria-hidden className="hidden sm:inline-block w-px h-4 bg-white/10" />
-
-          {/* On-Air status + episode tag */}
-          <span className="hidden sm:flex items-center gap-2 font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
+    <header className="sticky top-0 z-50 backdrop-blur-md bg-[var(--studio-black)]/80 border-b border-white/[0.06]">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
+        <Link
+          href="/"
+          aria-label="Capturia home"
+          className="flex items-center gap-3 text-[var(--studio-ink)] hover:opacity-90 transition-opacity"
+        >
+          <CapturiaLogo style={{ height: 24, width: "auto" }} />
+          <span className="hidden sm:flex items-center gap-1.5 font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
             <span className="w-1.5 h-1.5 rounded-full bg-[var(--tally)] tally-pulse" />
             <span className="text-[var(--tally)]">On&nbsp;Air</span>
-            <span className="text-[var(--studio-fade)]">·</span>
-            <span>EP&nbsp;001 · voice → screen</span>
           </span>
-        </div>
+        </Link>
 
-        <nav className="flex items-center gap-1 sm:gap-2 font-mono text-[10px] tracking-[0.22em] uppercase">
+        <nav className="hidden md:flex items-center gap-7 text-[13px] text-[var(--studio-graphite)]">
+          <a href="#how" className="hover:text-white transition-colors">How it works</a>
+          <a href="#use-cases" className="hover:text-white transition-colors">Use cases</a>
+          <a href="#pricing" className="hover:text-white transition-colors">Pricing</a>
+        </nav>
+
+        <div className="flex items-center gap-2 sm:gap-3">
           <a
-            href="https://github.com/AndresCarreonDiaz/capturia"
+            href={GITHUB}
             target="_blank"
             rel="noopener noreferrer"
-            className="px-2.5 py-1 text-[var(--studio-fade)] hover:text-white transition-colors"
+            className="hidden sm:inline px-2 py-1 font-mono text-[10px] tracking-[0.18em] uppercase text-[var(--studio-fade)] hover:text-white transition-colors"
           >
-            Source →
+            Source
           </a>
           <Link
             href="/studio"
-            className="px-2.5 py-1 text-[var(--phosphor)] hover:text-white transition-colors"
+            className="cta-solid inline-flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-medium"
           >
-            Cue&nbsp;the&nbsp;studio →
+            Try it free
+            <span aria-hidden>→</span>
           </Link>
-        </nav>
+        </div>
       </div>
     </header>
   );
 }
 
-/* ───── 2. Hero. Editorial title + the live looping demo ───── */
+/* ───── 2. Hero ───── */
 
 function Hero() {
   return (
-    <section className="relative">
-      <div aria-hidden className="absolute inset-0 studio-grid-bg opacity-40 pointer-events-none" />
-      <div aria-hidden className="grain-overlay" />
+    <section className="relative overflow-hidden">
+      <div aria-hidden className="absolute inset-0 studio-grid-bg opacity-[0.15] pointer-events-none" />
+      <div aria-hidden className="grain-overlay" style={{ opacity: 0.025 }} />
+      <div
+        aria-hidden
+        className="phosphor-wash"
+        style={{ top: "-12%", left: "50%", transform: "translateX(-50%)", width: "60%", height: "60%" }}
+      />
 
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 pt-12 sm:pt-16 lg:pt-20 pb-10 sm:pb-14 relative">
-        {/* Eyebrow strip */}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 font-mono text-[10px] tracking-[0.24em] uppercase text-[var(--studio-fade)]">
-          <span>Issue&nbsp;001</span>
-          <span>·</span>
-          <span>May&nbsp;2026</span>
-          <span>·</span>
-          <span className="text-[var(--phosphor)]">1st&nbsp;Place · Generative&nbsp;UI&nbsp;Hackathon</span>
+      <div className="mx-auto max-w-6xl px-4 sm:px-6 pt-16 sm:pt-24 lg:pt-28 pb-12 sm:pb-16 relative text-center">
+        {/* Eyebrow */}
+        <div className="inline-flex items-center gap-2 rounded-full studio-pill px-3.5 py-1.5 reveal-up">
+          <span className="w-1.5 h-1.5 rounded-full bg-[var(--phosphor)]" />
+          <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-graphite)]">
+            Live graphics, just by talking
+          </span>
         </div>
 
-        {/* Editorial headline */}
-        <h1 className="display-serif mt-5 sm:mt-7 text-[clamp(3.25rem,9vw,8rem)] text-[var(--studio-ink)] reveal-up">
-          The chat is{" "}
-          <span className="italic text-[var(--phosphor)] [text-shadow:0_0_30px_rgba(82,255,139,0.18)]">
-            the screen.
+        {/* Headline */}
+        <h1 className="display-serif mx-auto mt-7 max-w-4xl text-[clamp(2.75rem,8vw,6.25rem)] text-[var(--studio-ink)] reveal-up [animation-delay:80ms]">
+          Broadcast-grade graphics on your camera.{" "}
+          <span className="italic text-[var(--phosphor)] [text-shadow:0_0_36px_rgba(82,255,139,0.22)]">
+            Just by talking.
           </span>
         </h1>
 
-        {/* Subline */}
-        <p className="mt-6 sm:mt-7 max-w-2xl text-[var(--studio-graphite)] text-base sm:text-lg leading-relaxed reveal-up [animation-delay:120ms]">
-          You speak. An AI agent composes broadcast-grade overlays directly onto
-          the video: lower thirds, sparklines, big counters, tickers. In under
-          a second. There is no chat sidebar. No template gallery. No graphics
-          operator. The utterance is the render.
+        {/* Subhead */}
+        <p className="mx-auto mt-6 max-w-2xl text-[var(--studio-graphite)] text-base sm:text-lg leading-relaxed reveal-up [animation-delay:160ms]">
+          Capturia is an AI that puts your numbers, your name, and your headlines
+          on screen the instant you say them. Perfect for pitches, talks, and demos
+          on Zoom, Teams, and Meet.
         </p>
 
-        {/* Hero demo */}
-        <div className="mt-10 sm:mt-14 reveal-up [animation-delay:240ms]">
+        {/* CTAs */}
+        <div className="mt-9 flex flex-col sm:flex-row items-center justify-center gap-3 reveal-up [animation-delay:240ms]">
+          <Link
+            href="/studio"
+            className="cta-solid inline-flex items-center gap-2.5 rounded-full px-7 py-3.5 text-[15px] font-semibold w-full sm:w-auto justify-center"
+          >
+            Try it free
+            <span aria-hidden>→</span>
+          </Link>
+          <a
+            href="#demo"
+            className="ghost-btn inline-flex items-center gap-2.5 rounded-full px-7 py-3.5 text-[15px] font-medium w-full sm:w-auto justify-center"
+          >
+            See it work
+          </a>
+        </div>
+        <p className="mt-4 font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)] reveal-up [animation-delay:300ms]">
+          Free · no signup · Chrome / Edge for voice
+        </p>
+
+        {/* The live demo: the proof */}
+        <div id="demo" className="mt-12 sm:mt-16 reveal-up [animation-delay:360ms] text-left">
           <LiveDemo />
         </div>
 
-        {/* Hero CTA + meta */}
-        <div className="mt-10 sm:mt-12 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-5">
-          <Link
-            href="/studio"
-            className="cue-btn group inline-flex items-center gap-3 px-6 py-3 self-start font-mono text-[12px] tracking-[0.22em] uppercase"
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-[var(--phosphor)] group-hover:scale-125 transition-transform" />
-            Cue&nbsp;the&nbsp;studio
-            <span className="text-[var(--phosphor)]">→</span>
-          </Link>
-
-          <p className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
-            Free · no signup · Chrome / Edge for voice
-          </p>
+        {/* Trust strip */}
+        <div className="mt-10 flex flex-wrap items-center justify-center gap-x-4 gap-y-2.5 font-mono text-[10px] tracking-[0.18em] uppercase text-[var(--studio-fade)] reveal-up [animation-delay:420ms]">
+          <span className="text-[var(--phosphor)]">1st at the Generative UI Hackathon</span>
+          <span aria-hidden className="trust-pip" />
+          <span>Works in Zoom, Teams, Meet</span>
+          <span aria-hidden className="trust-pip" />
+          <a href={GITHUB} target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
+            Open source
+          </a>
         </div>
       </div>
     </section>
   );
 }
 
-/* ───── 3. Pull quote. A single editorial sentence as breather ───── */
+/* ───── 3. Human caption tying the demo to reality ───── */
 
-function PullQuote() {
+function HumanCaption() {
   return (
     <section className="border-y border-white/[0.06] bg-[var(--studio-mist)]">
-      <div className="mx-auto max-w-5xl px-6 sm:px-8 py-16 sm:py-20">
-        <p className="display-serif text-[var(--studio-ink)] text-[clamp(1.6rem,3.6vw,2.7rem)] leading-[1.2]">
-          Every utterance is either a{" "}
-          <span className="italic text-[var(--signal)]">tool call that changes the screen</span>
-          , or silence. The agent never replies in prose. It composes.
+      <div className="mx-auto max-w-4xl px-6 py-14 sm:py-20 text-center">
+        <p className="display-serif text-[var(--studio-ink)] text-[clamp(1.7rem,4vw,3rem)] leading-[1.18]">
+          Everything above is{" "}
+          <span className="italic text-[var(--phosphor)]">live</span>. No editing,
+          no cuts. You just talk.
         </p>
-        <div className="mt-8 fade-rule" />
-        <div className="mt-8 grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-6 font-mono text-[11px]">
-          <Stat label="Components" value="12" accent="phosphor" />
-          <Stat label="Tools" value="06" accent="signal" />
-          <Stat label="End-to-end" value="<1s" accent="amber" />
-          <Stat label="Cost / utterance" value="~$0.0001" accent="magenta" />
-        </div>
       </div>
     </section>
   );
 }
 
-function Stat({
-  label,
-  value,
-  accent,
-}: {
-  label: string;
-  value: string;
-  accent: "phosphor" | "signal" | "amber" | "magenta";
-}) {
-  const color =
-    accent === "phosphor"
-      ? "var(--phosphor)"
-      : accent === "signal"
-      ? "var(--signal)"
-      : accent === "amber"
-      ? "var(--amber-cue)"
-      : "var(--magenta-sweep)";
+/* ───── 4. How it works ───── */
+
+function HowItWorks() {
+  const steps: Array<{ n: string; title: string; body: string }> = [
+    {
+      n: "1",
+      title: "Turn on your camera",
+      body: "Open Capturia in your browser and switch on your webcam. You are on air in seconds.",
+    },
+    {
+      n: "2",
+      title: "Talk like you normally would",
+      body: "Say your numbers, your name, your point. No commands to memorize, no buttons to hunt for.",
+    },
+    {
+      n: "3",
+      title: "Graphics appear instantly",
+      body: "Lower thirds, counters, charts, and tickers land on your video the moment you mention them.",
+    },
+  ];
+
   return (
-    <div>
-      <div className="display-serif tabular-nums text-[clamp(1.75rem,3vw,2.5rem)]" style={{ color }}>
-        {value}
+    <section id="how" className="mx-auto max-w-7xl px-4 sm:px-6 py-20 sm:py-28">
+      <SectionHead
+        eyebrow="How it works"
+        title={
+          <>
+            Three steps. <span className="italic text-[var(--phosphor)]">Zero learning curve.</span>
+          </>
+        }
+        kicker="If you can hold a conversation, you can run Capturia."
+      />
+
+      <div className="mt-12 sm:mt-16 grid grid-cols-1 md:grid-cols-3 gap-5 sm:gap-6">
+        {steps.map((s, i) => (
+          <div
+            key={s.n}
+            className="product-card rounded-2xl p-7 sm:p-8 reveal-up"
+            style={{ animationDelay: `${i * 100}ms` }}
+          >
+            <div className="step-numeral text-6xl sm:text-7xl">{s.n}</div>
+            <h3 className="mt-5 text-[var(--studio-ink)] text-lg font-semibold tracking-tight">
+              {s.title}
+            </h3>
+            <p className="mt-2.5 text-[var(--studio-graphite)] text-[14.5px] leading-relaxed">
+              {s.body}
+            </p>
+          </div>
+        ))}
       </div>
-      <div className="mt-1 text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
-        {label}
+
+      {/* Deck hook micro-line */}
+      <div className="mt-6 flex items-start gap-3 rounded-2xl border border-white/[0.06] bg-[var(--studio-mist)]/50 px-6 py-5 reveal-up [animation-delay:320ms]">
+        <span aria-hidden className="mt-0.5 text-[var(--signal)] text-lg leading-none">+</span>
+        <p className="text-[var(--studio-graphite)] text-[14.5px] leading-relaxed">
+          <span className="text-[var(--studio-ink)] font-medium">Bring your pitch deck.</span>{" "}
+          Drop it in once and your numbers are ready to show the moment you mention them.
+        </p>
       </div>
-    </div>
+    </section>
   );
 }
 
-/* ───── 4. Issue 001. The Catalog ───── */
+/* ───── 5. What it can put on screen (live SlotPreview miniatures) ───── */
 
 interface Slot {
   code: SlotCode;
   name: string;
-  blurb: string;
-  accent: "phosphor" | "signal" | "amber" | "magenta" | "tally" | "graphite";
 }
 
-const SLOTS: Slot[] = [
-  { code: "MTR", name: "MetricsPanel",     blurb: "KPI card with sparklines, count-up tween, green/red row flash.", accent: "signal" },
-  { code: "BCT", name: "BigCounter",       blurb: "Huge animated number. Per-digit roll. Milestone halo at 1k, 10k, 100k.", accent: "phosphor" },
-  { code: "RNG", name: "StatRing",         blurb: "Radial donut, cyan/violet/pink stroke, sparkle dots at 85% and up.", accent: "signal" },
-  { code: "PRG", name: "ProgressBar",      blurb: "Cycling-hue fill, glowing leading bead, emerald pulse at 100%.", accent: "phosphor" },
-  { code: "CHT", name: "FloatingChart",    blurb: "Sparkline or bars. Gradient area-fill. Live-growing series.", accent: "signal" },
-  { code: "TLN", name: "Timeline",         blurb: "Horizontal stepper. Halo ripple on the active step.", accent: "amber" },
-  { code: "LTH", name: "LowerThird",       blurb: "Broadcast name bar. Typewriter reveal. Underline sweep.", accent: "amber" },
-  { code: "KWD", name: "KeywordHighlight", blurb: "Chips stagger in. Rotating palette. Shimmer sweep at mount.", accent: "magenta" },
-  { code: "BDG", name: "LiveBadge",        blurb: "Pulsing pill with a ring ripple radiating outward.", accent: "tally" },
-  { code: "TKR", name: "Ticker",           blurb: "Cable-news scroll. Alternating dot colors. Breathing sheen.", accent: "magenta" },
-  { code: "BUB", name: "ChatBubble",       blurb: "Speech bubble. 3-dot typing indicator. Typewriter text.", accent: "graphite" },
-  { code: "LBX", name: "Letterbox",        blurb: "Cinematic black bars that slide in from the screen edges.", accent: "graphite" },
+const GROUPS: Array<{ heading: string; blurb: string; slots: Slot[] }> = [
+  {
+    heading: "Your numbers",
+    blurb: "Traction, growth, and milestones, animated the instant you say them.",
+    slots: [
+      { code: "MTR", name: "Metrics" },
+      { code: "BCT", name: "Big number" },
+      { code: "RNG", name: "Stat ring" },
+      { code: "PRG", name: "Progress" },
+      { code: "CHT", name: "Chart" },
+    ],
+  },
+  {
+    heading: "Your story",
+    blurb: "Name bars, key terms, and a live ticker that keep your message clear.",
+    slots: [
+      { code: "LTH", name: "Name bar" },
+      { code: "KWD", name: "Key points" },
+      { code: "TLN", name: "Timeline" },
+      { code: "TKR", name: "Ticker" },
+      { code: "BUB", name: "Quote" },
+    ],
+  },
+  {
+    heading: "Cinematic",
+    blurb: "Broadcast touches that make any call look like a production.",
+    slots: [
+      { code: "BDG", name: "Live badge" },
+      { code: "LBX", name: "Letterbox" },
+    ],
+  },
 ];
 
-function accentColor(a: Slot["accent"]) {
-  switch (a) {
-    case "phosphor": return "var(--phosphor)";
-    case "signal":   return "var(--signal)";
-    case "amber":    return "var(--amber-cue)";
-    case "magenta":  return "var(--magenta-sweep)";
-    case "tally":    return "var(--tally)";
-    case "graphite": return "var(--studio-graphite)";
-  }
-}
-
-function IssueCatalog() {
-  return (
-    <section className="mx-auto max-w-7xl px-4 sm:px-6 py-24 sm:py-32">
-      <SectionHead
-        issue="Issue 001"
-        title="The Catalog"
-        kicker="Twelve typed components. The agent sees them all. It composes."
-      />
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 mt-12 sm:mt-14">
-        {SLOTS.map((s, i) => (
-          <SlotCard key={s.code} slot={s} index={i} />
-        ))}
-      </div>
-
-      <p className="mt-10 max-w-3xl text-[var(--studio-graphite)] text-[15px] leading-relaxed">
-        Each slot is a Zod schema in <code className="font-mono text-[var(--studio-ink)]">lib/catalog.ts</code>{" "}
-        and a React component in <code className="font-mono text-[var(--studio-ink)]">components/overlays/</code>.
-        The schemas are the single source of truth for the system prompt and the renderer at once. Same
-        contract, both sides.
-      </p>
-    </section>
-  );
-}
-
-function SlotCard({ slot, index }: { slot: Slot; index: number }) {
-  const color = accentColor(slot.accent);
-  return (
-    <div className="slot-card flex flex-col overflow-hidden">
-      {/* Live preview monitor */}
-      <SlotPreview code={slot.code} />
-
-      {/* Metadata */}
-      <div className="p-4 sm:p-5 flex flex-col gap-2">
-        <div className="flex items-start justify-between gap-3">
-          <span
-            className="display-serif italic text-3xl sm:text-4xl tabular-nums leading-none"
-            style={{ color }}
-          >
-            {slot.code}
-          </span>
-          <div className="flex items-center gap-2 mt-1.5">
-            <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
-              {String(index + 1).padStart(2, "0")} / 12
-            </span>
-            <span
-              className="w-1.5 h-1.5 rounded-full"
-              style={{ background: color, boxShadow: `0 0 10px ${color}` }}
-            />
-          </div>
-        </div>
-
-        <div className="mt-1 text-[var(--studio-ink)] text-[13px] sm:text-[14px] font-medium">
-          {slot.name}
-        </div>
-        <div className="text-[var(--studio-graphite)] text-[12px] leading-snug">
-          {slot.blurb}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ───── 5. Issue 002. The Wiring ───── */
-
-function IssueWiring() {
+function OnScreen() {
   return (
     <section className="border-y border-white/[0.06] bg-[var(--studio-mist)]">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 py-24 sm:py-32">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 py-20 sm:py-28">
         <SectionHead
-          issue="Issue 002"
-          title="The Wiring"
-          kicker="One model call. One tool call. One React state update. About 150ms TTFT."
+          eyebrow="What it can put on screen"
+          title={
+            <>
+              A whole control room, <span className="italic text-[var(--signal)]">on your voice</span>.
+            </>
+          }
+          kicker="These are live, the same graphics you saw running in the demo above."
         />
 
-        <div className="mt-12 grid grid-cols-1 lg:grid-cols-[1.05fr_1fr] gap-10 lg:gap-16">
-          {/* Prose column */}
-          <div className="space-y-6 text-[var(--studio-graphite)] text-[15px] leading-relaxed">
-            <p>
-              Voice or typed text becomes an{" "}
-              <span className="text-[var(--studio-ink)]">AG-UI shared-state session</span>.
-              The agent (Gemini 2.5 Flash-Lite,{" "}
-              <code className="font-mono text-[var(--studio-ink)]">maxSteps: 1</code>,
-              temperature zero) sees a typed catalog and decides what to render where. It returns a
-              single tool call. CopilotKit dispatches it. React state mutates. The overlay layer
-              reconciles with a 60-millisecond staggered entrance per new item.
-            </p>
-            <p>
-              No DOM strings. No prose responses. No retries. The agent picks{" "}
-              <code className="font-mono text-[var(--studio-ink)]">bump_metric</code> over{" "}
-              <code className="font-mono text-[var(--studio-ink)]">modify_overlay</code> when it can.
-              That&apos;s where the live feel comes from. Values count up; rows flash; charts append
-              points instead of being rebuilt.
-            </p>
-            <p>
-              Agent JSON is untrusted at the edge.{" "}
-              <code className="font-mono text-[var(--studio-ink)]">normalizeProps()</code> coerces
-              malformed shapes (Gemini occasionally returns{" "}
-              <code className="font-mono text-[var(--studio-ink)]">[{"{"}text: &ldquo;x&rdquo;{"}"}]</code>{" "}
-              instead of <code className="font-mono text-[var(--studio-ink)]">[&ldquo;x&rdquo;]</code>)
-              before they hit components. Each renderer is also defensively iterable. Partial props
-              can&apos;t crash the tree.
-            </p>
-          </div>
-
-          {/* Tech stack + diagram column */}
-          <div className="space-y-10">
-            <StackList />
-            <ArchitectureFlow />
-          </div>
+        <div className="mt-12 sm:mt-16 space-y-12 sm:space-y-16">
+          {GROUPS.map((group, gi) => (
+            <div key={group.heading}>
+              <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-1.5">
+                <h3 className="display-serif text-[var(--studio-ink)] text-2xl sm:text-3xl">
+                  {group.heading}
+                </h3>
+                <p className="text-[var(--studio-graphite)] text-[13.5px] sm:max-w-md sm:text-right leading-relaxed">
+                  {group.blurb}
+                </p>
+              </div>
+              <div className="mt-5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
+                {group.slots.map((s, i) => (
+                  <div
+                    key={s.code}
+                    className="product-card rounded-xl overflow-hidden reveal-up"
+                    style={{ animationDelay: `${(gi * 3 + i) * 50}ms` }}
+                  >
+                    <div className="rounded-t-xl overflow-hidden">
+                      <SlotPreview code={s.code} />
+                    </div>
+                    <div className="px-3.5 py-3 text-[var(--studio-ink)] text-[13px] font-medium">
+                      {s.name}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     </section>
   );
 }
 
-function StackList() {
-  const rows: Array<[string, React.ReactNode]> = [
-    ["Runtime",   <>CopilotKit&nbsp;1.57 · <span className="text-[var(--studio-graphite)]">@copilotkit/runtime/v2 · single-route</span></>],
-    ["Model",     <>Gemini&nbsp;2.5&nbsp;Flash-Lite · <span className="text-[var(--studio-graphite)]">@ai-sdk/google · maxSteps 1 · temp 0</span></>],
-    ["Catalog",   <>A2UI · <span className="text-[var(--studio-graphite)]">createCatalog + Zod schemas</span></>],
-    ["Framework", <>Next.js&nbsp;16.2 · React&nbsp;19.2 · <span className="text-[var(--studio-graphite)]">Tailwind v4 · TypeScript</span></>],
-    ["Voice",     <>Web&nbsp;Speech&nbsp;API · <span className="text-[var(--studio-graphite)]">600ms restart debounce</span></>],
-    ["Record",    <>MediaRecorder + getDisplayMedia · <span className="text-[var(--studio-graphite)]">VP9 + Opus webm</span></>],
+/* ───── 6. Use cases ───── */
+
+function UseCases() {
+  const cases: Array<{ tag: string; title: string; body: string; accent: string }> = [
+    {
+      tag: "Founders",
+      title: "Pitch with proof",
+      body: "Say your revenue and growth and watch it land on screen. Investors see traction, not just slides.",
+      accent: "var(--phosphor)",
+    },
+    {
+      tag: "Speakers",
+      title: "Own the talk",
+      body: "Your name, your title, and your key points appear as broadcast lower thirds while you speak.",
+      accent: "var(--amber-cue)",
+    },
+    {
+      tag: "Course creators",
+      title: "Make lessons stick",
+      body: "Highlight terms, show progress, and mark chapters live, so students always know where they are.",
+      accent: "var(--magenta-sweep)",
+    },
+    {
+      tag: "Consultants",
+      title: "Demo like a network",
+      body: "Put live KPIs and a branded ticker on your call. Every client meeting feels like a broadcast.",
+      accent: "var(--signal)",
+    },
   ];
 
   return (
-    <div className="border border-white/[0.06] bg-[var(--studio-black)]/60">
-      <div className="px-4 py-2.5 border-b border-white/[0.06] flex items-center justify-between">
-        <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
-          Tech&nbsp;stack
-        </span>
-        <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
-          v0.1.0
-        </span>
-      </div>
-      <dl className="divide-y divide-white/[0.05]">
-        {rows.map(([label, value]) => (
-          <div key={label} className="px-4 py-3 grid grid-cols-[7rem_1fr] gap-4 items-baseline">
-            <dt className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
-              {label}
-            </dt>
-            <dd className="font-mono text-[12px] text-[var(--studio-ink)] leading-snug">
-              {value}
-            </dd>
-          </div>
-        ))}
-      </dl>
-    </div>
-  );
-}
-
-function ArchitectureFlow() {
-  const lines = [
-    "  voice / typing",
-    "       │",
-    "       ▼",
-    "  AG-UI session  ───►  Gemini 2.5 Flash-Lite",
-    "       ▲                          │",
-    "       │                          ▼",
-    "  React state  ◄── normalize ── tool call",
-    "       │",
-    "       ▼",
-    "  OverlayLayer  ( 60ms stagger · FLIP transitions )",
-    "       │",
-    "       ▼",
-    "  composited frame  ●  on air",
-  ];
-  return (
-    <div className="border border-white/[0.06] bg-[var(--studio-black)]/60">
-      <div className="px-4 py-2.5 border-b border-white/[0.06] flex items-center justify-between">
-        <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
-          Signal&nbsp;path
-        </span>
-        <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--phosphor)]">
-          live
-        </span>
-      </div>
-      <pre className="px-4 py-4 font-mono text-[11.5px] leading-[1.55] text-[var(--studio-ink)] overflow-x-auto">
-        {lines.join("\n")}
-      </pre>
-    </div>
-  );
-}
-
-/* ───── 6. Issue 003. What's Next: Virtual Camera ───── */
-
-function IssueRoadmap() {
-  return (
-    <section className="mx-auto max-w-7xl px-4 sm:px-6 py-24 sm:py-32">
+    <section id="use-cases" className="mx-auto max-w-7xl px-4 sm:px-6 py-20 sm:py-28">
       <SectionHead
-        issue="Issue 003"
+        eyebrow="Use cases"
         title={
           <>
-            Where this{" "}
-            <span className="italic text-[var(--signal)]">might go</span>.
+            Built for the people <span className="italic text-[var(--phosphor)]">on camera</span>.
           </>
         }
-        kicker="The web version got the loop running. After that, here's a direction that sounds fun to chase."
+        kicker="No crew, no graphics operator, no post-production. Just you and your voice."
       />
 
-      <div className="mt-12 grid grid-cols-1 lg:grid-cols-[1.1fr_1fr] gap-10 lg:gap-16">
-        <div className="space-y-6 text-[var(--studio-graphite)] text-[15px] leading-relaxed">
-          <p>
-            People keep asking about Zoom plugins. The more interesting move might be
-            skipping plugins entirely and shipping Capturia as a{" "}
-            <span className="text-[var(--studio-ink)]">desktop camera device</span>{" "}
-            instead. A macOS Camera Extension first, with a Windows DirectShow filter as a
-            possible follow-up, publishing the composited webcam-plus-overlays feed to the
-            operating system. Every video tool would see a{" "}
-            <span className="text-[var(--studio-ink)]">Capturia Camera</span>{" "}
-            in its dropdown, the same way Snap Camera and NVIDIA Broadcast show up today. No
-            per-platform plugin work. Just a system-level video source.
-          </p>
-          <p>
-            The existing web codebase (twelve components, agent, Zod catalog, overlay layer,
-            animations) would slot in as the{" "}
-            <span className="text-[var(--studio-ink)]">renderer inside the desktop wrapper</span>,
-            no rewrite needed. Tauri or Electron on the outside, a hidden canvas at 30fps in
-            the middle, a CoreMediaIO extension on macOS to publish the feed. Maybe Deepgram
-            for voice once we&apos;re outside the browser, which would clear up a couple of
-            annoyances in one move. A few weeks of focus for a Mac MVP, probably. Longer if
-            signed, notarized, cross-platform end up mattering. We&apos;ll see how it feels.
-          </p>
-        </div>
-
-        <Roadmap />
+      <div className="mt-12 sm:mt-16 grid grid-cols-1 sm:grid-cols-2 gap-5 sm:gap-6">
+        {cases.map((c, i) => (
+          <div
+            key={c.tag}
+            className="product-card rounded-2xl p-7 sm:p-8 reveal-up"
+            style={{ animationDelay: `${i * 90}ms` }}
+          >
+            <div className="flex items-center gap-2.5">
+              <span
+                className="w-2 h-2 rounded-full"
+                style={{ background: c.accent, boxShadow: `0 0 12px ${c.accent}` }}
+              />
+              <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
+                {c.tag}
+              </span>
+            </div>
+            <h3 className="display-serif mt-4 text-[var(--studio-ink)] text-2xl sm:text-3xl">
+              {c.title}
+            </h3>
+            <p className="mt-3 text-[var(--studio-graphite)] text-[15px] leading-relaxed">
+              {c.body}
+            </p>
+          </div>
+        ))}
       </div>
     </section>
   );
 }
 
-function Roadmap() {
-  const columns: Array<{
-    title: string;
-    items: Array<{ label: string; status: "shipped" | "queued" }>;
-  }> = [
-    {
-      title: "Now",
-      items: [
-        { label: "Web studio",      status: "shipped" },
-        { label: "AG-UI loop",      status: "shipped" },
-        { label: "12 components",   status: "shipped" },
-        { label: "Voice + typing",  status: "shipped" },
-      ],
-    },
-    {
-      title: "Q3 · 2026",
-      items: [
-        { label: "Tauri shell",     status: "queued" },
-        { label: "macOS camera ext",status: "queued" },
-        { label: "Deepgram voice",  status: "queued" },
-        { label: "Push-to-talk",    status: "queued" },
-      ],
-    },
-    {
-      title: "Q4 · 2026",
-      items: [
-        { label: "Windows DS filter", status: "queued" },
-        { label: "Signed + notarized",status: "queued" },
-        { label: "Zoom / Meet auto",  status: "queued" },
-        { label: "Presets",           status: "queued" },
-      ],
-    },
-    {
-      title: "2027",
-      items: [
-        { label: "MCP data feeds",  status: "queued" },
-        { label: "Sponsor blocks",  status: "queued" },
-        { label: "Body tracking",   status: "queued" },
-        { label: "Extension SDK",   status: "queued" },
-      ],
-    },
-  ];
+/* ───── 7. Pricing teaser ───── */
 
+function Pricing() {
   return (
-    <div className="border border-white/[0.06] bg-[var(--studio-mist)]/40">
-      <div className="px-4 py-2.5 border-b border-white/[0.06] flex items-center justify-between">
-        <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
-          Roadmap
-        </span>
-        <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
-          ■ shipped · ◌ queued
-        </span>
-      </div>
-      <div className="grid grid-cols-2 lg:grid-cols-4 divide-x divide-y lg:divide-y-0 divide-white/[0.05]">
-        {columns.map((col) => (
-          <div key={col.title} className="p-4">
-            <div className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-graphite)]">
-              {col.title}
+    <section id="pricing" className="border-y border-white/[0.06] bg-[var(--studio-mist)]">
+      <div className="mx-auto max-w-5xl px-4 sm:px-6 py-20 sm:py-28">
+        <SectionHead
+          eyebrow="Pricing"
+          title={
+            <>
+              Start free today. <span className="italic text-[var(--phosphor)]">Go pro soon.</span>
+            </>
+          }
+          kicker="The browser studio is free and open source. The desktop camera is on the way."
+        />
+
+        <div className="mt-12 sm:mt-16 grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6">
+          {/* Free */}
+          <div className="product-card rounded-2xl p-8 reveal-up flex flex-col">
+            <div className="flex items-baseline justify-between">
+              <h3 className="text-[var(--studio-ink)] text-xl font-semibold tracking-tight">Free</h3>
+              <span className="display-serif text-[var(--studio-ink)] text-4xl">$0</span>
             </div>
-            <ul className="mt-3 space-y-2">
-              {col.items.map((it) => (
-                <li
-                  key={it.label}
-                  className="flex items-start gap-2 font-mono text-[11px] leading-snug"
-                >
-                  <span
-                    className={`mt-1.5 ${
-                      it.status === "shipped"
-                        ? "text-[var(--phosphor)]"
-                        : "text-[var(--studio-fade)]"
-                    }`}
-                  >
-                    {it.status === "shipped" ? "■" : "◌"}
-                  </span>
-                  <span
-                    className={
-                      it.status === "shipped"
-                        ? "text-[var(--studio-ink)]"
-                        : "text-[var(--studio-graphite)]"
-                    }
-                  >
-                    {it.label}
-                  </span>
-                </li>
-              ))}
+            <p className="mt-2 text-[var(--studio-graphite)] text-[14px]">
+              Use it in your browser, right now.
+            </p>
+            <ul className="mt-7 space-y-3.5 text-[14.5px] text-[var(--studio-graphite)] flex-1">
+              <Feature>Run the full studio in your browser</Feature>
+              <Feature>All graphics, driven by your voice</Feature>
+              <Feature>Bring your own AI key (BYOK)</Feature>
+              <Feature>Voice in Chrome and Edge</Feature>
             </ul>
+            <Link
+              href="/studio"
+              className="cta-solid mt-8 inline-flex items-center justify-center gap-2 rounded-full px-6 py-3.5 text-[15px] font-semibold"
+            >
+              Try it free
+              <span aria-hidden>→</span>
+            </Link>
           </div>
-        ))}
+
+          {/* Pro (coming soon) */}
+          <div className="pro-card rounded-2xl p-8 reveal-up [animation-delay:120ms] flex flex-col">
+            <div className="flex items-center justify-between">
+              <h3 className="text-[var(--studio-ink)] text-xl font-semibold tracking-tight">Pro</h3>
+              <span className="rounded-full border border-[var(--phosphor)]/40 px-2.5 py-1 font-mono text-[9px] tracking-[0.22em] uppercase text-[var(--phosphor)]">
+                Coming soon
+              </span>
+            </div>
+            <p className="mt-2 text-[var(--studio-graphite)] text-[14px]">
+              Capturia as a desktop camera.
+            </p>
+            <ul className="mt-7 space-y-3.5 text-[14.5px] text-[var(--studio-graphite)] flex-1">
+              <Feature accent="var(--phosphor)">Shows up as a camera in Zoom, Teams, and Meet</Feature>
+              <Feature accent="var(--phosphor)">Drop your deck, numbers ready on cue</Feature>
+              <Feature accent="var(--phosphor)">No browser limits, works everywhere</Feature>
+              <Feature accent="var(--phosphor)">Built-in voice, no extension needed</Feature>
+            </ul>
+            <a
+              href={GITHUB}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ghost-btn mt-8 inline-flex items-center justify-center gap-2 rounded-full px-6 py-3.5 text-[15px] font-medium"
+            >
+              Notify me on GitHub
+              <span aria-hidden>→</span>
+            </a>
+          </div>
+        </div>
       </div>
-    </div>
+    </section>
   );
 }
 
-/* ───── 7. Closing cue ───── */
-
-function CueClose() {
+function Feature({ children, accent }: { children: React.ReactNode; accent?: string }) {
   return (
-    <section className="border-t border-white/[0.06]">
-      <div className="mx-auto max-w-5xl px-4 sm:px-6 py-24 sm:py-32 text-center">
-        <div className="font-mono text-[10px] tracking-[0.24em] uppercase text-[var(--studio-fade)]">
-          Cue · ready · 00:00:00
+    <li className="flex items-start gap-3">
+      <svg
+        aria-hidden
+        width="16"
+        height="16"
+        viewBox="0 0 16 16"
+        className="mt-0.5 shrink-0"
+        style={{ color: accent ?? "var(--studio-fade)" }}
+      >
+        <path
+          d="M3 8.5l3 3 7-7.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+      <span>{children}</span>
+    </li>
+  );
+}
+
+/* ───── 8. Final CTA ───── */
+
+function FinalCta() {
+  return (
+    <section className="relative overflow-hidden">
+      <div
+        aria-hidden
+        className="phosphor-wash"
+        style={{ bottom: "-20%", left: "50%", transform: "translateX(-50%)", width: "70%", height: "70%" }}
+      />
+      <div className="mx-auto max-w-4xl px-4 sm:px-6 py-24 sm:py-32 text-center relative">
+        <div className="inline-flex items-center gap-2 font-mono text-[10px] tracking-[0.24em] uppercase text-[var(--studio-fade)]">
+          <span className="w-1.5 h-1.5 rounded-full bg-[var(--tally)] tally-pulse" />
+          <span className="text-[var(--tally)]">On Air</span>
+          <span>· ready when you are</span>
         </div>
-        <h2 className="display-serif mt-6 text-[clamp(2.4rem,6vw,5rem)] leading-none">
-          Open the studio.{" "}
-          <span className="italic text-[var(--phosphor)]">Speak to it.</span>
+        <h2 className="display-serif mt-6 text-[clamp(2.5rem,7vw,5.5rem)] leading-[1.02]">
+          Try it free.{" "}
+          <span className="italic text-[var(--phosphor)] [text-shadow:0_0_36px_rgba(82,255,139,0.22)]">
+            Just start talking.
+          </span>
         </h2>
-        <p className="mt-6 text-[var(--studio-graphite)] max-w-xl mx-auto">
-          The fastest way to feel what Capturia is, is to talk at it for thirty seconds.
-          Free. No signup. Voice works in Chrome and Edge.
+        <p className="mt-6 text-[var(--studio-graphite)] max-w-xl mx-auto text-base sm:text-lg leading-relaxed">
+          The fastest way to feel what Capturia does is to talk at it for thirty seconds.
+          Open the studio and watch your words turn into graphics.
         </p>
 
-        <div className="mt-10 inline-flex flex-col items-center gap-3">
+        <div className="mt-10 flex flex-col items-center gap-4">
           <Link
             href="/studio"
-            className="cue-btn group inline-flex items-center gap-3 px-8 py-4 font-mono text-[13px] tracking-[0.22em] uppercase"
+            className="cta-solid inline-flex items-center gap-2.5 rounded-full px-9 py-4 text-base font-semibold"
           >
-            <span className="w-1.5 h-1.5 rounded-full bg-[var(--phosphor)] group-hover:scale-125 transition-transform" />
-            Cue&nbsp;the&nbsp;studio
-            <span className="text-[var(--phosphor)]">→</span>
+            Try it free
+            <span aria-hidden>→</span>
           </Link>
           <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
-            Bring your webcam · headphones recommended
+            Free · no signup · Chrome / Edge for voice
           </span>
         </div>
       </div>
@@ -580,58 +534,56 @@ function CueClose() {
   );
 }
 
-/* ───── 8. Footer ───── */
+/* ───── 9. Footer ───── */
 
 function SiteFooter() {
   return (
     <footer className="border-t border-white/[0.06] bg-[var(--studio-mist)]">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 py-10 grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-6 items-end">
-        <div>
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 py-12 grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-8 items-start">
+        <div className="max-w-md">
           <Link
             href="/"
             aria-label="Capturia home"
             className="inline-flex text-[var(--studio-ink)] hover:opacity-90 transition-opacity"
           >
-            <CapturiaLogo style={{ height: 36, width: "auto" }} />
+            <CapturiaLogo style={{ height: 34, width: "auto" }} />
           </Link>
-          <div className="mt-3 font-mono text-[11px] text-[var(--studio-graphite)] leading-relaxed">
-            Built solo by Andres Carreon · founder, Bubblio · 1st place at the Generative UI Global Hackathon · May 2026
-          </div>
-          <div className="mt-1 font-mono text-[10px] tracking-[0.18em] uppercase text-[var(--studio-fade)]">
-            Open source ·{" "}
+          <p className="mt-4 text-[var(--studio-graphite)] text-[14px] leading-relaxed">
+            Broadcast-grade graphics on your camera, composed live from your voice.
+          </p>
+          <p className="mt-3 text-[var(--studio-fade)] text-[12.5px] leading-relaxed">
+            Built solo by Andres Carreon, founder of Bubblio. 1st place at the
+            Generative UI Global Hackathon, May 2026.
+          </p>
+          <p className="mt-3 font-mono text-[10px] tracking-[0.18em] uppercase text-[var(--studio-fade)]">
+            Open source · built on open standards ·{" "}
             <a
-              href="https://github.com/AndresCarreonDiaz/capturia/blob/main/LICENSE"
+              href={LICENSE}
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-white transition-colors"
             >
               MIT
             </a>
-          </div>
+          </p>
         </div>
 
-        <nav className="flex items-center gap-1 font-mono text-[10px] tracking-[0.22em] uppercase">
-          <a
-            href="https://github.com/AndresCarreonDiaz/capturia"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-2.5 py-1 text-[var(--studio-fade)] hover:text-white transition-colors"
-          >
-            GitHub →
-          </a>
-          <Link
-            href="/studio"
-            className="px-2.5 py-1 text-[var(--phosphor)] hover:text-white transition-colors"
-          >
-            Studio →
+        <nav className="flex flex-col sm:items-end gap-2.5 text-[13px] text-[var(--studio-graphite)]">
+          <Link href="/studio" className="hover:text-white transition-colors">
+            Open the studio
           </Link>
+          <a href="#how" className="hover:text-white transition-colors">How it works</a>
+          <a href="#pricing" className="hover:text-white transition-colors">Pricing</a>
+          <a href={GITHUB} target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
+            GitHub
+          </a>
         </nav>
       </div>
 
       <div className="border-t border-white/[0.04]">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 h-9 flex items-center justify-between font-mono text-[9px] tracking-[0.24em] uppercase text-[var(--studio-fade)]">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 h-10 flex items-center justify-between font-mono text-[9px] tracking-[0.24em] uppercase text-[var(--studio-fade)]">
+          <span>Capturia · {new Date().getFullYear()}</span>
           <span>Stream&nbsp;idle · 00:00:00</span>
-          <span>EOL · ◇</span>
         </div>
       </div>
     </footer>
@@ -641,23 +593,23 @@ function SiteFooter() {
 /* ───── shared: section heading block ───── */
 
 function SectionHead({
-  issue,
+  eyebrow,
   title,
   kicker,
 }: {
-  issue: string;
+  eyebrow: string;
   title: React.ReactNode;
   kicker?: string;
 }) {
   return (
-    <div className="max-w-4xl">
+    <div className="max-w-3xl">
       <div className="flex items-center gap-3">
-        <span className="font-mono text-[10px] tracking-[0.24em] uppercase text-[var(--studio-fade)]">
-          {issue}
+        <span className="font-mono text-[10px] tracking-[0.24em] uppercase text-[var(--phosphor)]">
+          {eyebrow}
         </span>
         <span className="h-px flex-1 bg-white/[0.08]" />
       </div>
-      <h2 className="display-serif mt-4 text-[clamp(2rem,5vw,3.75rem)] leading-[1.02] text-[var(--studio-ink)]">
+      <h2 className="display-serif mt-4 text-[clamp(2rem,5vw,3.75rem)] leading-[1.04] text-[var(--studio-ink)]">
         {title}
       </h2>
       {kicker && (
