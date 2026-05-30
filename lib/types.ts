@@ -19,6 +19,23 @@ export interface TimelineStep {
   label: string;
 }
 
+// A single node in an agent-authored A2UI v0.9 surface tree (the `render_surface`
+// tool). Flat format: every node has an id + a `component` type string, props ride
+// as sibling keys, and children are referenced by id (array for Row/Column/List,
+// single `child` for container slots). Deliberately loose: the wire shape is
+// validated and sanitized by sanitizeSurfaceTree() in lib/a2ui-validate.ts before
+// it ever reaches state, so this type is a structural hint, not a guarantee.
+export interface A2uiNode {
+  id: string;
+  component: string;
+  child?: string;
+  // Child ids only. The wire format also permits a data-bound list object, but
+  // sanitizeSurfaceTree (lib/a2ui-validate.ts) rejects that form (no data model
+  // in v1), so the type matches what actually survives validation.
+  children?: string[];
+  [key: string]: unknown;
+}
+
 export type OverlaySpec =
   | {
       id: string;
@@ -91,4 +108,15 @@ export type OverlaySpec =
       type: "BigCounter";
       position: OverlayPosition;
       props: { value: number; label: string; prefix?: string; suffix?: string; color?: string };
+    }
+  | {
+      // Agent-authored A2UI surface: the model composes a whole component tree
+      // (layout primitives wrapping branded Capturia overlays) rather than
+      // placing one fixed leaf. Rendered through the real A2UI v0.9 runtime by a
+      // dedicated A2uiOverlayLayer. `components` is the sanitized flat node list
+      // (root id "root"); the client owns the surface envelope + lifecycle.
+      id: string;
+      type: "Surface";
+      position: OverlayPosition;
+      props: { components: A2uiNode[] };
     };

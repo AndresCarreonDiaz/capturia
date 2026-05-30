@@ -42,6 +42,8 @@ import SettingsModal from "@/components/SettingsModal";
 import DeckDropzone from "@/components/DeckDropzone";
 import CueDeck from "@/components/CueDeck";
 import { normalizeProps } from "@/lib/normalize";
+import { sanitizeSurfaceTree } from "@/lib/a2ui-validate";
+import { extractJsonArray } from "@/lib/extract-json";
 import { matchCue } from "@/lib/deck/cues";
 import type { CueCard, DeckFacts } from "@/lib/deck/types";
 import type { OverlaySpec, OverlayPosition } from "@/lib/types";
@@ -229,7 +231,12 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
       id: o.id,
       type: o.type,
       position: o.type !== "Letterbox" ? o.position : "full-screen",
-      props: o.props,
+      // Authored surfaces carry a whole component tree; summarize it instead of
+      // echoing the full node list back into the agent's context every render.
+      props:
+        o.type === "Surface"
+          ? { components: `<authored A2UI tree, ${o.props.components.length} nodes>` }
+          : o.props,
     })),
   });
 
@@ -279,7 +286,14 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
       try {
         props = JSON.parse(propsStr);
       } catch {
-        console.error("Invalid props JSON:", propsStr);
+        console.warn("add_overlay: invalid props JSON, ignoring");
+        return;
+      }
+      // Surfaces are only ever created through render_surface, whose handler
+      // runs sanitizeSurfaceTree. Reject here so a "Surface" type can't smuggle
+      // an unsanitized component tree (cycles, oversized, bindings) into state.
+      if (type === "Surface") {
+        console.warn("add_overlay cannot create a Surface; use render_surface");
         return;
       }
       const normalized = normalizeProps(type, props);
@@ -320,7 +334,9 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
       }
       setOverlays((prev) =>
         prev.map((o) => {
-          if (o.id !== id) return o;
+          // Never let modify_overlay touch a Surface: its props are a sanitized
+          // component tree, not flat leaf props. Re-author via render_surface.
+          if (o.id !== id || o.type === "Surface") return o;
           const merged = { ...(o.props as Record<string, unknown>), ...newProps };
           const normalized = normalizeProps(o.type, merged);
           return { ...o, props: normalized } as OverlaySpec;
@@ -472,7 +488,7 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
       try {
         parsed = JSON.parse(elements);
       } catch {
-        console.error("compose_scene: invalid elements JSON:", elements);
+        console.warn("compose_scene: invalid elements JSON, ignoring");
         return;
       }
       if (!Array.isArray(parsed)) return;
@@ -481,6 +497,9 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
         if (!raw || typeof raw !== "object") continue;
         const it = raw as Record<string, unknown>;
         if (typeof it.id !== "string" || typeof it.type !== "string") continue;
+        // Surfaces must go through render_surface (sanitizeSurfaceTree); skip any
+        // that try to ride in via compose_scene unsanitized.
+        if (it.type === "Surface") continue;
         const props = normalizeProps(
           it.type,
           (it.props && typeof it.props === "object" ? it.props : {}) as Record<string, unknown>
@@ -502,6 +521,78 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
     },
   });
 
+  // A2UI Action: render an AGENT-AUTHORED surface. Unlike add_overlay/compose_scene
+  // (which place fixed leaf overlays), here the model authors a whole A2UI v0.9
+  // component tree, composing branded Capturia overlays inside layout primitives.
+  // The tree is sanitized (sanitizeSurfaceTree) before it touches state, then
+  // rendered through the genuine A2UI runtime by a dedicated A2uiOverlayLayer.
+  useCopilotAction({
+    name: "render_surface",
+    description:
+      "Author a custom A2UI surface: a composed component tree (layout primitives wrapping Capturia overlays) rendered through the live A2UI runtime. Use this ONLY when you need several overlays grouped into ONE laid-out unit (e.g. a stacked stat block). For a single overlay use add_overlay; for several independently anchored overlays use compose_scene. `components` is a JSON array of flat A2UI v0.9 nodes: the root node MUST have id \"root\" and be a Column, Row, or List; children are referenced by id arrays; props are top-level keys; allowed components are the layout primitives Column/Row/List/Divider plus the Capturia catalog types.",
+    parameters: [
+      {
+        name: "id",
+        type: "string",
+        description: "Unique surface id like 'surface-intro' or 'stat-block'",
+        required: true,
+      },
+      {
+        name: "position",
+        type: "string",
+        description:
+          "Anchor: top-left | top-right | top-center | center-left | center-right | bottom-left | bottom-right | bottom-center | full-bottom",
+        required: false,
+      },
+      {
+        name: "components",
+        type: "string",
+        description:
+          'JSON array of A2UI v0.9 flat nodes. Example: [{"id":"root","component":"Column","children":["lt","mp"]},{"id":"lt","component":"LowerThird","name":"Alex","subtitle":"Founder, Acme"},{"id":"mp","component":"MetricsPanel","title":"Q4","metrics":[{"label":"Revenue","value":"$1.8M","delta":"+24%"}]}]',
+        required: true,
+      },
+    ],
+    handler: ({ id, position, components }) => {
+      // The model may hand back the tree already-parsed, fenced (```json …```),
+      // or wrapped in prose; tolerate all. extractJsonArray recovers the array
+      // from the string cases and returns [] when there's nothing parseable.
+      const raw = components as unknown;
+      const parsedTree = Array.isArray(raw)
+        ? raw
+        : typeof raw === "string"
+        ? extractJsonArray(raw)
+        : [];
+      const tree = sanitizeSurfaceTree(parsedTree);
+      if (!tree) {
+        // A rejected tree is handled (we ignore it), not a crash, so warn rather
+        // than error — console.error pops the Next.js dev error overlay.
+        console.warn("render_surface: components missing or invalid, ignoring");
+        return;
+      }
+      setOverlays((prev) => {
+        const filtered = prev.filter((o) => o.id !== id);
+        return [
+          ...filtered,
+          {
+            id,
+            type: "Surface",
+            position: (position as OverlayPosition) ?? "center-right",
+            props: { components: tree },
+          } as OverlaySpec,
+        ];
+      });
+    },
+  });
+
+  // Leaf overlays render through the active renderer (direct React, or the A2UI
+  // host when Surface Mode is on). Authored surfaces ALWAYS need the A2UI host, so
+  // they render through their own dedicated A2uiOverlayLayer regardless of the
+  // Surface Mode toggle — kept separate so toggling modes never re-animates the
+  // leaf overlays, and the surface layer is always mounted so a removed surface's
+  // 320ms exit animation plays out before its provider would tear down.
+  const leafOverlays = overlays.filter((o) => o.type !== "Surface");
+  const surfaceOverlays = overlays.filter((o) => o.type === "Surface");
+
   return (
     <div
       className={`relative w-screen h-screen bg-black overflow-hidden ${
@@ -514,14 +605,19 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
       {/* Layer 0.5: ambient floating particles when voice is active (hidden in clean output) */}
       {!outputMode && <AmbientParticles active={isListening} />}
 
-      {/* Layer 1: overlay components (the published feed). Surface Mode renders
-          the same overlays through the live A2UI runtime; default is the direct
-          React renderer. Both read the one `overlays` source of truth. */}
+      {/* Layer 1: leaf overlays (the published feed). Surface Mode renders these
+          through the live A2UI runtime; default is the direct React renderer.
+          Both read the one `overlays` source of truth. */}
       {surfaceMode ? (
-        <A2uiOverlayLayer overlays={overlays} />
+        <A2uiOverlayLayer overlays={leafOverlays} />
       ) : (
-        <OverlayLayer overlays={overlays} />
+        <OverlayLayer overlays={leafOverlays} />
       )}
+
+      {/* Layer 1b: agent-authored surfaces (render_surface). These ARE A2UI
+          trees, so they always render through their own A2UI host, independent
+          of the Surface Mode toggle. Always mounted so exit animations finish. */}
+      <A2uiOverlayLayer overlays={surfaceOverlays} />
 
       {/* Everything below is operator chrome, hidden in Program Output so OBS /
           the virtual camera capture only the webcam + overlays. */}

@@ -49,5 +49,12 @@ export const capturiaCatalog = createCatalog(
     StatRing: adapt(StatRing),
     BigCounter: adapt(BigCounter),
   },
-  { catalogId: "capturia" }
+  // includeBasicCatalog merges A2UI's built-in primitives (Row, Column, List,
+  // Divider, Text, Card, …) into this catalog alongside the 12 Capturia
+  // overlays. It is purely additive (non-breaking for the single-leaf Surface
+  // Mode path). Agent-authored surfaces (the render_surface tool) compose
+  // branded Capturia leaves inside the transparent layout primitives; the
+  // sanitizer in lib/a2ui-validate.ts whitelists only Row/Column/List/Divider so
+  // the off-brand Material-styled Card/Text/Button are never rendered live.
+  { catalogId: "capturia", includeBasicCatalog: true }
 );
