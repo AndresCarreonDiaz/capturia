@@ -8,6 +8,8 @@ import {
   buildOverlayCreate,
   buildOverlayUpdate,
   buildOverlayDelete,
+  buildSurfaceCreate,
+  buildSurfaceUpdate,
 } from "@/lib/a2ui-scene";
 
 interface Props {
@@ -47,13 +49,18 @@ export default function A2uiOverlay({ overlay, exiting = false, enterIndex = 0 }
   // console clean and is correct under StrictMode's double-invoke.
   useLayoutEffect(() => {
     if (isLetterbox) return;
-    if (getSurface(overlay.id)) {
+    const exists = !!getSurface(overlay.id);
+    if (overlay.type === "Surface") {
+      // Authored surface: full tree. Re-author = delete + recreate (see
+      // buildSurfaceUpdate) so dropped nodes don't leak in the A2UI model.
+      processMessages(exists ? buildSurfaceUpdate(overlay) : buildSurfaceCreate(overlay));
+    } else if (exists) {
       processMessages([buildOverlayUpdate(overlay)]);
     } else {
       processMessages(buildOverlayCreate(overlay));
     }
-    // overlay.id + sig capture every renderable change; processMessages/
-    // getSurface are stable refs from the provider.
+    // overlay.id + sig capture every renderable change (sig includes props, so a
+    // re-authored tree re-pushes); processMessages/getSurface are stable refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overlay.id, sig, isLetterbox]);
 
@@ -72,6 +79,21 @@ export default function A2uiOverlay({ overlay, exiting = false, enterIndex = 0 }
   }
 
   const { className, style } = overlayAnimProps(overlay.type, exiting, enterIndex);
+
+  // Authored surfaces root in a basic Row/Column, which set `width:100%`. The
+  // positioned wrapper is absolute with no width, so without a bound that 100%
+  // resolves against the full-screen overlay layer and the surface stretches
+  // edge to edge. Constrain it to a capped max-content box so it sizes to its
+  // composed content like the leaf overlays do.
+  if (overlay.type === "Surface") {
+    return (
+      <div className={className} style={style}>
+        <div style={{ width: "max-content", maxWidth: "min(80vw, 560px)" }}>
+          <A2UIRenderer surfaceId={overlay.id} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={className} style={style}>

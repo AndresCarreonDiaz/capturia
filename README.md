@@ -72,6 +72,8 @@ Press `Cmd+,` to open Settings, paste your own API key (encrypted via OS Keychai
 
 **Surface Mode (A2UI).** Toggle the **A2UI** button (or `Cmd/Ctrl+Shift+A`, or open `/studio?surface=1`) to render the live overlays through the genuine A2UI runtime (the registered `capturiaCatalog` rendered by `<A2UIRenderer>` against the A2UI v0.9 protocol) instead of the direct React renderer. Same overlays, same look; it just proves the typed catalog is a real renderable surface, not only a schema. It composes with Program Output, so the A2UI-rendered feed is what OBS captures.
 
+**Agent-authored surfaces.** Beyond placing the fixed catalog components, the agent can **author an A2UI tree itself** with the `render_surface` tool: a layout of branded Capturia overlays (stacked in a `Column`, sided in a `Row`) composed into one laid-out unit and rendered through the real A2UI v0.9 pipeline. Say *"build me a stat block"* and the model composes the surface rather than firing single placements. The authored tree is untrusted, so a sanitizer (`lib/a2ui-validate.ts`) whitelists components to transparent layout primitives + the Capturia catalog (no off-brand Material chrome, no interactive widgets), strips data-binding/action and prototype-pollution keys, and rejects cycles, dangling child refs, and oversized/over-deep trees before anything reaches the feed. These surfaces always render through the A2UI runtime (their own host), independent of the Surface Mode toggle. Because Capturia's overlays are display-only, this ships today on the current model — no `thought_signature` roundtrip needed (the interactive server-middleware path is the next step, paired with the Gemini 3.x factory below).
+
 ---
 
 ## Stack
@@ -94,7 +96,7 @@ Press `Cmd+,` to open Settings, paste your own API key (encrypted via OS Keychai
 
 The agent doesn't manipulate the DOM. It sees a typed catalog of components and decides what to render where, with what props, by calling tools.
 
-**Frontend** (`app/page.tsx`) registers six tools the agent can call via `useCopilotAction`. `useCopilotReadable` shares the current overlay list back into the agent's context as **AG-UI shared state**, so the agent always knows what's on screen and can target updates by `id`. `useCopilotChat().appendMessage` pipes voice transcripts into the same session as `[VOICE]`-prefixed messages.
+**Frontend** (`app/studio/page.tsx`) registers eight tools the agent can call via `useCopilotAction`. `useCopilotReadable` shares the current overlay list back into the agent's context as **AG-UI shared state**, so the agent always knows what's on screen and can target updates by `id`. `useCopilotChat().appendMessage` pipes voice transcripts into the same session as `[VOICE]`-prefixed messages.
 
 **Backend** (`app/api/copilotkit/[[...slug]]/route.ts`) wraps `BuiltInAgent` from `@copilotkit/runtime/v2`. Single-route mode, in-memory thread state, `maxSteps: 1` so each utterance is one model call (no internal roundtrip), `temperature: 0` for deterministic tool selection. ~150 ms TTFT on Gemini 2.5 Flash-Lite.
 
@@ -135,21 +137,22 @@ Subsequent updates use the same loop but trigger different visual responses. `bu
 
 ---
 
-## The seven tools
+## The eight tools
 
-The agent calls one of seven typed tools. Never freeform DOM mutations.
+The agent calls one of eight typed tools. Never freeform DOM mutations.
 
 | Tool | Purpose |
 | --- | --- |
 | `add_overlay(id, type, position, props)` | Register a new overlay |
 | `compose_scene(elements, replace?)` | Lay out a whole multi-element scene in one call (push a whole UI at once) |
+| `render_surface(id, position, components)` | Author an A2UI component tree: branded overlays composed inside layout primitives, rendered through the live A2UI runtime |
 | `modify_overlay(id, props)` | Wholesale prop replacement (rare; the agent prefers the incremental ones) |
 | `remove_overlay(id)` | Remove one overlay or `"all"` |
 | `move_overlay(id, position)` | Smooth FLIP transition between anchors |
 | `append_chart_data(id, values)` | Grow a `FloatingChart` over time |
 | `bump_metric(id, label, value, delta)` | Update one row in a `MetricsPanel` with count-up + flash |
 
-The system prompt nudges the agent toward incremental tools (`bump_metric`, `append_chart_data`, `move_overlay`) over full replacements. That's where the "live" feel comes from: values count up, points slide in, panels move instead of being rebuilt. For "set up my intro" / "reset and show the results" moments, `compose_scene` lets the agent place several components at once (with optional `replace` to clear the stage first) rather than firing a burst of single `add_overlay` calls.
+The system prompt nudges the agent toward incremental tools (`bump_metric`, `append_chart_data`, `move_overlay`) over full replacements. That's where the "live" feel comes from: values count up, points slide in, panels move instead of being rebuilt. For "set up my intro" / "reset and show the results" moments, `compose_scene` lets the agent place several independently anchored components at once (with optional `replace` to clear the stage first) rather than firing a burst of single `add_overlay` calls. `compose_scene` and `add_overlay` place fixed leaf overlays; `render_surface` is the step up: the model **authors the A2UI tree itself** — a layout of branded Capturia overlays grouped into one laid-out unit, rendered through the genuine A2UI v0.9 runtime (see "Agent-authored surfaces" below).
 
 ---
 
@@ -178,8 +181,11 @@ app/
   api/copilotkit/[[...slug]]/route.ts   ← CopilotKit v2 backend, BuiltInAgent + Gemini
   globals.css                           ← all keyframes live here
   layout.tsx                            ← root layout, fonts, metadata
-  page.tsx                              ← Capturia component, six useCopilotAction handlers, normalizeProps
+  page.tsx                              ← landing page ("On Air")
+  studio/page.tsx                       ← Capturia studio: eight useCopilotAction handlers, leaf + surface render layers
 components/
+  A2uiOverlay.tsx                       ← A2UI host: Surface Mode leaf + authored-surface tree
+  A2uiOverlayLayer.tsx                  ← A2UIProvider mount (Surface Mode + authored surfaces)
   AmbientParticles.tsx                  ← floating particle layer when voice is live
   CommandBar.tsx                        ← input + voice toggle + empty-state quick chips
   HudClock.tsx                          ← top-right live clock
@@ -194,24 +200,28 @@ hooks/
   useTypewriter.ts                      ← per-character text reveal
   useVoiceCapture.ts                    ← Web Speech API wrapper with status + persistent error
 lib/
-  a2ui-catalog.tsx                      ← real createCatalog registration (client-only)
+  a2ui-catalog.tsx                      ← real createCatalog registration (client-only, includeBasicCatalog)
+  a2ui-scene.ts                         ← OverlaySpec → A2UI v0.9 message translation (leaf + surface)
+  a2ui-validate.ts                      ← sanitizer for agent-authored surface trees
   catalog.ts                            ← Zod schemas for all 12 components
+  normalize.ts                          ← untrusted-prop coercion (agent + deck)
   positions.ts                          ← anchor → Tailwind class map
   system-prompt.ts                      ← agent identity, voice rules, catalog hints
-  types.ts                              ← OverlaySpec discriminated union
+  types.ts                              ← OverlaySpec union (+ Surface variant, A2uiNode)
+  deck/                                 ← PDF extract, cue building, LLM codegen, validate
 ```
 
 ---
 
 ## Roadmap
 
-**Shipped:** Desktop BYOK key vault, deck-aware cue cards, Program Output / OBS virtual-camera path, and **Surface-mode A2UI rendering** (the registered catalog now renders live through `<A2UIRenderer>`; `compose_scene` lets the agent push a whole UI at once).
+**Shipped:** Desktop BYOK key vault, deck-aware cue cards, Program Output / OBS virtual-camera path, **Surface-mode A2UI rendering** (the registered catalog renders live through `<A2UIRenderer>`; `compose_scene` pushes a whole UI at once), and **agent-authored A2UI surfaces** (`render_surface` — the model composes its own A2UI tree of branded overlays inside layout primitives, sanitized via `lib/a2ui-validate.ts` and rendered through the real A2UI v0.9 runtime).
 
 Next:
 
 - **Face / body tracking**: overlays that follow the speaker (MediaPipe)
 - **Real-time data feeds**: `MetricsPanel` connected to live revenue / analytics endpoints
-- **Agent-authored A2UI surfaces**: let the model emit the A2UI tree directly (CopilotKit runtime `a2ui` middleware) once `thought_signature` / TTFT tradeoffs are handled; today the client translates tool calls into surfaces
+- **Interactive A2UI surfaces**: the server-side `@ag-ui/a2ui-middleware` path so the model streams surfaces and handles `log_a2ui_event` user actions (buttons, inputs); needs the `thought_signature` roundtrip, so it pairs with the Gemini 3.x factory below. Today's `render_surface` authoring is display-only and ships on the current model.
 - **Extension catalog**: third-party overlay registrations (sponsor cards, poll widgets, branded components)
 - **Speech fallback**: Deepgram or Groq Whisper for Brave / Firefox / mobile
 - **Multi-language voice prompt**: currently English-only

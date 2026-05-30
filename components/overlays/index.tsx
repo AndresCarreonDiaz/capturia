@@ -28,6 +28,10 @@ export const ENTER_CLASS: Record<OverlaySpec["type"], string> = {
   LiveBadge: "overlay-enter-scale",
   StatRing: "overlay-enter-scale",
   BigCounter: "overlay-enter",
+  // Authored surfaces (render_surface) only render through the A2UI host
+  // (A2uiOverlay), never the direct switch below; the whole composed tree fades
+  // in as one unit via this wrapper class.
+  Surface: "overlay-enter",
 };
 
 // The enter/exit animation wrapper props for an overlay. Shared so the direct
@@ -89,5 +93,9 @@ function Inner({ overlay }: { overlay: Exclude<OverlaySpec, { type: "Letterbox" 
       return <StatRing {...overlay.props} />;
     case "BigCounter":
       return <BigCounter {...overlay.props} />;
+    case "Surface":
+      // Agent-authored surfaces require the A2UI renderer; the direct React path
+      // never renders them (the studio routes them to a dedicated A2uiOverlayLayer).
+      return null;
   }
 }

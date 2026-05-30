@@ -4,23 +4,7 @@ import { toDeckFacts } from "./cues";
 import { buildCodegenPrompt } from "./prompt";
 import { validateOrFallback } from "./fallback";
 import type { RawSpec } from "./validate";
-
-// Pull the JSON array out of the model's reply, tolerating code fences or
-// surrounding prose.
-function extractJsonArray(text: string): unknown[] {
-  let t = (text || "").trim();
-  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fence) t = fence[1].trim();
-  const start = t.indexOf("[");
-  const end = t.lastIndexOf("]");
-  if (start === -1 || end === -1 || end < start) return [];
-  try {
-    const parsed = JSON.parse(t.slice(start, end + 1));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
+import { extractJsonArray } from "@/lib/extract-json";
 
 function aliasesFrom(item: Record<string, unknown>, label: string): string[] {
   const fromLLM = (Array.isArray(item.aliases) ? item.aliases : []).filter(

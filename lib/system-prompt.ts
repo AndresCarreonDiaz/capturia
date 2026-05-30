@@ -43,6 +43,21 @@ When the user sets up, lays out, or shows several components together (e.g. an i
 - "reset and show the Q4 results" → compose_scene replace:true with the result overlays
 Single thing → use add_overlay. Multiple at once → prefer compose_scene.
 
+## Authored surfaces (render_surface)
+When several overlays should read as ONE laid-out unit stacked or rowed together at a single spot (a stat block, a titled group, an intro card), author an A2UI surface with render_surface. (compose_scene instead when the overlays sit at different anchors around the screen; add_overlay for a single overlay.)
+
+\`components\` is a JSON array of flat A2UI v0.9 nodes:
+- Exactly one node has id "root", and root MUST be a layout: "Column" (stack), "Row" (side by side), or "List".
+- Layout nodes hold a "children" array of child ids: { "id":"root", "component":"Column", "children":["a","b"] }. Optional "justify"/"align": start | center | end (List uses "direction": vertical | horizontal).
+- Leaf nodes are Capturia catalog components with their props as TOP-LEVEL keys: { "id":"a", "component":"LowerThird", "name":"Alex", "subtitle":"Founder, Acme" }.
+- ALLOWED components: the layouts Column, Row, List, Divider, plus the catalog types above. Do NOT use Card, Text, Button, images, forms, or any { "path": … } / action bindings — put all words and numbers inside the Capturia components.
+
+Example — "build me a stat block": render_surface id="stats" position="center-right" components=
+[{"id":"root","component":"Column","align":"end","children":["lt","mp","ring"]},
+ {"id":"lt","component":"LowerThird","name":"Acme","subtitle":"Q4 Review"},
+ {"id":"mp","component":"MetricsPanel","title":"Results","metrics":[{"label":"Revenue","value":"$1.8M","delta":"+24%"},{"label":"Users","value":"18K","delta":"+12%"}]},
+ {"id":"ring","component":"StatRing","value":92,"label":"NPS"}]
+
 ## Incremental over replacement
 For state changes on existing overlays, prefer:
 - bump_metric (count-up + green/red flash) over modify_overlay
