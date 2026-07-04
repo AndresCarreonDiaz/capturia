@@ -1,7 +1,5 @@
 "use client";
 import { useState, useRef } from "react";
-import { useCopilotChat } from "@copilotkit/react-core";
-import { TextMessage, MessageRole } from "@copilotkit/runtime-client-gql";
 import { useIsDesktop } from "@/hooks/useDesktopHotkey";
 
 interface Props {
@@ -10,6 +8,11 @@ interface Props {
   isListening: boolean;
   onToggleVoice: () => void;
   isVoiceSupported: boolean;
+  // The studio's shared agent driver (hooks/useAgentRun.ts, called ONCE up
+  // there): resolves false when the turn was dropped because a run is already
+  // in flight. Passed as props so this component never mints its own agent.
+  sendMessage: (content: string) => Promise<boolean>;
+  agentBusy: boolean;
 }
 
 const QUICK_ACTIONS: { emoji: string; label: string; prompt: string }[] = [
@@ -25,14 +28,15 @@ export default function CommandBar({
   isListening,
   onToggleVoice,
   isVoiceSupported,
+  sendMessage,
+  agentBusy,
 }: Props) {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const { appendMessage, isLoading: chatLoading } = useCopilotChat();
   const isDesktop = useIsDesktop();
 
-  const busy = isLoading || chatLoading;
+  const busy = isLoading || agentBusy;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,9 +45,11 @@ export default function CommandBar({
     setInput("");
     setIsLoading(true);
     try {
-      await appendMessage(
-        new TextMessage({ content: cmd, role: MessageRole.User })
-      );
+      // Dropped because a run slipped in between the busy check and the send
+      // (sendMessage gates on the live agent state): give the text back
+      // instead of losing the operator's command.
+      const sent = await sendMessage(cmd);
+      if (!sent) setInput(cmd);
     } finally {
       setIsLoading(false);
     }
@@ -54,7 +60,7 @@ export default function CommandBar({
     if (busy) return;
     setIsLoading(true);
     try {
-      await appendMessage(new TextMessage({ content: prompt, role: MessageRole.User }));
+      await sendMessage(prompt);
     } finally {
       setIsLoading(false);
     }

@@ -6,10 +6,13 @@
 // surface can never render a Capturia component the agent path couldn't.
 //
 // Untrusted-input posture (agent JSON is never trusted):
-//   - whitelist components to transparent layout primitives + the 12 Capturia leaves
-//     (basic Card/Text/Button render off-brand Material chrome over the webcam, and
-//     interactive components need an event loop we don't run in v1)
-//   - reject prototype-pollution keys and data-binding/action keys (no data model in v1)
+//   - whitelist components to transparent layout primitives + the Capturia catalog
+//     leaves (basic Card/Text/Button render off-brand Material chrome over the
+//     webcam). The ONE interactive leaf is the branded ActionButton: its tap loop
+//     runs client-side (the catalog renderer dispatches at click time, see
+//     lib/a2ui-catalog.tsx), so the agent never authors event wiring.
+//   - reject prototype-pollution keys and data-binding/action keys (there is no
+//     data model; ActionButton's envelope is built at click time, never authored)
 //   - reject cycles (the renderer follows child refs with no cycle guard → stack
 //     overflow), dangling refs (→ shimmer placeholders), and oversized/over-deep trees
 // Returns a cleaned flat node list (root first, only root-reachable nodes, leaf props
@@ -19,16 +22,20 @@ import { catalogDefinitions, type CatalogKey } from "@/lib/catalog";
 import { normalizeProps } from "@/lib/normalize";
 import type { A2uiNode } from "@/lib/types";
 
-// Transparent containers only. Card/Text/Button and interactive widgets are
-// intentionally excluded (see header). Divider is allowed but cannot be the root.
+// Transparent containers only. Basic Card/Text/Button and the rest of the
+// Material basic catalog are intentionally excluded (see header); the one
+// allowed interactive component, ActionButton, enters via CAPTURIA_TYPES
+// below. Divider is allowed but cannot be the root.
 const LAYOUT_PRIMITIVES = new Set(["Column", "Row", "List", "Divider"]);
 const ROOT_LAYOUTS = new Set(["Column", "Row", "List"]);
 const CAPTURIA_TYPES = new Set(Object.keys(catalogDefinitions));
 
 // Own keys that must never appear anywhere in the tree.
 const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
-// Data-binding / action markers. v1 surfaces are static + non-interactive, so any
-// of these means the agent tried to use a feature we don't support — reject.
+// Data-binding / action markers. The agent never authors bindings: there is no
+// data model, and interactivity is confined to ActionButton, whose event
+// envelope is built client-side at click time (lib/a2ui-catalog.tsx). Any of
+// these keys in an authored tree means an unsupported feature; reject.
 const BINDING_KEYS = new Set(["path", "call", "event"]);
 
 // Style props kept per layout primitive; every other key on a layout node is dropped.

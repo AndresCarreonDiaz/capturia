@@ -39,6 +39,11 @@ export interface VoiceCaptureState {
   interimTranscript: string;
   speechStatus: string;
   lastError: string;   // persists even when status cycles, so we see the real failure
+  // performance.now() of the latest onresult (0 = none yet). The audio-reactive
+  // energy (useSpeechEnergy) keys off this rather than transcript/status text:
+  // results fire ONLY while the recognizer hears speech, while status churns
+  // through the silence-restart cycle and interim strings can repeat unchanged.
+  lastResultAt: number;
   isSupported: boolean;
   startListening: () => void;
   stopListening: () => void;
@@ -49,6 +54,7 @@ export function useVoiceCapture(
 ): VoiceCaptureState {
   const [isListening, setIsListening] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState("");
+  const [lastResultAt, setLastResultAt] = useState(0);
   const [speechStatus, setSpeechStatus] = useState("idle");
   const [lastError, setLastError] = useState("");
   const [isSupported, setIsSupported] = useState(false);
@@ -114,6 +120,7 @@ export function useVoiceCapture(
         else interim += text;
       }
       setSpeechStatus("recognizing…");
+      setLastResultAt(performance.now());
       setInterimTranscript(interim);
       if (final.trim()) {
         setInterimTranscript("");
@@ -172,5 +179,5 @@ export function useVoiceCapture(
   const startListening = useCallback(() => setIsListening(true), []);
   const stopListening = useCallback(() => setIsListening(false), []);
 
-  return { isListening, interimTranscript, speechStatus, lastError, isSupported, startListening, stopListening };
+  return { isListening, interimTranscript, speechStatus, lastError, lastResultAt, isSupported, startListening, stopListening };
 }

@@ -146,6 +146,44 @@ body {
 .ticker-scroll           { animation: ticker-scroll 22s linear infinite; }
 .stripe-march            { animation: stripe-march 0.9s linear infinite; }
 
+/* Audio-reactive: --mic-energy (0..1) is published on the studio root by
+   useSpeechEnergy from Web Speech results (no AudioContext; see the hook).
+   The whole feed breathes as the speaker talks; the var defaults to 0 so these
+   are inert when idle or unsupported. The vignette's shadow is pre-rendered at
+   full strength and only its OPACITY tracks the energy: animating box-shadow
+   itself would repaint the fullscreen layer every frame, while opacity runs on
+   the compositor. */
+.energy-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 140px rgba(34, 211, 238, 0.3);
+  opacity: var(--mic-energy, 0);
+  transition: opacity 90ms linear;
+  will-change: opacity;
+}
+.energy-scale {
+  transform: scale(calc(1 + var(--mic-energy, 0) * 0.05));
+  transform-origin: center;
+  transition: transform 90ms linear;
+}
+.energy-glow {
+  filter: brightness(calc(1 + var(--mic-energy, 0) * 0.35));
+  transition: filter 90ms linear;
+}
+
+/* While the agent is running a turn, authored-surface buttons go quiet:
+   pointer-events off makes the studio's isLoading tap-drop belt-and-suspenders
+   (a mid-run tap can no longer even fire), and the dimming doubles as visible
+   "thinking" feedback while the scene updates. data-agent-busy is set on the
+   stage root in app/studio/page.tsx. */
+[data-agent-busy] .action-button {
+  opacity: 0.5;
+  filter: saturate(0.5);
+  pointer-events: none;
+  cursor: wait;
+}
+
 /* Shimmer sweep across keyword chips. Use `--shimmer-color` to set glint color. */
 .kw-shimmer {
   background: linear-gradient(

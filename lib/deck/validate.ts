@@ -1,4 +1,9 @@
-import { catalogDefinitions, overlayPositionSchema, type CatalogKey } from "@/lib/catalog";
+import {
+  catalogDefinitions,
+  isPlaceableOverlayType,
+  overlayPositionSchema,
+  type CatalogKey,
+} from "@/lib/catalog";
 import { normalizeProps } from "@/lib/normalize";
 import type { OverlaySpec } from "@/lib/types";
 
@@ -14,6 +19,9 @@ export interface RawSpec {
 // the live agent path uses, so a deck spec can never render something the
 // agent path couldn't. Returns a typed OverlaySpec or null on failure.
 export function validateSpec(raw: RawSpec): OverlaySpec | null {
+  // Surface-only types (ActionButton) are in catalogDefinitions for the
+  // render_surface path but must never become standalone overlays.
+  if (!isPlaceableOverlayType(raw.type)) return null;
   const def = catalogDefinitions[raw.type as CatalogKey];
   if (!def) return null;
 
