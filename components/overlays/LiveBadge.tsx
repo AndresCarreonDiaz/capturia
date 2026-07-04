@@ -14,8 +14,12 @@ export default function LiveBadge({ label = "LIVE", color = "#ef4444" }: Props) 
         className="absolute inset-0 rounded-md ring-ripple pointer-events-none"
         style={{ boxShadow: `0 0 0 2px ${color}` }}
       />
+      {/* energy-glow: the badge brightens with --mic-energy (speaking energy).
+          The white LIVE text clamps at white, so the effect lands on the
+          colored background + glow with no text shimmer. Must stay on THIS
+          element: a filter on an ancestor would disable backdrop-blur. */}
       <div
-        className="relative flex items-center gap-2 px-3 py-1.5 rounded-md backdrop-blur-md"
+        className="relative flex items-center gap-2 px-3 py-1.5 rounded-md backdrop-blur-md energy-glow"
         style={{
           backgroundColor: `${color}f0`,
           boxShadow: `0 0 16px ${color}80`,

@@ -12,6 +12,13 @@
 
 # testing
 /coverage
+/test-results/
+/playwright-report/
+/.spike-out/
+
+# native addon build output (node-gyp) and assembled bundles
+native/*/build/
+native/*/dist/
 
 # next.js
 /.next/

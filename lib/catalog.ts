@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 // A2UI catalog: Zod schemas define the contract between the agent and the UI.
-// These schemas are injected into the agent's system prompt via useCopilotAction.
+// These schemas are injected into the agent's system prompt via the frontend tools.
 
 export const overlayPositionSchema = z.enum([
   "top-left",
@@ -122,6 +122,34 @@ export const catalogDefinitions = {
       color: z.string().optional(),
     }),
   },
+  ActionButton: {
+    description:
+      "The ONLY interactive component: a tappable Capturia button. Use it INSIDE render_surface (e.g. a poll, a reveal button, step navigation). When the viewer taps it, you receive a '[ACTION] <actionName>' turn and respond by changing the scene.",
+    props: z.object({
+      label: z.string().describe("Button caption shown to the viewer"),
+      // min(1): an empty actionName would pass the sanitizer and render a
+      // fully styled button whose taps are silently swallowed downstream
+      // (A2uiOverlayLayer drops empty names). Reject the dead button at
+      // authoring time instead.
+      actionName: z
+        .string()
+        .min(1)
+        .describe("Literal action id you receive back as '[ACTION] <actionName>' on tap"),
+      color: z.string().optional().describe("CSS accent color, defaults to cyan"),
+    }),
+  },
 } as const;
 
 export type CatalogKey = keyof typeof catalogDefinitions;
+
+// Types that only function inside render_surface trees. ActionButton's tap
+// loop needs the interactive A2UI host (dispatch -> onSurfaceAction); placed
+// as a standalone overlay it would render a dead button in Surface Mode and
+// nothing at all in the direct React path. The placement tools (add_overlay,
+// compose_scene) and the deck path validate against isPlaceableOverlayType so
+// these can never leak out of authored surfaces.
+export const SURFACE_ONLY_TYPES: ReadonlySet<string> = new Set(["ActionButton"]);
+
+export function isPlaceableOverlayType(type: string): boolean {
+  return type in catalogDefinitions && !SURFACE_ONLY_TYPES.has(type);
+}

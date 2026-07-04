@@ -306,6 +306,10 @@ export function useDesktopVoiceCapture(
     interimTranscript,
     speechStatus,
     lastError,
+    // Whisper transcribes whole chunks after the fact, so there is no live
+    // result stream to stamp; audio-reactive energy simply stays inert on
+    // desktop until a streaming backend lands.
+    lastResultAt: 0,
     isSupported,
     startListening,
     stopListening,

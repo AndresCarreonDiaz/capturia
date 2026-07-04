@@ -1,21 +1,24 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { CopilotKit } from "@copilotkit/react-core";
 import {
-  useCopilotReadable,
-  useCopilotAction,
-  useCopilotChat,
-} from "@copilotkit/react-core";
-import { TextMessage, MessageRole } from "@copilotkit/runtime-client-gql";
+  CopilotKitProvider,
+  useAgentContext,
+  useFrontendTool,
+} from "@copilotkit/react-core/v2";
+import { z } from "zod";
+import { useAgentRun } from "@/hooks/useAgentRun";
 import WebcamFeed from "@/components/WebcamFeed";
 import OverlayLayer from "@/components/OverlayLayer";
 import CommandBar from "@/components/CommandBar";
 import LiveCaptions from "@/components/LiveCaptions";
+import BrowserBanner from "@/components/BrowserBanner";
+import ModelKeyBanner from "@/components/ModelKeyBanner";
 import HudClock from "@/components/HudClock";
 import AmbientParticles from "@/components/AmbientParticles";
 // Real A2UI catalog object: createCatalog() is invoked at module load,
-// registering all 12 component renderers against the typed Zod definitions.
+// registering every catalog component renderer (the 12 display overlays plus
+// the interactive ActionButton) against the typed Zod definitions.
 // Stashed on window for inspection; rendered live by Surface Mode (the A2UI
 // renderer is loaded lazily via the dynamic import below, never on the server).
 import { capturiaCatalog } from "@/lib/a2ui-catalog";
@@ -34,6 +37,11 @@ const A2uiOverlayLayer = dynamic(() => import("@/components/A2uiOverlayLayer"), 
   loading: () => null,
 });
 import { useStudioVoice } from "@/hooks/useStudioVoice";
+import { useSpeechEnergy } from "@/hooks/useSpeechEnergy";
+import { useVoteRoom } from "@/hooks/useVoteRoom";
+import VoteQRBadge from "@/components/VoteQRBadge";
+import { derivePollFromOverlays } from "@/lib/derive-poll";
+import type { PollOption } from "@/lib/vote-store";
 import { useRecorder } from "@/hooks/useRecorder";
 import { useDesktopHotkey } from "@/hooks/useDesktopHotkey";
 import { useKeyVault } from "@/hooks/useKeyVault";
@@ -43,7 +51,9 @@ import DeckDropzone from "@/components/DeckDropzone";
 import CueDeck from "@/components/CueDeck";
 import { normalizeProps } from "@/lib/normalize";
 import { sanitizeSurfaceTree } from "@/lib/a2ui-validate";
-import { extractJsonArray } from "@/lib/extract-json";
+import { coerceArrayArg, coerceRecordArg, toolArgText } from "@/lib/extract-json";
+import { oversizedToolArg } from "@/lib/limits";
+import { isPlaceableOverlayType } from "@/lib/catalog";
 import { matchCue } from "@/lib/deck/cues";
 import type { CueCard, DeckFacts } from "@/lib/deck/types";
 import type { OverlaySpec, OverlayPosition } from "@/lib/types";
@@ -104,22 +114,25 @@ export default function Studio() {
     return h;
   }, [activeProvider, byokKey]);
 
-  // Remount the provider when the active key/provider becomes available or
-  // changes, so CopilotKit always builds its request client with the current
-  // headers (it caches the client at mount). This only changes at load or on a
-  // deliberate provider switch, before any overlays are on screen.
+  // No remount key: the v2 provider propagates `headers` changes in place
+  // (setHeaders effect applies them to agents; runAgent re-stamps per run), so
+  // a provider/key switch must NOT tear down the subtree. The v1 pattern of
+  // key-remounting here wiped live overlays, the loaded deck, and the vote
+  // room whenever the operator switched provider mid-session.
   return (
-    <CopilotKit
-      key={`${activeProvider}:${byokKey ? "byok" : "env"}`}
+    <CopilotKitProvider
       runtimeUrl="/api/copilotkit"
       headers={headers}
+      // The route runs in single-route mode (all methods POST to one endpoint).
+      useSingleEndpoint
     >
       <Capturia
         vault={vault}
         activeProvider={activeProvider}
         setActiveProvider={setPickedProvider}
+        headers={headers}
       />
-    </CopilotKit>
+    </CopilotKitProvider>
   );
 }
 
@@ -127,15 +140,50 @@ interface CapturiaProps {
   vault: ReturnType<typeof useKeyVault>;
   activeProvider: KeyProvider;
   setActiveProvider: (p: KeyProvider) => void;
+  // The same BYOK headers CopilotKit sends; the keycheck probe must match them
+  // so it reports the health of the exact key path the agent will use.
+  headers: Record<string, string>;
 }
 
-function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
+function Capturia({ vault, activeProvider, setActiveProvider, headers }: CapturiaProps) {
   const [overlays, setOverlays] = useState<OverlaySpec[]>([]);
   const [lastSent, setLastSent] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const firstRunCheckedRef = useRef(false);
-  const { appendMessage } = useCopilotChat();
+  // The full-screen stage; audio-reactivity publishes --mic-energy onto it.
+  const stageRef = useRef<HTMLDivElement>(null);
+  // v2 agent driver: sends the user turn through the AG-UI agent + core runAgent
+  // so the registered frontend tools (useFrontendTool below) actually execute.
+  // The ONLY useAgentRun call site (see that hook's header): CommandBar gets
+  // sendMessage/busy as props so both input channels share one agent + thread.
+  const { sendMessage, isRunning, runError } = useAgentRun();
   const { isRecording, startRecording, stopRecording } = useRecorder();
+
+  // Surface the route's missing-key fail-fast in the operator UI. CopilotKit
+  // swallows agent-run errors into the console, so without this probe a
+  // keyless deployment looks alive while every command dies silently. Uses
+  // the same headers the agent requests carry, so it reports the health of
+  // the exact key path that will be used. Re-runs on provider/key change
+  // (this component remounts via the CopilotKit key prop anyway).
+  const [modelKeyError, setModelKeyError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/copilotkit", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify({ method: "capturia-keycheck" }),
+    })
+      .then((r) => r.json())
+      .then((body: { error?: unknown }) => {
+        if (!cancelled) setModelKeyError(typeof body?.error === "string" ? body.error : null);
+      })
+      .catch(() => {
+        /* network/parse failure: the runtime's own calls will surface it */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [headers]);
 
   // Deck state: cue cards to trigger, plus a compact view shared with the agent.
   const [cues, setCues] = useState<CueCard[]>([]);
@@ -155,10 +203,25 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
   // the direct React renderer. Opt-in so the AG-UI hot path stays the default.
   const [surfaceMode, setSurfaceMode] = useState(false);
 
+  // Audio-reactive FX: default-on (the breathing IS part of the broadcast
+  // look), but the cyan accent can clash with a stream's branding and some
+  // talks want a static frame, so the operator can switch it off (FX pill) and
+  // an OBS browser-source scene can pin it with ?fx=0. Off = the energy hook
+  // never runs, so the vignette, BigCounter scale, and LiveBadge glow all stay
+  // inert, not just the vignette layer.
+  const [fxOn, setFxOn] = useState(true);
+
+  // Audience voting: publish the live poll to this session's vote room, show
+  // a QR on the FEED (it must survive Program Output: the audience scans it
+  // off the published Zoom/Meet video), and mirror phone votes onto the tally.
+  const [voteOn, setVoteOn] = useState(false);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("out") === "1") setOutputMode(true);
     if (params.get("surface") === "1") setSurfaceMode(true);
+    if (params.get("fx") === "0") setFxOn(false);
+    if (params.get("vote") === "1") setVoteOn(true);
   }, []);
 
   // Cmd+, settings; Cmd/Ctrl+Shift+O clean Program Output; Cmd/Ctrl+Shift+A A2UI Surface Mode.
@@ -200,7 +263,7 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
     });
   }, []);
 
-  const { isListening, interimTranscript, speechStatus, lastError, isSupported, startListening, stopListening } =
+  const { isListening, interimTranscript, speechStatus, lastError, lastResultAt, isSupported, startListening, stopListening } =
     useStudioVoice((text) => {
       if (text.split(/\s+/).length < 2) return;
       setLastSent(text);
@@ -211,9 +274,12 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
         applyCue(card);
         return;
       }
-      appendMessage(
-        new TextMessage({ content: `[VOICE] ${text}`, role: MessageRole.User })
-      );
+      // sendMessage drops the turn (returns false) when a run is in flight:
+      // v2's runAgent CANCELS an active run instead of queueing, which would
+      // truncate the streaming turn's tool calls mid-render. Continuous speech
+      // keeps producing utterances, so a dropped one costs little; a corrupted
+      // thread kills the session.
+      sendMessage(`[VOICE] ${text}`).catch(() => {});
     });
 
   // Desktop push-to-talk: Cmd+Alt+Space toggles voice from anywhere on the OS.
@@ -223,69 +289,181 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
     else startListening();
   });
 
+  // Audio-reactive: publish a 0..1 speaking-energy to --mic-energy on the stage
+  // root (derived from Web Speech RESULT events, NO AudioContext, so it never
+  // fights voice). The feed breathes as the speaker talks via the .energy-*
+  // CSS rules. The FX pill / ?fx=0 lets the operator pin a static frame.
+  useSpeechEnergy({ targetRef: stageRef, lastResultAt, isListening: isListening && fxOn });
+
+  // The poll currently on screen (first authored surface with ActionButtons);
+  // see lib/derive-poll.ts. Memoized so the vote-room publish effect keys off
+  // real content changes, not render churn.
+  const livePoll = useMemo(() => derivePollFromOverlays(overlays), [overlays]);
+
+  // Mirror the room's ABSOLUTE counts onto the broadcast tally. Deterministic
+  // on purpose (no agent turn per vote): a room of phones voting would melt
+  // the one-turn-at-a-time agent loop, while MetricsPanel animates value
+  // changes regardless of who set them. Creates the tally if the agent's poll
+  // turn forgot it.
+  const applyAudienceCounts = useCallback(
+    (counts: Record<string, number>, options: PollOption[]) => {
+      setOverlays((prev) => {
+        const existing = prev.find((o) => o.id === "poll-tally");
+        if (!existing) {
+          return [
+            ...prev,
+            {
+              id: "poll-tally",
+              type: "MetricsPanel",
+              position: "top-right",
+              props: {
+                title: "Live votes",
+                metrics: options.map((opt) => ({
+                  label: opt.label,
+                  value: String(counts[opt.actionName] ?? 0),
+                })),
+              },
+            } as OverlaySpec,
+          ];
+        }
+        return prev.map((o) => {
+          if (o.id !== "poll-tally" || o.type !== "MetricsPanel") return o;
+          // Rebuild the rows from the poll's options keyed by actionName, the
+          // server's own vote currency. Matching existing rows by label broke
+          // when the tally's row labels differed from the button labels or two
+          // options shared a label. MetricsPanel still animates value changes
+          // because it keys its count-up on the (stable) row label.
+          const metrics = options.map((opt) => ({
+            label: opt.label,
+            value: String(counts[opt.actionName] ?? 0),
+          }));
+          return { ...o, props: { ...o.props, metrics } };
+        });
+      });
+    },
+    []
+  );
+
+  // Surfaces a rejected poll publish (bad poll, room taken, room full) so the
+  // operator knows why the on-feed QR is showing an empty room, instead of the
+  // failure being swallowed.
+  const [votePublishError, setVotePublishError] = useState<string | null>(null);
+  const { voteUrl, castHostVote } = useVoteRoom({
+    enabled: voteOn,
+    poll: livePoll,
+    onCounts: applyAudienceCounts,
+    onPublishError: setVotePublishError,
+  });
+
+  // Closed loop: a tap on an interactive leaf (ActionButton) inside an
+  // agent-authored surface arrives here via A2uiOverlayLayer's onAction. Re-inject
+  // it as an "[ACTION] <name>" user turn, exactly like the [VOICE] path above, so
+  // the agent responds by changing the scene with its tools (see ACTION rules in
+  // the system prompt). Dedupe a click-storm so a rapid double-tap can't spin the
+  // agent on the same action.
+  const lastActionRef = useRef<{ name: string; t: number }>({ name: "", t: 0 });
+  const handleSurfaceAction = useCallback(
+    (action: { name: string }) => {
+      const name = (action?.name || "").trim();
+      if (!name) return;
+      // Audience voting on: a tap on a poll button is a VOTE, not an agent
+      // turn. The server tallies it like any phone vote and the counts flow
+      // back over SSE, so host taps and audience votes can never diverge.
+      if (castHostVote(name)) {
+        setLastSent(`[VOTE] ${name}`);
+        return;
+      }
+      // Mid-run taps are dropped INSIDE sendMessage (checked live on the agent
+      // instance, immune to the stale-closure window before React re-renders
+      // isRunning): v2's runAgent cancels an in-flight run instead of queueing.
+      // The agent re-renders the surface after it responds, so a dropped tap is
+      // a no-op, not lost UX (and [data-agent-busy] CSS disables the buttons
+      // while running, so this is belt-and-suspenders).
+      const now = Date.now();
+      if (lastActionRef.current.name === name && now - lastActionRef.current.t < 600) return;
+      lastActionRef.current = { name, t: now };
+      setLastSent(`[ACTION] ${name}`);
+      // Keep the catch so an unexpected run rejection can never crash the studio.
+      sendMessage(`[ACTION] ${name}`).catch(() => {});
+    },
+    [sendMessage, castHostVote]
+  );
+
   // AG-UI Shared State: agent always knows what's currently on screen
-  useCopilotReadable({
+  useAgentContext({
     description:
       "Current overlay components on the live video feed. Each has an id, type, position, and props.",
+    // Cast: the shape is JSON-serializable at runtime (plain objects/arrays of
+    // strings/numbers), but the catalog prop types lack the index signatures
+    // TS's JsonSerializable requires.
     value: overlays.map((o) => ({
       id: o.id,
       type: o.type,
       position: o.type !== "Letterbox" ? o.position : "full-screen",
       // Authored surfaces carry a whole component tree; summarize it instead of
       // echoing the full node list back into the agent's context every render.
+      // DO list the live ActionButtons: on an "[ACTION] <name>" turn the model
+      // needs the full set of buttons it authored (names + labels) to map the
+      // tap to the right response without inventing different actionNames.
       props:
         o.type === "Surface"
-          ? { components: `<authored A2UI tree, ${o.props.components.length} nodes>` }
+          ? {
+              components: `<authored A2UI tree, ${o.props.components.length} nodes>`,
+              actions: o.props.components
+                .filter((n) => n.component === "ActionButton")
+                .map((n) => ({ actionName: String(n.actionName ?? ""), label: String(n.label ?? "") })),
+            }
           : o.props,
-    })),
+    })) as unknown as Parameters<typeof useAgentContext>[0]["value"],
   });
 
   // Deck priming: the agent uses the speaker's real titles/numbers/names as the
   // source of truth, so spoken metrics render with deck values, not invented ones.
-  useCopilotReadable({
+  useAgentContext({
     description:
       "Loaded pitch deck (if any). Slide titles, bullets, detected numbers (label/value), and names. When the speaker mentions something that appears here, render it using THESE exact values. Never invent numbers that contradict the deck.",
-    value: deckFacts,
+    value: (deckFacts ?? null) as unknown as Parameters<typeof useAgentContext>[0]["value"],
   });
 
+  // NOTE on all 8 tool registrations below:
+  // - useFrontendTool registers the FIRST render's tool object permanently
+  //   (its effect never re-registers on re-render), so handlers are frozen
+  //   mount-time closures. They must only touch state through functional
+  //   setState and module-level helpers, never read component state directly;
+  //   pass the hook's deps argument if that ever becomes necessary.
+  // - The z.string() params carrying JSON are advisory to the model, not
+  //   enforced at runtime: Gemini sometimes emits them PRE-PARSED (nested
+  //   object/array), so every JSON-carrying param goes through the coerce
+  //   helpers instead of a bare JSON.parse.
+
   // A2UI Action: add a new spatial overlay component
-  useCopilotAction({
+  useFrontendTool({
     name: "add_overlay",
+    // Fire-and-forget: the overlay IS the output; no tool-result round trip.
+    followUp: false,
     description:
       "Add a new overlay component to the live video feed. Use the A2UI catalog component types and positions.",
-    parameters: [
-      {
-        name: "id",
-        type: "string",
-        description: "Unique id like 'metrics-1' or 'lower-third-main'",
-        required: true,
-      },
-      {
-        name: "type",
-        type: "string",
-        description:
-          "Component type: MetricsPanel | Timeline | LowerThird | ProgressBar | KeywordHighlight | FloatingChart | ChatBubble | Letterbox | Ticker | LiveBadge | StatRing | BigCounter",
-        required: true,
-      },
-      {
-        name: "position",
-        type: "string",
-        description:
-          "Anchor: top-left | top-right | top-center | center-left | center-right | bottom-left | bottom-right | bottom-center | full-bottom (omit for Letterbox)",
-        required: false,
-      },
-      {
-        name: "props",
-        type: "string",
-        description: "JSON string of component-specific props matching the catalog schema",
-        required: true,
-      },
-    ],
-    handler: ({ id, type, position, props: propsStr }) => {
-      let props: Record<string, unknown>;
-      try {
-        props = JSON.parse(propsStr);
-      } catch {
+    parameters: z.object({
+      id: z.string().describe("Unique id like 'metrics-1' or 'lower-third-main'"),
+      type: z
+        .string()
+        .describe(
+          "Component type: MetricsPanel | Timeline | LowerThird | ProgressBar | KeywordHighlight | FloatingChart | ChatBubble | Letterbox | Ticker | LiveBadge | StatRing | BigCounter"
+        ),
+      position: z
+        .string()
+        .optional()
+        .describe(
+          "Anchor: top-left | top-right | top-center | center-left | center-right | bottom-left | bottom-right | bottom-center | full-bottom (omit for Letterbox)"
+        ),
+      props: z
+        .string()
+        .describe("JSON string of component-specific props matching the catalog schema"),
+    }),
+    handler: async ({ id, type, position, props: propsStr }) => {
+      if (oversizedToolArg(toolArgText(propsStr))) return;
+      const props = coerceRecordArg(propsStr);
+      if (!props) {
         console.warn("add_overlay: invalid props JSON, ignoring");
         return;
       }
@@ -294,6 +472,12 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
       // an unsanitized component tree (cycles, oversized, bindings) into state.
       if (type === "Surface") {
         console.warn("add_overlay cannot create a Surface; use render_surface");
+        return;
+      }
+      // Unknown types render nothing; surface-only types (ActionButton) would
+      // render a dead button outside the interactive render_surface host.
+      if (!isPlaceableOverlayType(type)) {
+        console.warn(`add_overlay: '${type}' is not a placeable overlay type, ignoring`);
         return;
       }
       const normalized = normalizeProps(type, props);
@@ -308,30 +492,19 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
   });
 
   // A2UI Action: modify an existing overlay's props
-  useCopilotAction({
+  useFrontendTool({
     name: "modify_overlay",
+    // Fire-and-forget: the overlay IS the output; no tool-result round trip.
+    followUp: false,
     description: "Update props of an existing overlay without changing its type or position.",
-    parameters: [
-      {
-        name: "id",
-        type: "string",
-        description: "The id of the overlay to modify",
-        required: true,
-      },
-      {
-        name: "props",
-        type: "string",
-        description: "New props as JSON string (merged with existing props)",
-        required: true,
-      },
-    ],
-    handler: ({ id, props: propsStr }) => {
-      let newProps: Record<string, unknown>;
-      try {
-        newProps = JSON.parse(propsStr);
-      } catch {
-        return;
-      }
+    parameters: z.object({
+      id: z.string().describe("The id of the overlay to modify"),
+      props: z.string().describe("New props as JSON string (merged with existing props)"),
+    }),
+    handler: async ({ id, props: propsStr }) => {
+      if (oversizedToolArg(toolArgText(propsStr))) return;
+      const newProps = coerceRecordArg(propsStr);
+      if (!newProps) return;
       setOverlays((prev) =>
         prev.map((o) => {
           // Never let modify_overlay touch a Surface: its props are a sanitized
@@ -346,18 +519,15 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
   });
 
   // A2UI Action: remove an overlay
-  useCopilotAction({
+  useFrontendTool({
     name: "remove_overlay",
+    // Fire-and-forget: the overlay IS the output; no tool-result round trip.
+    followUp: false,
     description: "Remove an overlay from the video by id. Use 'all' to remove every overlay.",
-    parameters: [
-      {
-        name: "id",
-        type: "string",
-        description: "The overlay id to remove, or 'all' to remove every overlay",
-        required: true,
-      },
-    ],
-    handler: ({ id }) => {
+    parameters: z.object({
+      id: z.string().describe("The overlay id to remove, or 'all' to remove every overlay"),
+    }),
+    handler: async ({ id }) => {
       if (id === "all") {
         setOverlays([]);
       } else {
@@ -367,21 +537,21 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
   });
 
   // A2UI Action: smoothly relocate an overlay to a new anchor position
-  useCopilotAction({
+  useFrontendTool({
     name: "move_overlay",
+    // Fire-and-forget: the overlay IS the output; no tool-result round trip.
+    followUp: false,
     description:
       "Move an existing overlay to a new anchor position. The overlay slides smoothly between positions. Cannot be used on Letterbox.",
-    parameters: [
-      { name: "id", type: "string", description: "The overlay id to move", required: true },
-      {
-        name: "position",
-        type: "string",
-        description:
-          "New anchor: top-left | top-right | top-center | center-left | center-right | bottom-left | bottom-right | bottom-center | full-bottom",
-        required: true,
-      },
-    ],
-    handler: ({ id, position }) => {
+    parameters: z.object({
+      id: z.string().describe("The overlay id to move"),
+      position: z
+        .string()
+        .describe(
+          "New anchor: top-left | top-right | top-center | center-left | center-right | bottom-left | bottom-right | bottom-center | full-bottom"
+        ),
+    }),
+    handler: async ({ id, position }) => {
       setOverlays((prev) =>
         prev.map((o) => {
           if (o.id !== id || o.type === "Letterbox") return o;
@@ -392,31 +562,21 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
   });
 
   // A2UI Action: append values to a FloatingChart's data array (live-growing chart)
-  useCopilotAction({
+  useFrontendTool({
     name: "append_chart_data",
+    // Fire-and-forget: the overlay IS the output; no tool-result round trip.
+    followUp: false,
     description:
       "Append one or more numeric values to a FloatingChart's data series. Use to grow charts over time as new data points come in. Pass values as a JSON array of numbers, e.g. '[42, 47, 51]'.",
-    parameters: [
-      { name: "id", type: "string", description: "The FloatingChart id", required: true },
-      {
-        name: "values",
-        type: "string",
-        description: "JSON array of numbers to append, e.g. '[42, 47]'",
-        required: true,
-      },
-    ],
-    handler: ({ id, values: valuesStr }) => {
-      let values: number[] = [];
-      try {
-        const parsed = JSON.parse(valuesStr);
-        if (Array.isArray(parsed)) {
-          values = parsed
-            .map((v) => (typeof v === "number" ? v : Number(v)))
-            .filter((v) => Number.isFinite(v));
-        }
-      } catch {
-        return;
-      }
+    parameters: z.object({
+      id: z.string().describe("The FloatingChart id"),
+      values: z.string().describe("JSON array of numbers to append, e.g. '[42, 47]'"),
+    }),
+    handler: async ({ id, values: valuesStr }) => {
+      if (oversizedToolArg(toolArgText(valuesStr))) return;
+      const values = coerceArrayArg(valuesStr)
+        .map((v) => (typeof v === "number" ? v : Number(v)))
+        .filter((v) => Number.isFinite(v));
       if (values.length === 0) return;
       setOverlays((prev) =>
         prev.map((o) => {
@@ -429,22 +589,22 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
   });
 
   // A2UI Action: update a single metric row in a MetricsPanel
-  useCopilotAction({
+  useFrontendTool({
     name: "bump_metric",
+    // Fire-and-forget: the overlay IS the output; no tool-result round trip.
+    followUp: false,
     description:
       "Update a single metric row in an existing MetricsPanel by label. The new value count-ups smoothly and the row flashes green/red based on direction. Use this to show live KPI changes.",
-    parameters: [
-      { name: "id", type: "string", description: "The MetricsPanel id", required: true },
-      { name: "label", type: "string", description: "The metric row label to update", required: true },
-      { name: "value", type: "string", description: "New value, e.g. '$1.2M' or '47%'", required: true },
-      {
-        name: "delta",
-        type: "string",
-        description: "Optional new delta, e.g. '+12%' or '-3'. Pass empty string to clear.",
-        required: false,
-      },
-    ],
-    handler: ({ id, label, value, delta }) => {
+    parameters: z.object({
+      id: z.string().describe("The MetricsPanel id"),
+      label: z.string().describe("The metric row label to update"),
+      value: z.string().describe("New value, e.g. '$1.2M' or '47%'"),
+      delta: z
+        .string()
+        .optional()
+        .describe("Optional new delta, e.g. '+12%' or '-3'. Pass empty string to clear."),
+    }),
+    handler: async ({ id, label, value, delta }) => {
       setOverlays((prev) =>
         prev.map((o) => {
           if (o.id !== id || o.type !== "MetricsPanel") return o;
@@ -464,42 +624,41 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
   // lays out several components together (an intro, a results screen). Merges by
   // id like add_overlay; replace=true wipes the stage first for a fresh scene.
   // Renders identically in both the direct and A2UI Surface Mode renderers.
-  useCopilotAction({
+  useFrontendTool({
     name: "compose_scene",
+    // Fire-and-forget: the overlay IS the output; no tool-result round trip.
+    followUp: false,
     description:
       "Compose a whole overlay scene in ONE call. Prefer this over multiple add_overlay calls when the user sets up, lays out, or shows several components together (e.g. an intro: LowerThird + LiveBadge + MetricsPanel). Pass `elements` as a JSON array; each item is { id, type, position?, props } using the same catalog types, positions, and prop shapes as add_overlay. Set replace=true to clear all existing overlays first (use when starting a fresh scene).",
-    parameters: [
-      {
-        name: "elements",
-        type: "string",
-        description:
-          'JSON array of overlays, e.g. [{"id":"lt-1","type":"LowerThird","position":"bottom-left","props":{"name":"Alex","subtitle":"Founder, Acme"}},{"id":"live-1","type":"LiveBadge","position":"top-left","props":{}}]',
-        required: true,
-      },
-      {
-        name: "replace",
-        type: "boolean",
-        description: "If true, remove all existing overlays before adding this scene. Default false (merge by id).",
-        required: false,
-      },
-    ],
-    handler: ({ elements, replace }) => {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(elements);
-      } catch {
-        console.warn("compose_scene: invalid elements JSON, ignoring");
+    parameters: z.object({
+      elements: z
+        .string()
+        .describe(
+          'JSON array of overlays, e.g. [{"id":"lt-1","type":"LowerThird","position":"bottom-left","props":{"name":"Alex","subtitle":"Founder, Acme"}},{"id":"live-1","type":"LiveBadge","position":"top-left","props":{}}]'
+        ),
+      replace: z
+        .boolean()
+        .optional()
+        .describe(
+          "If true, remove all existing overlays before adding this scene. Default false (merge by id)."
+        ),
+    }),
+    handler: async ({ elements, replace }) => {
+      if (oversizedToolArg(toolArgText(elements))) return;
+      const parsed = coerceArrayArg(elements);
+      if (parsed.length === 0) {
+        console.warn("compose_scene: invalid or empty elements, ignoring");
         return;
       }
-      if (!Array.isArray(parsed)) return;
       const specs: OverlaySpec[] = [];
       for (const raw of parsed) {
         if (!raw || typeof raw !== "object") continue;
         const it = raw as Record<string, unknown>;
         if (typeof it.id !== "string" || typeof it.type !== "string") continue;
         // Surfaces must go through render_surface (sanitizeSurfaceTree); skip any
-        // that try to ride in via compose_scene unsanitized.
-        if (it.type === "Surface") continue;
+        // that try to ride in via compose_scene unsanitized. Same for unknown
+        // and surface-only types (ActionButton only works inside surfaces).
+        if (it.type === "Surface" || !isPlaceableOverlayType(it.type)) continue;
         const props = normalizeProps(
           it.type,
           (it.props && typeof it.props === "object" ? it.props : {}) as Record<string, unknown>
@@ -526,43 +685,34 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
   // component tree, composing branded Capturia overlays inside layout primitives.
   // The tree is sanitized (sanitizeSurfaceTree) before it touches state, then
   // rendered through the genuine A2UI runtime by a dedicated A2uiOverlayLayer.
-  useCopilotAction({
+  useFrontendTool({
     name: "render_surface",
+    // Fire-and-forget: the overlay IS the output; no tool-result round trip.
+    followUp: false,
     description:
-      "Author a custom A2UI surface: a composed component tree (layout primitives wrapping Capturia overlays) rendered through the live A2UI runtime. Use this ONLY when you need several overlays grouped into ONE laid-out unit (e.g. a stacked stat block). For a single overlay use add_overlay; for several independently anchored overlays use compose_scene. `components` is a JSON array of flat A2UI v0.9 nodes: the root node MUST have id \"root\" and be a Column, Row, or List; children are referenced by id arrays; props are top-level keys; allowed components are the layout primitives Column/Row/List/Divider plus the Capturia catalog types.",
-    parameters: [
-      {
-        name: "id",
-        type: "string",
-        description: "Unique surface id like 'surface-intro' or 'stat-block'",
-        required: true,
-      },
-      {
-        name: "position",
-        type: "string",
-        description:
-          "Anchor: top-left | top-right | top-center | center-left | center-right | bottom-left | bottom-right | bottom-center | full-bottom",
-        required: false,
-      },
-      {
-        name: "components",
-        type: "string",
-        description:
-          'JSON array of A2UI v0.9 flat nodes. Example: [{"id":"root","component":"Column","children":["lt","mp"]},{"id":"lt","component":"LowerThird","name":"Alex","subtitle":"Founder, Acme"},{"id":"mp","component":"MetricsPanel","title":"Q4","metrics":[{"label":"Revenue","value":"$1.8M","delta":"+24%"}]}]',
-        required: true,
-      },
-    ],
-    handler: ({ id, position, components }) => {
+      "Author a custom A2UI surface: a composed component tree (layout primitives wrapping Capturia overlays) rendered through the live A2UI runtime. Use this ONLY when you need several overlays grouped into ONE laid-out unit (e.g. a stacked stat block). For a single overlay use add_overlay; for several independently anchored overlays use compose_scene. `components` is a JSON array of flat A2UI v0.9 nodes: the root node MUST have id \"root\" and be a Column, Row, or List; children are referenced by id arrays; props are top-level keys; allowed components are the layout primitives Column/Row/List/Divider plus the Capturia catalog types, including the interactive ActionButton {label, actionName} whose taps come back to you as '[ACTION] <actionName>' turns.",
+    parameters: z.object({
+      id: z.string().describe("Unique surface id like 'surface-intro' or 'stat-block'"),
+      position: z
+        .string()
+        .optional()
+        .describe(
+          "Anchor: top-left | top-right | top-center | center-left | center-right | bottom-left | bottom-right | bottom-center | full-bottom"
+        ),
+      components: z
+        .string()
+        .describe(
+          'JSON array of A2UI v0.9 flat nodes. Example: [{"id":"root","component":"Column","children":["lt","mp"]},{"id":"lt","component":"LowerThird","name":"Alex","subtitle":"Founder, Acme"},{"id":"mp","component":"MetricsPanel","title":"Q4","metrics":[{"label":"Revenue","value":"$1.8M","delta":"+24%"}]}]'
+        ),
+    }),
+    handler: async ({ id, position, components }) => {
       // The model may hand back the tree already-parsed, fenced (```json …```),
-      // or wrapped in prose; tolerate all. extractJsonArray recovers the array
-      // from the string cases and returns [] when there's nothing parseable.
-      const raw = components as unknown;
-      const parsedTree = Array.isArray(raw)
-        ? raw
-        : typeof raw === "string"
-        ? extractJsonArray(raw)
-        : [];
-      const tree = sanitizeSurfaceTree(parsedTree);
+      // or wrapped in prose; the coerce helpers tolerate all. The size cap
+      // covers the pre-parsed case too (toolArgText stringifies it), or a
+      // structured arg would bypass it entirely and lean on the sanitizer's
+      // node/depth bounds alone.
+      if (oversizedToolArg(toolArgText(components))) return;
+      const tree = sanitizeSurfaceTree(coerceArrayArg(components));
       if (!tree) {
         // A rejected tree is handled (we ignore it), not a crash, so warn rather
         // than error — console.error pops the Next.js dev error overlay.
@@ -595,12 +745,27 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
 
   return (
     <div
+      ref={stageRef}
+      // While a turn runs, [data-agent-busy] CSS dims + disables authored
+      // ActionButtons so a dropped tap reads as "thinking", not broken.
+      data-agent-busy={isRunning ? "" : undefined}
       className={`relative w-screen h-screen bg-black overflow-hidden ${
         isListening && !outputMode ? "mic-glow" : ""
       }`}
     >
       {/* Layer 0: webcam */}
       <WebcamFeed />
+
+      {/* Layer 0.4: audio-reactive vignette. Breathes with --mic-energy (set by
+          useSpeechEnergy from speech results). Stays in Program Output since the
+          breathing IS part of the broadcast look; inert (energy 0) when idle and
+          unmounted entirely when the operator switches FX off. */}
+      {fxOn && <div className="energy-vignette" aria-hidden />}
+
+      {/* Layer 0.45: audience-voting QR. Part of the BROADCAST look on purpose:
+          Zoom/Meet viewers scan it off the published feed, so it must survive
+          Program Output. */}
+      {voteOn && voteUrl && <VoteQRBadge url={voteUrl} />}
 
       {/* Layer 0.5: ambient floating particles when voice is active (hidden in clean output) */}
       {!outputMode && <AmbientParticles active={isListening} />}
@@ -616,8 +781,10 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
 
       {/* Layer 1b: agent-authored surfaces (render_surface). These ARE A2UI
           trees, so they always render through their own A2UI host, independent
-          of the Surface Mode toggle. Always mounted so exit animations finish. */}
-      <A2uiOverlayLayer overlays={surfaceOverlays} />
+          of the Surface Mode toggle. Always mounted so exit animations finish.
+          onSurfaceAction closes the loop: a tap on an authored ActionButton is
+          re-injected as an [ACTION] turn so the agent can respond live. */}
+      <A2uiOverlayLayer overlays={surfaceOverlays} onSurfaceAction={handleSurfaceAction} />
 
       {/* Everything below is operator chrome, hidden in Program Output so OBS /
           the virtual camera capture only the webcam + overlays. */}
@@ -632,6 +799,76 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
             isListening={isListening}
           />
 
+          {/* Operator notices, stacked so several can show at once. top-28
+              clears the CueDeck header (top-16 left-4) on narrow viewports. */}
+          {(() => {
+            const voteUrlUnreachable =
+              voteOn && !!voteUrl && /\/\/(localhost|127\.0\.0\.1)[:/]/.test(voteUrl);
+            const publishError = voteOn ? votePublishError : null;
+            if (!(!isSupported || modelKeyError || voteUrlUnreachable || publishError || runError))
+              return null;
+            return (
+              <div className="absolute top-28 left-1/2 -translate-x-1/2 z-40 w-[min(92vw,30rem)] flex flex-col gap-2">
+                {/* Agent has no model key: nothing will render until fixed. */}
+                {modelKeyError && <ModelKeyBanner message={modelKeyError} />}
+                {/* Honest heads-up when voice can't run here (Firefox/Brave/desktop). */}
+                {!isSupported && <BrowserBanner />}
+                {/* An agent run failed (rate limit, revoked key, server 503).
+                    runAgent swallows these into subscribers, so without this
+                    notice the loop just goes silently dead mid-show. Cleared
+                    by the next successful send. */}
+                {runError && (
+                  <div className="flex items-start gap-3 rounded-xl border border-amber-400/30 bg-black/70 px-4 py-3 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.4)]">
+                    <span
+                      aria-hidden
+                      className="mt-0.5 h-2 w-2 flex-none rounded-full bg-amber-400"
+                      style={{ boxShadow: "0 0 8px #fbbf24" }}
+                    />
+                    <div className="text-[13px] leading-snug text-white/80">
+                      <span className="font-semibold text-white">Agent run failed:</span>{" "}
+                      {runError}
+                    </div>
+                  </div>
+                )}
+                {/* The room rejected the poll: the QR is live but votes go
+                    nowhere until the operator knows why. */}
+                {publishError && (
+                  <div className="flex items-start gap-3 rounded-xl border border-amber-400/30 bg-black/70 px-4 py-3 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.4)]">
+                    <span
+                      aria-hidden
+                      className="mt-0.5 h-2 w-2 flex-none rounded-full bg-amber-400"
+                      style={{ boxShadow: "0 0 8px #fbbf24" }}
+                    />
+                    <div className="text-[13px] leading-snug text-white/80">
+                      <span className="font-semibold text-white">Audience vote not published:</span>{" "}
+                      {publishError}. The QR is live but votes won&apos;t register until this clears.
+                    </div>
+                  </div>
+                )}
+                {/* The vote QR points at localhost: phones (and Zoom viewers)
+                    can't reach it. Operator-only; the QR itself stays clean. */}
+                {voteUrlUnreachable && (
+                  <div className="flex items-start gap-3 rounded-xl border border-amber-400/30 bg-black/70 px-4 py-3 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.4)]">
+                    <span
+                      aria-hidden
+                      className="mt-0.5 h-2 w-2 flex-none rounded-full bg-amber-400"
+                      style={{ boxShadow: "0 0 8px #fbbf24" }}
+                    />
+                    <div className="text-[13px] leading-snug text-white/80">
+                      <span className="font-semibold text-white">
+                        The vote QR points at localhost,
+                      </span>{" "}
+                      so phones can&apos;t reach it. For an in-room audience, open the studio
+                      via your LAN IP (e.g. http://192.168.x.x:3000/studio). For remote
+                      viewers on Zoom/Meet, self-host or tunnel Capturia and set
+                      NEXT_PUBLIC_CAPTURIA_ORIGIN to that public URL.
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           {/* Layer 3: command bar */}
           <CommandBar
             overlays={overlays.map((o) => ({ id: o.id, type: o.type }))}
@@ -639,6 +876,12 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
             isListening={isListening}
             onToggleVoice={() => (isListening ? stopListening() : startListening())}
             isVoiceSupported={isSupported}
+            // The studio's ONE agent driver, passed down so both input channels
+            // share the same agent/thread and the same busy signal (a second
+            // useAgentRun call site would get its own provisional agent while
+            // the runtime handshake is pending, or forever if it failed).
+            sendMessage={sendMessage}
+            agentBusy={isRunning}
           />
 
           {/* Left rail: deck cue cards */}
@@ -677,6 +920,34 @@ function Capturia({ vault, activeProvider, setActiveProvider }: CapturiaProps) {
               }`}
             >
               A2UI
+            </button>
+
+            {/* Toggle audio-reactive FX (vignette + overlay breathing). Pin it
+                off for an OBS scene with ?fx=0. */}
+            <button
+              onClick={() => setFxOn((v) => !v)}
+              title="Audio-reactive FX: the feed breathes with your voice (?fx=0 to pin off)"
+              className={`text-[11px] font-mono uppercase tracking-widest px-3 py-1.5 rounded-full border transition-all ${
+                fxOn
+                  ? "bg-cyan-500/20 text-cyan-200 border-cyan-400/40 shadow-[0_0_12px_rgba(34,211,238,0.25)]"
+                  : "bg-white/10 text-white/60 hover:bg-white/20 hover:text-white border-white/10"
+              }`}
+            >
+              FX
+            </button>
+
+            {/* Toggle audience voting: a QR lands on the feed, phones vote at
+                /vote/<room>, the tally moves live (?vote=1 to pin on). */}
+            <button
+              onClick={() => setVoteOn((v) => !v)}
+              title="Audience voting: viewers scan the on-feed QR and vote from their phones (?vote=1 to pin on)"
+              className={`text-[11px] font-mono uppercase tracking-widest px-3 py-1.5 rounded-full border transition-all ${
+                voteOn
+                  ? "bg-cyan-500/20 text-cyan-200 border-cyan-400/40 shadow-[0_0_12px_rgba(34,211,238,0.25)]"
+                  : "bg-white/10 text-white/60 hover:bg-white/20 hover:text-white border-white/10"
+              }`}
+            >
+              Vote
             </button>
 
             {/* Enter clean Program Output (for OBS / virtual camera) */}

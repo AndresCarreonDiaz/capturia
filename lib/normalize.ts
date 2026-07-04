@@ -22,7 +22,12 @@ export function normalizeProps(
 
   if (type === "FloatingChart" && Array.isArray(out.data)) {
     out.data = (out.data as unknown[])
-      .map((d) => (typeof d === "number" ? d : Number((d as Record<string, unknown>)?.value ?? d)))
+      .map((d) => {
+        if (typeof d === "number") return d;
+        if (typeof d === "string") return Number(d);
+        if (d && typeof d === "object") return Number((d as Record<string, unknown>).value);
+        return NaN; // null / boolean / undefined: drop rather than fabricate a 0
+      })
       .filter((n) => Number.isFinite(n));
   }
 
@@ -64,7 +69,10 @@ export function normalizeProps(
           .filter(Boolean)
       : [];
     const cs = out.currentStep;
-    out.currentStep = typeof cs === "number" ? cs : Number(cs ?? 0) || 0;
+    // isFinite guards a literal NaN (typeof "number"), which would otherwise
+    // pass through and fail the whole spec at the Zod gate.
+    out.currentStep =
+      typeof cs === "number" && Number.isFinite(cs) ? cs : Number(cs ?? 0) || 0;
   }
 
   if (type === "Ticker") {

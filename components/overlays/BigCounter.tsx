@@ -22,7 +22,7 @@ export default function BigCounter({ value, label, prefix = "", suffix = "", col
 
   return (
     <div
-      className={`relative bg-black/70 backdrop-blur-md border border-white/20 rounded-xl px-6 py-4 border-breathe ${
+      className={`relative bg-black/70 backdrop-blur-md border border-white/20 rounded-xl px-6 py-4 border-breathe energy-scale ${
         bursting ? "milestone-burst" : ""
       }`}
     >

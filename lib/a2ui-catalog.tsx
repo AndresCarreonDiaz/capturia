@@ -25,6 +25,7 @@ import Ticker from "@/components/overlays/Ticker";
 import LiveBadge from "@/components/overlays/LiveBadge";
 import StatRing from "@/components/overlays/StatRing";
 import BigCounter from "@/components/overlays/BigCounter";
+import ActionButton from "@/components/overlays/ActionButton";
 
 // Cast at the boundary: project zod (v4) vs A2UI's bundled zod (v3). Same
 // runtime shape, different branded TS types. See catalog-schema.ts for context.
@@ -48,9 +49,24 @@ export const capturiaCatalog = createCatalog(
     LiveBadge: adapt(LiveBadge),
     StatRing: adapt(StatRing),
     BigCounter: adapt(BigCounter),
+    // ActionButton is the one INTERACTIVE leaf, so it can't use the generic
+    // adapt() above: createCatalog injects a `dispatch` prop into each renderer
+    // (create-catalog wrapper), and adapt() destructures only `props` and drops
+    // it. On tap we dispatch an A2UI action whose name is the agent-authored
+    // actionName; the `event` envelope is built HERE at click time, so the agent
+    // never authors a path/call/event binding and lib/a2ui-validate.ts stays
+    // unchanged. The A2UIProvider's onAction (A2uiOverlayLayer) turns the emitted
+    // action into an "[ACTION] <name>" user turn.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ActionButton: (a: any) => (
+      <ActionButton
+        {...a.props}
+        onTap={() => a.dispatch?.({ event: { name: String(a.props?.actionName ?? "") } })}
+      />
+    ),
   },
   // includeBasicCatalog merges A2UI's built-in primitives (Row, Column, List,
-  // Divider, Text, Card, …) into this catalog alongside the 12 Capturia
+  // Divider, Text, Card, …) into this catalog alongside the Capturia
   // overlays. It is purely additive (non-breaking for the single-leaf Surface
   // Mode path). Agent-authored surfaces (the render_surface tool) compose
   // branded Capturia leaves inside the transparent layout primitives; the
