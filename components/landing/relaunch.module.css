@@ -1,0 +1,76 @@
+/* Relaunch-only animation utilities. Tailwind v4 ships no animate-in
+   classes, and app/globals.css belongs to the studio too, so the landing
+   relaunch keeps its raw keyframes scoped here. */
+
+/* Vote tally bars: fill once, then breathe gently so the tally reads as a
+   live count rather than a screenshot. Stagger with --fill-delay. */
+.tallyBar {
+  transform-origin: left center;
+  animation:
+    tallyFill 900ms cubic-bezier(0.2, 0.8, 0.2, 1) var(--fill-delay, 0ms) both,
+    tallyBreathe 5.4s ease-in-out calc(var(--fill-delay, 0ms) + 1.6s) infinite;
+}
+
+@keyframes tallyFill {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
+@keyframes tallyBreathe {
+  0%, 100% { transform: scaleX(1); }
+  50%      { transform: scaleX(0.965); }
+}
+
+/* Marching dashed connector between the deck chip and its cue cards.
+   The gradient period (12px) divides the 24px shift so the loop is seamless. */
+.cueFlow {
+  background-image: repeating-linear-gradient(
+    90deg,
+    rgba(82, 255, 139, 0.55) 0 7px,
+    transparent 7px 12px
+  );
+  animation: cueMarch 0.9s linear infinite;
+}
+
+@keyframes cueMarch {
+  from { background-position: 0 0; }
+  to   { background-position: 24px 0; }
+}
+
+/* Vertical variant for stacked (mobile) layout. */
+.cueFlowY {
+  background-image: repeating-linear-gradient(
+    180deg,
+    rgba(82, 255, 139, 0.55) 0 7px,
+    transparent 7px 12px
+  );
+  animation: cueMarchY 0.9s linear infinite;
+}
+
+@keyframes cueMarchY {
+  from { background-position: 0 0; }
+  to   { background-position: 0 24px; }
+}
+
+/* FAQ items: native details/summary, styled. The plus mark rotates into a
+   close mark while open; no JavaScript involved. */
+.faqItem summary {
+  list-style: none;
+  cursor: pointer;
+}
+.faqItem summary::-webkit-details-marker {
+  display: none;
+}
+.faqIcon {
+  transition: transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.faqItem[open] .faqIcon {
+  transform: rotate(45deg);
+}
+.faqBody {
+  animation: faqReveal 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes faqReveal {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
