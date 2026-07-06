@@ -43,7 +43,7 @@ import VoteQRBadge from "@/components/VoteQRBadge";
 import { derivePollFromOverlays } from "@/lib/derive-poll";
 import type { PollOption } from "@/lib/vote-store";
 import { useRecorder } from "@/hooks/useRecorder";
-import { useDesktopHotkey } from "@/hooks/useDesktopHotkey";
+import { useDesktopHotkey, useDesktopStateReport } from "@/hooks/useDesktopHotkey";
 import { useKeyVault } from "@/hooks/useKeyVault";
 import type { KeyProvider } from "@/hooks/useDesktopHotkey";
 import SettingsModal from "@/components/SettingsModal";
@@ -297,6 +297,12 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
     if (isListening) stopListening();
     else startListening();
   });
+
+  // Desktop tray: the Settings menu item rides the same channel as hotkeys.
+  useDesktopHotkey("open-settings", () => setSettingsOpen(true));
+
+  // Mirror voice state to the tray (Listening/Idle status, toggle enablement).
+  useDesktopStateReport({ listening: isListening, voiceSupported: isSupported });
 
   // Audio-reactive: publish a 0..1 speaking-energy to --mic-energy on the stage
   // root (derived from Web Speech RESULT events, NO AudioContext, so it never

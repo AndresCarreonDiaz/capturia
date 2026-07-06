@@ -61,4 +61,9 @@ contextBridge.exposeInMainWorld("capturia", {
   generateCues(prompt, provider) {
     return ipcRenderer.invoke("deck:generate", { prompt, provider });
   },
+  // Renderer -> main: voice state for the tray menu (listening on/off and
+  // whether the speech engine exists). Fire-and-forget for the caller.
+  reportState(state) {
+    return ipcRenderer.invoke("state:report", state);
+  },
 });
