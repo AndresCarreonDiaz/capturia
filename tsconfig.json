@@ -30,5 +30,14 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules",
+    // Build artifacts, not sources. CMake drops non-TypeScript *.ts timestamp
+    // files under whisper.cpp's build dir, which land in the packaged app and
+    // the whisper staging copy and would fail the Next typecheck.
+    "dist-app",
+    ".whisper-stage",
+    "out",
+    "electron/gen"
+  ]
 }

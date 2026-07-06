@@ -21,6 +21,7 @@ const keychain = require("./keychain");
 const deckGen = require("./deck-generate");
 const { startRuntimeServer } = require("./runtime-server");
 const { createTray } = require("./tray");
+const { maybeOfferMoveToApplications } = require("./first-run");
 const {
   isTrustedSender,
   isAllowedUrl,
@@ -379,6 +380,13 @@ if (!gotTheLock) {
     if (!registered) {
       console.warn(`Failed to register hotkey ${HOTKEY_TOGGLE_VOICE} (in use?)`);
     }
+
+    // Last, so the whole app (window, tray, runtime) is already up behind
+    // the dialog: offer the move to /Applications on a first packaged launch
+    // from the wrong place (macOS ties permission persistence to the app
+    // path). Guarded internally for smoke/dev; on acceptance the app quits
+    // and relaunches from the new location, taking everything above with it.
+    maybeOfferMoveToApplications({ isSmoke, parentWindow: mainWindow });
   });
 }
 

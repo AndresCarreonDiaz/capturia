@@ -47,6 +47,7 @@ import { useDesktopHotkey, useDesktopStateReport } from "@/hooks/useDesktopHotke
 import { useKeyVault } from "@/hooks/useKeyVault";
 import type { KeyProvider } from "@/hooks/useDesktopHotkey";
 import SettingsModal from "@/components/SettingsModal";
+import OnboardingFlow from "@/components/OnboardingFlow";
 import DeckDropzone from "@/components/DeckDropzone";
 import CueDeck from "@/components/CueDeck";
 import { normalizeProps } from "@/lib/normalize";
@@ -254,11 +255,20 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
   }, []);
 
   // First-run: if desktop and no BYOK keys saved yet, open Settings once.
+  // The onboarding tour owns this moment on a truly fresh install (its keys
+  // step opens Settings itself); this fallback only fires for installs that
+  // finished the tour and later cleared their keys.
   useEffect(() => {
     if (firstRunCheckedRef.current) return;
     if (!vault.isReady) return;
     firstRunCheckedRef.current = true;
-    if (vault.isDesktop && !vault.keys.some((k) => k.has)) {
+    let onboarded = true;
+    try {
+      onboarded = window.localStorage.getItem("capturia:onboarded") === "1";
+    } catch {
+      // Storage unavailable: assume onboarded, the tour makes the same call.
+    }
+    if (onboarded && vault.isDesktop && !vault.keys.some((k) => k.has)) {
       setSettingsOpen(true);
     }
   }, [vault.isReady, vault.isDesktop, vault.keys]);
@@ -805,6 +815,19 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
           the virtual camera capture only the webcam + overlays. */}
       {!outputMode && (
         <>
+          {/* First-run tour (desktop only, once per install). Non-modal on
+              purpose: the stage behind it IS the "what your audience sees"
+              demo, and the voice step needs the hotkey live. */}
+          <OnboardingFlow
+            ctx={{
+              isDesktop: vault.isDesktop,
+              hasKeys: vault.keys.some((k) => k.has),
+              voiceSupported: isSupported,
+              overlayCount: overlays.length,
+            }}
+            onOpenSettings={() => setSettingsOpen(true)}
+          />
+
           {/* Layer 2: live voice captions */}
           <LiveCaptions
             text={interimTranscript}
