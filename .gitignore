@@ -24,6 +24,10 @@ native/*/dist/
 /.next/
 /out/
 
+# electron build artifacts (compiled main-process libs + export hold dir)
+/electron/gen/
+/.electron-export-hold/
+
 # production
 /build
 
