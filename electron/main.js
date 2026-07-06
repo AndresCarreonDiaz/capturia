@@ -21,6 +21,7 @@ const keychain = require("./keychain");
 const deckGen = require("./deck-generate");
 const { startRuntimeServer } = require("./runtime-server");
 const { createTray } = require("./tray");
+const { maybeOfferMoveToApplications } = require("./first-run");
 const {
   isTrustedSender,
   isAllowedUrl,
@@ -321,6 +322,12 @@ if (!gotTheLock) {
   });
 
   app.whenReady().then(async () => {
+    // First launch of a packaged build outside /Applications: offer the move
+    // before any window opens (macOS ties permission persistence to the app
+    // path). Guarded internally for smoke/dev; on acceptance the app
+    // relaunches from the new location and this run ends here.
+    await maybeOfferMoveToApplications({ isSmoke });
+
     // Grant camera + mic only to the trusted studio origin, deny everything
     // else (so a navigated-to or injected page can't reach the camera).
     // Smoke mode denies media outright so an unattended run never triggers
