@@ -40,12 +40,22 @@ files:
   - "!node_modules/qrcode/**"
   # Not imported anywhere in main (models go through ai + @ai-sdk/*).
   - "!node_modules/@anthropic-ai/sdk/**"
+  # Shipped via extraResources instead (see below), never through the asar.
+  - "!node_modules/nodejs-whisper/**"
 
-# whisper.cpp lives inside nodejs-whisper's package dir: a compiled whisper-cli
-# binary it must exec and (when downloaded) the ggml model. Neither works from
-# inside an asar archive.
-asarUnpack:
-  - node_modules/nodejs-whisper/**
+# nodejs-whisper chdirs into its own package dir and execs cwd-relative paths
+# (./download-ggml-model.sh, ./build/bin/whisper-cli). That is impossible from
+# an asar, even unpacked: require() resolves the module's paths through the
+# archive's VIRTUAL path, and chdir into it throws ENOTDIR. So a SELF-CONTAINED
+# copy (package + nested transitive deps, staged by
+# scripts/stage-whisper-resources.mjs in pack:mac) ships as a real directory in
+# Contents/Resources, and electron/whisper.js requires it from
+# process.resourcesPath when packaged. The copy happens in the afterPack hook,
+# NOT extraResources, whose default excludes silently strip the nested
+# node_modules the staged copy depends on. Ship it provisioned
+# (npx nodejs-whisper download before packing) or transcription surfaces its
+# provisioning error at runtime; pack:mac prints a warning either way.
+afterPack: scripts/after-pack.mjs
 
 # Nothing here is a Node native addon (nodejs-whisper spawns a prebuilt
 # binary), so skip the electron-rebuild pass.
@@ -57,9 +67,14 @@ mac:
   target:
     - target: dir
       arch: arm64
-  # No signing identity yet: membership activation pending. When it lands,
-  # delete this line (electron-builder then picks up the keychain identity or
-  # CSC_NAME) and flip notarize to true.
+  # No signing identity yet: membership activation pending. When it lands:
+  # delete the identity line (electron-builder then picks up the keychain
+  # identity or CSC_NAME), set notarize: true, AND export APPLE_ID /
+  # APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID in the packing environment;
+  # without those credentials electron-builder skips notarization silently
+  # rather than failing. The signed build must also ship whisper fully
+  # provisioned: a post-install download would write into the bundle and
+  # break its signature.
   identity: null
   hardenedRuntime: true
   entitlements: build/entitlements.mac.plist

@@ -28,9 +28,6 @@ native/*/dist/
 /electron/gen/
 /.electron-export-hold/
 
-# production
-/build
-
 # misc
 .DS_Store
 *.pem
@@ -60,3 +57,6 @@ next-env.d.ts
 # packaged desktop app output
 /dist-app/
 /build/icon.iconset/
+
+# whisper packaging stage (self-contained copy for extraResources)
+/.whisper-stage/

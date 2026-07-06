@@ -36,9 +36,18 @@ async function transcribeWav(wavBuffer) {
 
   // Lazy-require so failed import doesn't crash app startup; the failure
   // surfaces only when the user actually tries to transcribe.
+  //
+  // Packaged, the module lives in Contents/Resources/nodejs-whisper (shipped
+  // via extraResources), NOT in the asar: it chdirs into its own package dir
+  // and execs cwd-relative paths, which the archive's virtual paths cannot
+  // satisfy. Unpackaged it resolves from node_modules as usual.
   let nodewhisper;
   try {
-    ({ nodewhisper } = require("nodejs-whisper"));
+    const { app } = require("electron");
+    const moduleId = app.isPackaged
+      ? path.join(process.resourcesPath, "nodejs-whisper")
+      : "nodejs-whisper";
+    ({ nodewhisper } = require(moduleId));
   } catch (err) {
     busy = false;
     throw new Error(
