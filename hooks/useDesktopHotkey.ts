@@ -18,6 +18,12 @@ export interface DesktopRuntimeInfo {
   url: string;
   token: string;
 }
+// Voice state the renderer reports up to main; drives the tray menu status
+// and its Start/Stop Listening item.
+export interface DesktopStateReport {
+  listening: boolean;
+  voiceSupported: boolean;
+}
 interface CapturiaBridge {
   isDesktop: boolean;
   onHotkey: (handler: (payload: HotkeyPayload) => void) => () => void;
@@ -34,6 +40,9 @@ interface CapturiaBridge {
   runtimeInfo: () => Promise<DesktopRuntimeInfo | null>;
   // Deck codegen: run a prompt on the stored key in main, return raw model text.
   generateCues: (prompt: string, provider: KeyProvider) => Promise<string>;
+  // Optional: a stale packaged preload may predate this method; callers must
+  // treat it as possibly missing (useDesktopStateReport already does).
+  reportState?: (state: DesktopStateReport) => Promise<void>;
 }
 
 declare global {
@@ -66,4 +75,14 @@ export function useIsDesktop(): boolean {
     setIsDesktop(window.capturia?.isDesktop === true);
   }, []);
   return isDesktop;
+}
+
+// Mirror voice state up to the Electron main process whenever it changes, so
+// the tray menu shows Listening/Idle and enables its toggle. No-op on web
+// (no bridge) and against an older preload (reportState missing). The report
+// is fire-and-forget; a rejected invoke must never break the studio.
+export function useDesktopStateReport({ listening, voiceSupported }: DesktopStateReport) {
+  useEffect(() => {
+    window.capturia?.reportState?.({ listening, voiceSupported })?.catch(() => {});
+  }, [listening, voiceSupported]);
 }

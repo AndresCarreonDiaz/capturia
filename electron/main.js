@@ -20,12 +20,14 @@ const { transcribeWav } = require("./whisper");
 const keychain = require("./keychain");
 const deckGen = require("./deck-generate");
 const { startRuntimeServer } = require("./runtime-server");
+const { createTray } = require("./tray");
 const {
   isTrustedSender,
   isAllowedUrl,
   assertProvider,
   assertNonEmptyString,
   assertBytes,
+  assertStateReport,
 } = require("./ipc-schemas");
 
 // Push-to-talk hotkey. Cmd+Alt+Space on Mac, Ctrl+Alt+Space elsewhere.
@@ -48,6 +50,19 @@ let mainWindow = null;
 // Set once the loopback CopilotKit runtime is up; null means it failed and
 // the renderer falls back to /api/copilotkit (works in dev via Next).
 let runtimeServer = null;
+// Menu-bar tray; created in whenReady, rebuilt whenever renderer state lands.
+let tray = null;
+// Closing the Control Room hides it to the tray; only a real quit (Cmd+Q,
+// tray Quit, app menu) tears the window down. before-quit flips this.
+let isQuitting = false;
+// Last state the studio renderer reported (drives the tray status + toggle).
+// reported=false until the first state:report of this launch.
+let rendererState = { reported: false, listening: false, voiceSupported: false };
+// A tray action aimed at a renderer that hasn't mounted its listeners yet
+// (e.g. Settings clicked during startup) would be a silently dropped message;
+// it parks here and flushes on the next state:report, which can only come
+// from a mounted page.
+let pendingRendererAction = null;
 
 // Wrap every privileged IPC handler so it first rejects calls from an
 // untrusted sender (a navigated-away or injected renderer), then runs the
@@ -109,6 +124,33 @@ function registerIpc() {
       return deckGen.generateCues(prompt, provider);
     })
   );
+
+  // Renderer -> main: voice state for the tray (listening on/off, whether the
+  // speech engine exists). Fire-and-forget from the renderer's point of view.
+  ipcMain.handle(
+    "state:report",
+    guarded((_event, payload) => {
+      rendererState = { reported: true, ...assertStateReport(payload) };
+      tray?.update();
+      // The reporting page is mounted and listening on the hotkey channel,
+      // so a parked tray action can be delivered now.
+      if (pendingRendererAction) {
+        const action = pendingRendererAction;
+        pendingRendererAction = null;
+        mainWindow?.webContents.send("hotkey", { action });
+      }
+    })
+  );
+}
+
+// Deliver a UI action to the renderer, or park it until the page proves it is
+// mounted (its first state:report) when it isn't yet.
+function sendRendererAction(action) {
+  if (rendererState.reported && mainWindow) {
+    mainWindow.webContents.send("hotkey", { action });
+  } else {
+    pendingRendererAction = action;
+  }
 }
 
 function createWindow() {
@@ -125,6 +167,9 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      // The whole point of the app is to keep listening and rendering while
+      // hidden behind Zoom; never let Chromium throttle the hidden renderer.
+      backgroundThrottling: false,
       preload: path.join(__dirname, "preload.js"),
     },
   });
@@ -142,6 +187,44 @@ function createWindow() {
 
   mainWindow.once("ready-to-show", () => {
     if (!isSmoke) mainWindow?.show();
+  });
+
+  // Menu-bar-first: closing the Control Room hides it (the shell keeps
+  // listening from the tray); only a real quit destroys it. Smoke mode keeps
+  // real closes so app.exit paths stay untouched, and if the tray failed to
+  // come up there is nothing to reopen from, so close means close.
+  mainWindow.on("close", (event) => {
+    if (isQuitting || isSmoke || !tray) return;
+    event.preventDefault();
+    // Hiding a native-fullscreen window strands an empty fullscreen Space on
+    // macOS; leave fullscreen first, hide once that lands.
+    if (mainWindow.isFullScreen()) {
+      mainWindow.once("leave-full-screen", () => mainWindow?.hide());
+      mainWindow.setFullScreen(false);
+    } else {
+      mainWindow.hide();
+    }
+  });
+
+  // A crashed or reloaded renderer is not listening anymore: drop its last
+  // report so the tray falls back to "starting" (toggle disabled) until the
+  // fresh page reports, instead of advertising a mic loop that is gone.
+  // did-navigate covers main-frame loads only, including reloads.
+  const resetRendererState = () => {
+    rendererState = { reported: false, listening: false, voiceSupported: false };
+    tray?.update();
+  };
+  mainWindow.webContents.on("render-process-gone", resetRendererState);
+  mainWindow.webContents.on("did-navigate", resetRendererState);
+
+  // Dock icon only while the Control Room is open (the Krisp pattern): the
+  // app lives in the menu bar, the dock entry exists for Cmd+Tab while the
+  // window is up. app.dock is macOS-only.
+  mainWindow.on("show", () => {
+    app.dock?.show();
+  });
+  mainWindow.on("hide", () => {
+    app.dock?.hide();
   });
 
   mainWindow.on("closed", () => {
@@ -201,6 +284,25 @@ function createWindow() {
   mainWindow.loadURL(STUDIO_URL);
 }
 
+// Bring the Control Room forward from wherever it is: hidden to the tray,
+// minimized, or already gone (recreate). Every "open the app" path funnels
+// here: tray menu, dock click, second launch. Never in smoke mode, whose
+// window must stay hidden so unattended runs trigger no consent dialogs.
+function showControlRoom() {
+  if (isSmoke) return;
+  if (mainWindow) {
+    // Dock first: re-activating the app before the window shows keeps macOS
+    // from dropping focus on the way in. The window's own show handler also
+    // calls this; the duplicate is harmless.
+    app.dock?.show();
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  } else {
+    createWindow();
+  }
+}
+
 // Single-instance lock so launching Capturia twice focuses the existing
 // window instead of opening a second one with conflicting camera access.
 // Smoke mode must FAIL here, not silently quit(0): a second instance sharing
@@ -215,10 +317,7 @@ if (!gotTheLock) {
   }
 } else {
   app.on("second-instance", () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
+    showControlRoom();
   });
 
   app.whenReady().then(async () => {
@@ -245,6 +344,33 @@ if (!gotTheLock) {
     registerIpc();
     createWindow();
 
+    // Menu-bar tray: live status plus the same actions the window offers, so
+    // the shell stays usable while hidden behind a call. Voice toggling rides
+    // the existing hotkey channel; the renderer wiring is identical. Tray
+    // failure (typically an unbuilt electron/gen on a bare `npx electron .`)
+    // degrades to a plain windowed app instead of crashing the shell.
+    try {
+      tray = createTray({
+        getState: () => rendererState,
+        toggleHotkey: HOTKEY_TOGGLE_VOICE,
+        actions: {
+          "toggle-listening": () =>
+            mainWindow?.webContents.send("hotkey", { action: "toggle-voice" }),
+          "open-control-room": showControlRoom,
+          "open-settings": () => {
+            showControlRoom();
+            sendRendererAction("open-settings");
+          },
+          quit: () => app.quit(),
+        },
+      });
+    } catch (err) {
+      console.error(
+        "Capturia: tray unavailable (is electron/gen built? run `npm run electron` or `node scripts/build-electron-libs.mjs`):",
+        err
+      );
+    }
+
     // Global push-to-talk hotkey. Works even when Capturia isn't focused,
     // so users can toggle voice mid-Zoom-call without alt-tabbing.
     const registered = globalShortcut.register(HOTKEY_TOGGLE_VOICE, () => {
@@ -256,18 +382,26 @@ if (!gotTheLock) {
   });
 }
 
-// Clean up the global shortcut so it doesn't linger past app exit.
-app.on("will-quit", () => {
-  globalShortcut.unregisterAll();
+// Flag a real quit before any window sees the close event, so close-to-hide
+// steps aside and the app actually exits.
+app.on("before-quit", () => {
+  isQuitting = true;
 });
 
-// macOS: keep the app alive when all windows close (re-open via dock).
+// Clean up the global shortcut and tray so they don't linger past app exit.
+app.on("will-quit", () => {
+  globalShortcut.unregisterAll();
+  tray?.destroy();
+  tray = null;
+});
+
+// macOS: keep the app alive when all windows close (re-open via tray/dock).
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-// macOS: re-create the window when the user clicks the dock icon and there
-// are no open windows.
+// macOS: dock click (or a Finder re-launch) brings the Control Room back,
+// including from the hidden-to-tray state.
 app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  showControlRoom();
 });

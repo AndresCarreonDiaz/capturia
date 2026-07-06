@@ -10,7 +10,12 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const files = ["lib/server-keys.ts", "lib/system-prompt.ts", "lib/desktop-runtime.ts"];
+const files = [
+  "lib/server-keys.ts",
+  "lib/system-prompt.ts",
+  "lib/desktop-runtime.ts",
+  "lib/tray-menu.ts",
+];
 const outDir = join(root, "electron", "gen");
 
 rmSync(outDir, { recursive: true, force: true });
