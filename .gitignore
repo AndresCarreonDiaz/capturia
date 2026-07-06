@@ -52,3 +52,8 @@ next-env.d.ts
 
 # Claude Code local runtime (scheduled-task locks, local settings)
 /.claude/
+
+# packaged desktop app output + whisper packaging stage (also ignored on the M8 branches)
+/dist-app/
+/.whisper-stage/
+/electron/gen/
