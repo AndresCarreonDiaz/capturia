@@ -43,6 +43,24 @@ or human judgment; run them before a release-worthy merge.
 2. Tap-to-talk (`Cmd+Alt+Space`), speak, expect a transcript-driven overlay
    (slower than web: whisper transcribes after you stop).
 3. `Cmd+,`: save a Gemini key in the vault, restart, confirm it persists
-   masked and the agent runs BYOK (watch the request headers in devtools).
+   masked and the agent runs BYOK. In devtools, the agent requests go to
+   `http://127.0.0.1:<port>/api/copilotkit` and carry only
+   `x-capturia-provider` + `x-capturia-token`; the plaintext key must never
+   appear in any request or in the renderer.
 4. Drop a PDF on the deck rail; expect LLM cue cards (or deterministic
    fallback), and spoken cue aliases to fire the matching card.
+
+## Desktop static bundle + loopback runtime (M8)
+
+Automated pieces first: `npm run smoke:runtime` (runtime server auth/protocol
+over real HTTP, no Electron) and `npm run build:electron` then
+`CAPTURIA_SMOKE=1 npm run electron` (static export boots over file://, bridge
+up, authenticated keycheck against the loopback runtime; exits 0 on pass).
+Then by hand:
+
+1. `npm run build:electron`, then `CAPTURIA_STATIC_UI=1 npm run electron`
+   (no Next server running). The studio must load and the agent loop must run
+   BYOK exactly like the dev path.
+2. Confirm voting is the documented exception: without a hosted
+   `NEXT_PUBLIC_CAPTURIA_ORIGIN` baked into the export, the QR/vote path
+   surfaces its error instead of silently dropping votes.
