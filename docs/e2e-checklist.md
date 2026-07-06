@@ -40,8 +40,12 @@ or human judgment; run them before a release-worthy merge.
 
 1. `npm run electron-dev`. First run: `npx nodejs-whisper download` if the
    model is missing.
-2. Tap-to-talk (`Cmd+Alt+Space`), speak, expect a transcript-driven overlay
-   (slower than web: whisper transcribes after you stop).
+2. Continuous voice (`Cmd+Alt+Space` toggles the session): speak, pause,
+   expect a transcript-driven overlay about a second after the pause while
+   the mic stays open; say a second command without touching anything and
+   expect it too. Two quick commands back to back must both land, in order
+   (chunks queue behind one whisper job). The feed's energy vignette should
+   breathe while you speak. Toggle again to release the mic.
 3. `Cmd+,`: save a Gemini key in the vault, restart, confirm it persists
    masked and the agent runs BYOK. In devtools, the agent requests go to
    `http://127.0.0.1:<port>/api/copilotkit` and carry only

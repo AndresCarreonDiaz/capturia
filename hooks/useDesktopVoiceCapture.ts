@@ -1,37 +1,26 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { VoiceCaptureState } from "./useVoiceCapture";
+import { createVadState, stepVad, DEFAULT_VAD_CONFIG, type VadState } from "@/lib/vad";
+import { createSerialQueue } from "@/lib/transcript-stream";
 
-// Tap-to-start desktop voice capture backed by local whisper.cpp through the
-// Electron main process. Same VoiceCaptureState shape as useVoiceCapture so
-// the studio swap is a one-line import switch.
+// Continuous, hands-free desktop voice backed by local whisper.cpp through
+// the Electron main process (M9 part 1). Same VoiceCaptureState shape as the
+// web hook so the studio swap stays a one-line import switch.
 //
-// Flow: tap mic / hotkey -> record -> energy-based VAD detects end of speech
-// after VAD_TRAILING_SILENCE_MS of quiet -> auto-stop + transcribe -> fire
-// onFinalResult once. User can also tap again to stop manually mid-utterance.
-// No streaming / interim transcripts yet (next iteration if needed).
+// One toggle opens a SESSION, not an utterance: the mic stays open, the pure
+// VAD machine (lib/vad.ts) watches energy, and every pause slices the
+// recording into a chunk that transcribes in the background (serial queue;
+// whisper handles one job at a time) while the mic keeps listening. Toggling
+// again ends the session and flushes the last chunk. Latency is
+// utterance-class (about a second after each pause); the sub-second native
+// streaming engine lands behind the same contract later (issue #8).
 
 const WHISPER_SAMPLE_RATE = 16000;
-
-// VAD tuning. AudioContext + AnalyserNode run in parallel with MediaRecorder
-// on the same MediaStream (they don't conflict; the Web Speech / AudioContext
-// conflict noted in feedback memory doesn't apply here since we're not using
-// Web Speech).
 const VAD_POLL_MS = 50;
-const VAD_SILENCE_RMS = 0.015;        // RMS below this is considered silence
-const VAD_MIN_SPEECH_MS = 250;        // need this much speech before auto-stop arms
-const VAD_TRAILING_SILENCE_MS = 800;  // this much silence after speech triggers stop
-const VAD_MAX_WAIT_FOR_SPEECH_MS = 6000;  // give up if user opens mic but never speaks
-const VAD_MAX_RECORDING_MS = 30000;   // hard safety cap
-
-type VadPhase = "waiting_for_speech" | "speaking" | "trailing_silence";
-
-interface VadState {
-  phase: VadPhase;
-  startedAt: number;
-  speechStartedAt: number;
-  silenceStartedAt: number;
-}
+// Throttle for lastResultAt stamps while speaking; drives the audio-reactive
+// energy FX without re-rendering the studio at poll frequency.
+const ENERGY_STAMP_MS = 250;
 
 export function useDesktopVoiceCapture(
   onFinalResult: (text: string) => void
@@ -41,6 +30,7 @@ export function useDesktopVoiceCapture(
   const [speechStatus, setSpeechStatus] = useState("idle");
   const [lastError, setLastError] = useState("");
   const [isSupported, setIsSupported] = useState(false);
+  const [lastResultAt, setLastResultAt] = useState(0);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -51,8 +41,19 @@ export function useDesktopVoiceCapture(
   const vadTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const vadStateRef = useRef<VadState | null>(null);
   const isListeningRef = useRef(false);
+  const lastStampRef = useRef(0);
   const onFinalRef = useRef(onFinalResult);
   onFinalRef.current = onFinalResult;
+
+  // Serial transcription queue: whisper in main rejects concurrent jobs, and
+  // utterances must reach the agent in spoken order anyway.
+  const transcribeQueueRef = useRef(
+    createSerialQueue((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      setLastError(msg);
+      setSpeechStatus(`error: ${msg}`);
+    })
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -99,10 +100,58 @@ export function useDesktopVoiceCapture(
     streamRef.current = null;
   }, [stopVad]);
 
-  // Forward-declare stopListening so VAD timer can call it. We assign the
-  // real implementation after defining startListening to avoid hoisting
-  // issues with useCallback.
-  const stopListeningRef = useRef<() => void>(() => {});
+  // Transcribe one sliced utterance in the background. The session keeps
+  // recording while this runs; results fire in spoken order via the queue.
+  const transcribeChunk = useCallback((chunks: Blob[], mime: string) => {
+    transcribeQueueRef.current(async () => {
+      const blob = new Blob(chunks, { type: mime });
+      const wav = await blobToWavMono16k(blob);
+      const transcript = await window.capturia!.transcribe(wav);
+      if (transcript && transcript.trim()) {
+        setSpeechStatus(isListeningRef.current ? "sent, still listening" : "sent ✓");
+        onFinalRef.current(transcript.trim());
+      } else if (isListeningRef.current) {
+        setSpeechStatus("listening…");
+      }
+    });
+  }, []);
+
+  // Slice the current utterance: stop the recorder (its onstop hands the
+  // chunk to the transcriber) and, when the session continues, immediately
+  // start a fresh recorder on the same open stream. `transcribe` is false
+  // for VAD "discard" windows (noise blips, silent caps).
+  const sliceUtterance = useCallback(
+    (transcribe: boolean) => {
+      const recorder = recorderRef.current;
+      if (!recorder || recorder.state === "inactive") return;
+      const mime = mimeRef.current;
+      recorder.onstop = () => {
+        const chunks = chunksRef.current;
+        chunksRef.current = [];
+        if (transcribe && chunks.length > 0) {
+          setSpeechStatus("transcribing…");
+          transcribeChunk(chunks, mime);
+        }
+        // Session still live: keep the mic hot with a new recorder.
+        const stream = streamRef.current;
+        if (isListeningRef.current && stream && stream.active) {
+          const next = new MediaRecorder(stream, { mimeType: mime });
+          recorderRef.current = next;
+          next.ondataavailable = (e) => {
+            if (e.data.size > 0) chunksRef.current.push(e.data);
+          };
+          next.start();
+          vadStateRef.current = createVadState(Date.now());
+        }
+      };
+      try {
+        recorder.stop();
+      } catch {
+        /* recorder already gone; teardown paths handle the rest */
+      }
+    },
+    [transcribeChunk]
+  );
 
   const startListening = useCallback(async () => {
     if (isListeningRef.current) return;
@@ -131,56 +180,15 @@ export function useDesktopVoiceCapture(
 
       const recorder = new MediaRecorder(stream, { mimeType: mime });
       recorderRef.current = recorder;
-
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
       };
-
-      recorder.onstop = async () => {
-        stopVad();
-        const chunks = chunksRef.current;
-        chunksRef.current = [];
-        const s = streamRef.current;
-        if (s) {
-          s.getTracks().forEach((t) => t.stop());
-          streamRef.current = null;
-        }
-
-        if (chunks.length === 0) {
-          isListeningRef.current = false;
-          setIsListening(false);
-          setSpeechStatus("idle");
-          return;
-        }
-
-        try {
-          setSpeechStatus("transcribing…");
-          const blob = new Blob(chunks, { type: mimeRef.current });
-          const wav = await blobToWavMono16k(blob);
-          const transcript = await window.capturia!.transcribe(wav);
-
-          isListeningRef.current = false;
-          setIsListening(false);
-          if (transcript && transcript.trim()) {
-            setSpeechStatus("sent ✓");
-            onFinalRef.current(transcript.trim());
-          } else {
-            setSpeechStatus("idle");
-          }
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          setLastError(msg);
-          setSpeechStatus(`error: ${msg}`);
-          isListeningRef.current = false;
-          setIsListening(false);
-        }
-      };
-
       recorder.start();
-      setSpeechStatus("listening, speak now");
+      setSpeechStatus("listening…");
 
-      // VAD pipeline: AnalyserNode on the same MediaStream watches energy.
-      // When silence persists after speech, auto-trigger stop.
+      // Energy watcher for the VAD. AnalyserNode + AudioContext are safe next
+      // to MediaRecorder on the same stream (the Web Speech conflict from the
+      // feedback memory does not apply here; no Web Speech on desktop).
       const AudioCtor =
         window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -191,14 +199,7 @@ export function useDesktopVoiceCapture(
       analyser.fftSize = 1024;
       sourceNode.connect(analyser);
       analyserRef.current = analyser;
-
-      const now = Date.now();
-      vadStateRef.current = {
-        phase: "waiting_for_speech",
-        startedAt: now,
-        speechStartedAt: 0,
-        silenceStartedAt: 0,
-      };
+      vadStateRef.current = createVadState(Date.now());
 
       const sampleBuffer = new Float32Array(analyser.fftSize);
       vadTimerRef.current = setInterval(() => {
@@ -212,52 +213,20 @@ export function useDesktopVoiceCapture(
           sumSquares += sampleBuffer[i] * sampleBuffer[i];
         }
         const rms = Math.sqrt(sumSquares / sampleBuffer.length);
-        const t = Date.now();
-        const elapsed = t - state.startedAt;
+        const now = Date.now();
 
-        // Safety cap regardless of phase.
-        if (elapsed > VAD_MAX_RECORDING_MS) {
-          stopListeningRef.current();
-          return;
+        const step = stepVad(state, rms, now, DEFAULT_VAD_CONFIG);
+        vadStateRef.current = step.state;
+
+        // Audio-reactive energy: stamp while actually speaking, throttled so
+        // the studio does not re-render at poll frequency.
+        if (step.speaking && now - lastStampRef.current >= ENERGY_STAMP_MS) {
+          lastStampRef.current = now;
+          setLastResultAt(now);
         }
 
-        if (state.phase === "waiting_for_speech") {
-          if (rms > VAD_SILENCE_RMS) {
-            state.phase = "speaking";
-            state.speechStartedAt = t;
-          } else if (elapsed > VAD_MAX_WAIT_FOR_SPEECH_MS) {
-            // User opened mic but never spoke. Stop without transcribing
-            // (empty buffer → onstop returns early).
-            stopListeningRef.current();
-          }
-          return;
-        }
-
-        if (state.phase === "speaking") {
-          if (rms > VAD_SILENCE_RMS) {
-            // still speaking; keep going
-          } else {
-            state.phase = "trailing_silence";
-            state.silenceStartedAt = t;
-          }
-          return;
-        }
-
-        if (state.phase === "trailing_silence") {
-          if (rms > VAD_SILENCE_RMS) {
-            // user resumed speaking; cancel the silence timer
-            state.phase = "speaking";
-          } else {
-            const speechDuration = state.silenceStartedAt - state.speechStartedAt;
-            const silenceDuration = t - state.silenceStartedAt;
-            if (
-              speechDuration >= VAD_MIN_SPEECH_MS &&
-              silenceDuration >= VAD_TRAILING_SILENCE_MS
-            ) {
-              setSpeechStatus("processing…");
-              stopListeningRef.current();
-            }
-          }
+        if (step.action !== "none") {
+          sliceUtterance(step.action === "utterance_end");
         }
       }, VAD_POLL_MS);
     } catch (err) {
@@ -268,31 +237,46 @@ export function useDesktopVoiceCapture(
       isListeningRef.current = false;
       setIsListening(false);
     }
-  }, [teardown, stopVad]);
+  }, [teardown, sliceUtterance]);
 
   const stopListening = useCallback(() => {
     if (!isListeningRef.current) return;
-    setSpeechStatus("stopping…");
+    isListeningRef.current = false;
+    setIsListening(false);
+    setSpeechStatus("finishing…");
     stopVad();
+
     const recorder = recorderRef.current;
+    const mime = mimeRef.current;
     if (recorder && recorder.state !== "inactive") {
+      // Flush the last utterance, then release the mic.
+      recorder.onstop = () => {
+        const chunks = chunksRef.current;
+        chunksRef.current = [];
+        const stream = streamRef.current;
+        if (stream) {
+          stream.getTracks().forEach((t) => t.stop());
+          streamRef.current = null;
+        }
+        recorderRef.current = null;
+        if (chunks.length > 0) {
+          setSpeechStatus("transcribing…");
+          transcribeChunk(chunks, mime);
+        } else {
+          setSpeechStatus("idle");
+        }
+      };
       try {
         recorder.stop();
       } catch {
         teardown();
-        isListeningRef.current = false;
-        setIsListening(false);
+        setSpeechStatus("idle");
       }
     } else {
       teardown();
-      isListeningRef.current = false;
-      setIsListening(false);
+      setSpeechStatus("idle");
     }
-  }, [teardown, stopVad]);
-
-  // Keep the ref pointing at the latest stopListening so the VAD timer
-  // (which closes over the first ref value) always calls the current one.
-  stopListeningRef.current = stopListening;
+  }, [teardown, stopVad, transcribeChunk]);
 
   useEffect(() => {
     return () => {
@@ -306,10 +290,8 @@ export function useDesktopVoiceCapture(
     interimTranscript,
     speechStatus,
     lastError,
-    // Whisper transcribes whole chunks after the fact, so there is no live
-    // result stream to stamp; audio-reactive energy simply stays inert on
-    // desktop until a streaming backend lands.
-    lastResultAt: 0,
+    // Live VAD stamps: the feed's energy FX now breathes on desktop too.
+    lastResultAt,
     isSupported,
     startListening,
     stopListening,
