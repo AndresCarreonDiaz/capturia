@@ -31,18 +31,19 @@ function writeFlags(patch) {
   }
 }
 
-// Call from whenReady before the window opens. No-ops everywhere except a
-// packaged, non-smoke, macOS launch from outside /Applications that has not
-// been asked before. On acceptance, moveToApplicationsFolder relaunches the
-// app from the new location.
-async function maybeOfferMoveToApplications({ isSmoke }) {
+// Call at the END of whenReady, once the window and tray exist: the dialog
+// then floats over a working app instead of being the only UI. No-ops
+// everywhere except a packaged, non-smoke, macOS launch from outside
+// /Applications that has not been asked before. On acceptance,
+// moveToApplicationsFolder quits and relaunches from the new location.
+async function maybeOfferMoveToApplications({ isSmoke, parentWindow }) {
   if (!app.isPackaged || isSmoke) return;
   if (process.platform !== "darwin") return;
   if (app.isInApplicationsFolder()) return;
   if (readFlags().moveOffered) return;
   writeFlags({ moveOffered: true });
 
-  const { response } = await dialog.showMessageBox({
+  const options = {
     type: "question",
     buttons: ["Move to Applications", "Not Now"],
     defaultId: 0,
@@ -50,7 +51,10 @@ async function maybeOfferMoveToApplications({ isSmoke }) {
     message: "Move Capturia to your Applications folder?",
     detail:
       "Capturia works best from Applications: macOS remembers its camera and microphone permissions there, and updates stay tidy.",
-  });
+  };
+  const { response } = parentWindow
+    ? await dialog.showMessageBox(parentWindow, options)
+    : await dialog.showMessageBox(options);
   if (response !== 0) return;
 
   try {

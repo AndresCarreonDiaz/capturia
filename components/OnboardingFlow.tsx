@@ -41,7 +41,28 @@ export default function OnboardingFlow({
 }) {
   const initiallyCompleted = useSyncExternalStore(subscribeNoop, readCompleted, () => true);
   const [finished, setFinished] = useState(false);
-  const [stepIndex, setStepIndex] = useState(0);
+  // Session-scoped progress: toggling Program Output unmounts all operator
+  // chrome including this card, and losing the step would restart the tour
+  // from the top. A fresh launch (new session) still starts clean.
+  const [stepIndex, setStepIndexState] = useState(() => {
+    if (typeof window === "undefined") return 0;
+    try {
+      return Number(window.sessionStorage.getItem(`${STORAGE_KEY}:step`)) || 0;
+    } catch {
+      return 0;
+    }
+  });
+  const setStepIndex = (update: (i: number) => number) => {
+    setStepIndexState((i) => {
+      const next = update(i);
+      try {
+        window.sessionStorage.setItem(`${STORAGE_KEY}:step`, String(next));
+      } catch {
+        // Progress just will not survive an output-mode round trip.
+      }
+      return next;
+    });
+  };
   const completed = initiallyCompleted || finished;
 
   // Steps are fixed for the life of the flow; satisfaction drives
@@ -59,11 +80,17 @@ export default function OnboardingFlow({
   // so the copy resets on its own.
   const satisfied = Boolean(step && step.isSatisfied(ctx));
 
+  // Keyed on the step too, not just satisfaction: if the NEXT step is
+  // already satisfied when this one advances (say a key exists and an
+  // overlay already rendered), `satisfied` never flips false and an effect
+  // keyed only on it would never arm the next timer, stranding the card on
+  // its success copy with no button.
   useEffect(() => {
     if (!satisfied) return;
     const timer = setTimeout(() => setStepIndex((i) => i + 1), 1600);
     return () => clearTimeout(timer);
-  }, [satisfied]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [satisfied, stepIndex]);
 
   if (completed || !shouldShowOnboarding(ctx, completed) || !step) return null;
 
@@ -83,7 +110,10 @@ export default function OnboardingFlow({
   };
 
   return (
-    <div className="absolute bottom-8 left-8 z-40 w-[340px] pointer-events-auto">
+    // bottom-28 clears the full-width CommandBar (bottom-0) and the caption
+    // strip (bottom-20, centered, pointer-events-none); left side is free
+    // (CueDeck is top-left, the vote QR is bottom-right).
+    <div className="absolute bottom-28 left-8 z-40 w-[340px] pointer-events-auto">
       <div className="bg-black/85 border border-white/15 rounded-2xl shadow-[0_0_60px_rgba(0,0,0,0.7)] backdrop-blur-md overflow-hidden">
         <div className="flex items-center justify-between px-5 pt-4">
           <span className="text-white/40 text-xs font-mono uppercase tracking-[0.2em]">

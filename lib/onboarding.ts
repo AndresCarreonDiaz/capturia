@@ -48,7 +48,7 @@ const ALL_STEPS: OnboardingStep[] = [
     title: "Try your first command",
     body:
       'Press ⌘⌥Space and say: "show a live counter of 500 viewers". ' +
-      "Watch it land on your feed.",
+      "Press it again to finish, and watch it land on your feed.",
     cta: "Skip this",
     isSatisfied: (ctx) => ctx.overlayCount > 0,
   },
