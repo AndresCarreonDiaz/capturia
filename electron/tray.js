@@ -5,11 +5,14 @@
 
 const { Tray, Menu, nativeImage } = require("electron");
 const path = require("path");
-const { buildTrayMenu } = require("./gen/tray-menu");
 
 // getState() is read on every rebuild so the menu always reflects the latest
 // renderer report. actions maps TrayAction ids to main-process handlers.
+// Throws when electron/gen is missing (gitignored; built by the preelectron
+// hook): the require lives here, not at module load, so a bare `npx electron .`
+// on a clean checkout still boots the shell and can degrade gracefully.
 function createTray({ getState, toggleHotkey, actions }) {
+  const { buildTrayMenu } = require("./gen/tray-menu");
   // createFromPath picks up the @2x sibling for Retina; the Template name (and
   // the explicit flag) lets macOS recolor the glyph for menu-bar appearance.
   const icon = nativeImage.createFromPath(

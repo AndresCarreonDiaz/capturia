@@ -40,7 +40,9 @@ interface CapturiaBridge {
   runtimeInfo: () => Promise<DesktopRuntimeInfo | null>;
   // Deck codegen: run a prompt on the stored key in main, return raw model text.
   generateCues: (prompt: string, provider: KeyProvider) => Promise<string>;
-  reportState: (state: DesktopStateReport) => Promise<void>;
+  // Optional: a stale packaged preload may predate this method; callers must
+  // treat it as possibly missing (useDesktopStateReport already does).
+  reportState?: (state: DesktopStateReport) => Promise<void>;
 }
 
 declare global {

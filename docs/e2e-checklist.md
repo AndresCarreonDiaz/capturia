@@ -64,3 +64,26 @@ Then by hand:
 2. Confirm voting is the documented exception: without a hosted
    `NEXT_PUBLIC_CAPTURIA_ORIGIN` baked into the export, the QR/vote path
    surfaces its error instead of silently dropping votes.
+
+## Menu-bar shell (M8, tray)
+
+1. `npm run electron-dev`. A Capturia camera glyph appears in the menu bar;
+   its first menu line reads "Capturia: starting", flips to "Capturia: idle"
+   once the studio mounts, and the Start Listening item enables.
+2. Start Listening from the tray: the studio's voice loop starts and the
+   status line reads "Capturia: listening"; Stop Listening reverses it. The
+   `Cmd+Alt+Space` hotkey and the tray stay in sync whichever one toggles.
+3. Close the Control Room window: the app stays alive in the menu bar, the
+   dock icon disappears, and voice keeps working while hidden (toggle via
+   hotkey, speak, reopen and confirm the overlay landed). "Open Control Room"
+   brings the window and dock icon back.
+4. Tray > Settings opens the Control Room with the settings sheet up, even
+   when clicked immediately after launch (the action is parked until the
+   page mounts, then delivered).
+5. Fullscreen the Control Room, then close it: the window leaves fullscreen
+   before hiding (no stranded empty macOS Space).
+6. Reload the studio (View > Reload): the tray drops back to "Capturia:
+   starting" with the toggle disabled, then recovers to "Capturia: idle"
+   when the page remounts.
+7. Quit from the tray: the app exits fully (no lingering menu-bar icon, no
+   process).
