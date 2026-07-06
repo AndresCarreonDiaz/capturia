@@ -1,0 +1,70 @@
+# Packaging for the desktop shell. Produces an unsigned Capturia.app until the
+# Apple Developer membership activates (tracked in the M7b issue); every
+# signing-related key below is inert without an identity but makes signing a
+# config flip, not a rework. Build with:  npm run pack:mac
+# (runs build:electron first: electron/gen libs + the out/ static export).
+
+appId: com.capturia.desktop
+productName: Capturia
+
+directories:
+  output: dist-app
+  buildResources: build
+
+# App files beyond package.json + production node_modules (which
+# electron-builder includes on its own): the main process and the static UI.
+#
+# The negations prune production deps the packaged app never loads: the
+# renderer is a self-contained static export (its React/Next/pdfjs code is
+# already inside out/'s bundles), and Electron main only requires
+# @copilotkit/runtime, ai + @ai-sdk/*, and nodejs-whisper. Anything removed
+# here that main secretly needed would fail the packaged smoke
+# (CAPTURIA_SMOKE=1 on the built binary), so keep that green when touching
+# this list.
+files:
+  - electron/**/*
+  - out/**/*
+  # Dev-only spike runner; not part of the product.
+  - "!electron/spike-frames.js"
+  # Web-framework packages, used only to BUILD the static export.
+  - "!node_modules/next/**"
+  - "!node_modules/@next/**"
+  - "!node_modules/react/**"
+  - "!node_modules/react-dom/**"
+  # Renderer-side libraries, already bundled into out/ by the export.
+  - "!node_modules/@copilotkit/react-core/**"
+  - "!node_modules/@copilotkit/react-ui/**"
+  - "!node_modules/@copilotkit/a2ui-renderer/**"
+  - "!node_modules/pdfjs-dist/**"
+  - "!node_modules/pptx-text-parser/**"
+  - "!node_modules/qrcode/**"
+  # Not imported anywhere in main (models go through ai + @ai-sdk/*).
+  - "!node_modules/@anthropic-ai/sdk/**"
+
+# whisper.cpp lives inside nodejs-whisper's package dir: a compiled whisper-cli
+# binary it must exec and (when downloaded) the ggml model. Neither works from
+# inside an asar archive.
+asarUnpack:
+  - node_modules/nodejs-whisper/**
+
+# Nothing here is a Node native addon (nodejs-whisper spawns a prebuilt
+# binary), so skip the electron-rebuild pass.
+npmRebuild: false
+
+mac:
+  category: public.app-category.video
+  icon: build/icon.icns
+  target:
+    - target: dir
+      arch: arm64
+  # No signing identity yet: membership activation pending. When it lands,
+  # delete this line (electron-builder then picks up the keychain identity or
+  # CSC_NAME) and flip notarize to true.
+  identity: null
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  notarize: false
+  # The CMIO camera extension (native/CapturiaCamera) is NOT embedded yet; it
+  # needs its own provisioning profile + strict signing before it can ship
+  # inside the app. That lands with the M7b issue via an afterPack hook.

@@ -18,7 +18,8 @@
     "smoke:runtime": "node scripts/smoke-runtime-server.mjs",
     "preelectron": "node scripts/build-electron-libs.mjs",
     "electron": "electron .",
-    "electron-dev": "concurrently -k -n NEXT,ELECTRON -c blue,magenta \"npm run dev\" \"wait-on http://localhost:3000 && npm run electron\""
+    "electron-dev": "concurrently -k -n NEXT,ELECTRON -c blue,magenta \"npm run dev\" \"wait-on http://localhost:3000 && npm run electron\"",
+    "pack:mac": "npm run build:electron && electron-builder --mac"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.76",
@@ -49,6 +50,7 @@
     "@types/react-dom": "^19",
     "concurrently": "^9.2.1",
     "electron": "^42.2.0",
+    "electron-builder": "^26.15.3",
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
     "node-addon-api": "^8.9.0",
