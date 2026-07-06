@@ -24,8 +24,9 @@ native/*/dist/
 /.next/
 /out/
 
-# production
-/build
+# electron build artifacts (compiled main-process libs + export hold dir)
+/electron/gen/
+/.electron-export-hold/
 
 # misc
 .DS_Store
@@ -53,7 +54,9 @@ next-env.d.ts
 # Claude Code local runtime (scheduled-task locks, local settings)
 /.claude/
 
-# packaged desktop app output + whisper packaging stage (also ignored on the M8 branches)
+# packaged desktop app output
 /dist-app/
+/build/icon.iconset/
+
+# whisper packaging stage (self-contained copy for extraResources)
 /.whisper-stage/
-/electron/gen/

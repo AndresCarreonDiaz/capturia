@@ -55,6 +55,20 @@ function assertBytes(value, label) {
   throw new Error(`${label} must be ArrayBuffer/TypedArray bytes.`);
 }
 
+// The renderer's state report that drives the tray menu. Rebuilt as a fresh
+// object so extra properties on the payload never reach main state.
+function assertStateReport(value) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    typeof value.listening !== "boolean" ||
+    typeof value.voiceSupported !== "boolean"
+  ) {
+    throw new Error("State report needs boolean listening and voiceSupported.");
+  }
+  return { listening: value.listening, voiceSupported: value.voiceSupported };
+}
+
 module.exports = {
   PROVIDERS,
   isAllowedUrl,
@@ -62,4 +76,5 @@ module.exports = {
   assertProvider,
   assertNonEmptyString,
   assertBytes,
+  assertStateReport,
 };

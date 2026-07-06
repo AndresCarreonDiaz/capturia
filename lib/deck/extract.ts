@@ -41,10 +41,14 @@ interface TextItemish {
 }
 
 // Extract a deck's structure entirely in the browser (works on web and desktop
-// alike, no server, no hosted parsing). The worker is served from /public.
+// alike, no server, no hosted parsing). The worker is vendored into /public by
+// scripts/copy-pdf-worker.mjs. Resolved against baseURI, not root-absolute:
+// the desktop studio loads from file://.../out/studio.html, where "/pdf..."
+// has no host to resolve against; on web this resolves to the same
+// origin-root URL as before (/studio has no trailing slash).
 export async function extractPdf(file: File): Promise<DeckExtract> {
   const pdfjs = await import("pdfjs-dist");
-  pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdf.worker.min.mjs", document.baseURI).href;
 
   const data = await file.arrayBuffer();
   const doc = await pdfjs.getDocument({ data }).promise;

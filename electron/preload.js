@@ -7,7 +7,9 @@
 //   window.capturia.onHotkey(handler) - subscribe to "toggle-voice" hotkey
 //     events. Returns an unsubscribe function.
 //   window.capturia.transcribe(wavBytes) - local whisper transcription
-//   window.capturia.keys.{save,clear,list,get} - BYOK vault
+//   window.capturia.keys.{save,clear,list} - BYOK vault (plaintext never
+//     crosses this bridge; main's runtime server reads keys itself)
+//   window.capturia.runtimeInfo() - loopback runtime URL + bearer token
 
 const { contextBridge, ipcRenderer } = require("electron");
 
@@ -33,11 +35,9 @@ contextBridge.exposeInMainWorld("capturia", {
     return ipcRenderer.invoke("whisper:transcribe", wavBytes);
   },
   // BYOK key vault. save/clear/list return the updated KeyEntry[] snapshot.
-  // get returns the plaintext key for the active provider so the renderer can
-  // attach it to the CopilotKit request header (BYOK, see app/studio). This is
-  // the user's OWN key on their OWN machine; the main process only returns it
-  // to a trusted (localhost / file://) sender, and it is sent only to the local
-  // runtime. The fully isolated form (runtime in main) is the M2 hardening.
+  // There is deliberately no `get`: the plaintext key never enters a renderer.
+  // The runtime server in main reads the keychain itself; the renderer only
+  // names a provider via the x-capturia-provider header (app/studio).
   keys: {
     save(provider, key) {
       return ipcRenderer.invoke("keys:save", { provider, key });
@@ -48,13 +48,22 @@ contextBridge.exposeInMainWorld("capturia", {
     list() {
       return ipcRenderer.invoke("keys:list");
     },
-    get(provider) {
-      return ipcRenderer.invoke("keys:get", provider);
-    },
+  },
+  // Where main's loopback CopilotKit runtime listens this launch: an absolute
+  // runtimeUrl plus the per-launch bearer token that authenticates the
+  // renderer to it. null when the server failed to start (the renderer then
+  // stays on the /api/copilotkit route, which works in dev).
+  runtimeInfo() {
+    return ipcRenderer.invoke("runtime:info");
   },
   // Deck codegen: run a prompt on the user's stored key in main, return raw
   // model text. Used by the deck dropzone to design overlays from a PDF.
   generateCues(prompt, provider) {
     return ipcRenderer.invoke("deck:generate", { prompt, provider });
+  },
+  // Renderer -> main: voice state for the tray menu (listening on/off and
+  // whether the speech engine exists). Fire-and-forget for the caller.
+  reportState(state) {
+    return ipcRenderer.invoke("state:report", state);
   },
 });

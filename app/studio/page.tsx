@@ -43,7 +43,7 @@ import VoteQRBadge from "@/components/VoteQRBadge";
 import { derivePollFromOverlays } from "@/lib/derive-poll";
 import type { PollOption } from "@/lib/vote-store";
 import { useRecorder } from "@/hooks/useRecorder";
-import { useDesktopHotkey } from "@/hooks/useDesktopHotkey";
+import { useDesktopHotkey, useDesktopStateReport } from "@/hooks/useDesktopHotkey";
 import { useKeyVault } from "@/hooks/useKeyVault";
 import type { KeyProvider } from "@/hooks/useDesktopHotkey";
 import SettingsModal from "@/components/SettingsModal";
@@ -76,54 +76,56 @@ export default function Studio() {
   const firstWithKey = vault.keys.find((k) => k.has)?.provider;
   const activeProvider: KeyProvider = pickedProvider ?? firstWithKey ?? "gemini";
 
-  // The plaintext key must live in STATE, not a ref. CopilotKit resolves the
-  // `headers` prop during render and rebuilds its request config when the
-  // headers object identity changes, so a ref (which never triggers a
-  // re-render) would leave it stuck with the mount-time empty headers and the
-  // key would never reach the route. State -> re-render -> new headers object.
-  const [byokKey, setByokKey] = useState<string>("");
+  // Desktop: main hosts the CopilotKit runtime on a loopback server and hands
+  // the renderer its per-launch URL + bearer token over the bridge. The
+  // plaintext BYOK key never crosses; the renderer only NAMES a provider and
+  // main reads that key from the OS keychain itself. On web there is no
+  // bridge, so this stays null and the /api/copilotkit route serves the
+  // runtime. Must be STATE (like the old key plumbing): CopilotKit resolves
+  // `headers` during render, so only a re-render propagates the token.
+  const [desktopRuntime, setDesktopRuntime] = useState<{ url: string; token: string } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    if (typeof window === "undefined" || !window.capturia?.keys?.get) {
-      setByokKey("");
-      return;
-    }
-    window.capturia.keys
-      .get(activeProvider)
-      .then((k) => {
-        if (!cancelled) setByokKey(k ?? "");
+    window.capturia?.runtimeInfo?.()
+      .then((info) => {
+        if (!cancelled && info) setDesktopRuntime(info);
       })
       .catch(() => {
-        if (!cancelled) setByokKey("");
+        /* runtime server down: dev still works via the Next route */
       });
     return () => {
       cancelled = true;
     };
-  }, [activeProvider, vault.keys]);
+  }, []);
 
-  // On desktop with a key, send provider + key as request headers; the route's
-  // agents factory reads them per request. On web there is no bridge, so we
-  // send nothing and the route falls back to the env key.
+  // Desktop: name the active provider and authenticate to the loopback
+  // runtime; the runtime's agents factory maps provider -> keychain key per
+  // request. On web we send nothing and the route falls back to the env key.
   const headers = useMemo<Record<string, string>>(() => {
     const h: Record<string, string> = {};
-    if (typeof window !== "undefined" && window.capturia?.isDesktop && byokKey) {
+    if (desktopRuntime) {
       h["x-capturia-provider"] = activeProvider;
-      h["x-capturia-key"] = byokKey;
+      h["x-capturia-token"] = desktopRuntime.token;
     }
     return h;
-  }, [activeProvider, byokKey]);
+  }, [activeProvider, desktopRuntime]);
 
-  // No remount key: the v2 provider propagates `headers` changes in place
-  // (setHeaders effect applies them to agents; runAgent re-stamps per run), so
-  // a provider/key switch must NOT tear down the subtree. The v1 pattern of
+  const runtimeUrl = desktopRuntime?.url ?? "/api/copilotkit";
+
+  // Remount (key) ONLY when the endpoint itself moves, which happens once at
+  // startup when the desktop bridge reports the loopback runtime, before any
+  // user interaction. Provider/key switches must still NOT remount: the v2
+  // provider propagates `headers` changes in place (setHeaders effect applies
+  // them to agents; runAgent re-stamps per run), and the v1 pattern of
   // key-remounting here wiped live overlays, the loaded deck, and the vote
   // room whenever the operator switched provider mid-session.
   return (
     <CopilotKitProvider
-      runtimeUrl="/api/copilotkit"
+      key={runtimeUrl}
+      runtimeUrl={runtimeUrl}
       headers={headers}
-      // The route runs in single-route mode (all methods POST to one endpoint).
+      // Both runtimes run in single-route mode (all methods POST to one endpoint).
       useSingleEndpoint
     >
       <Capturia
@@ -131,6 +133,7 @@ export default function Studio() {
         activeProvider={activeProvider}
         setActiveProvider={setPickedProvider}
         headers={headers}
+        runtimeUrl={runtimeUrl}
       />
     </CopilotKitProvider>
   );
@@ -140,12 +143,13 @@ interface CapturiaProps {
   vault: ReturnType<typeof useKeyVault>;
   activeProvider: KeyProvider;
   setActiveProvider: (p: KeyProvider) => void;
-  // The same BYOK headers CopilotKit sends; the keycheck probe must match them
-  // so it reports the health of the exact key path the agent will use.
+  // The same headers + endpoint CopilotKit sends to; the keycheck probe must
+  // match them so it reports the health of the exact key path the agent uses.
   headers: Record<string, string>;
+  runtimeUrl: string;
 }
 
-function Capturia({ vault, activeProvider, setActiveProvider, headers }: CapturiaProps) {
+function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUrl }: CapturiaProps) {
   const [overlays, setOverlays] = useState<OverlaySpec[]>([]);
   const [lastSent, setLastSent] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -159,16 +163,21 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers }: Capturi
   const { sendMessage, isRunning, runError } = useAgentRun();
   const { isRecording, startRecording, stopRecording } = useRecorder();
 
-  // Surface the route's missing-key fail-fast in the operator UI. CopilotKit
+  // Surface the runtime's missing-key fail-fast in the operator UI. CopilotKit
   // swallows agent-run errors into the console, so without this probe a
   // keyless deployment looks alive while every command dies silently. Uses
-  // the same headers the agent requests carry, so it reports the health of
-  // the exact key path that will be used. Re-runs on provider/key change
-  // (this component remounts via the CopilotKit key prop anyway).
+  // the same headers + endpoint the agent requests use, so it reports the
+  // health of the exact key path that will be used. On desktop the key lives
+  // in main's keychain (not in headers), so saving/clearing a key changes
+  // nothing the probe sends; the vault signature below is what re-runs it
+  // through first-run onboarding (the CopilotKit key prop is runtimeUrl and
+  // only changes once at startup, so no remount re-probes either).
   const [modelKeyError, setModelKeyError] = useState<string | null>(null);
+  const vaultKeysSig = vault.keys.map((k) => `${k.provider}:${k.has ? 1 : 0}`).join(",");
   useEffect(() => {
+    void vaultKeysSig; // re-probe when a key is saved or cleared
     let cancelled = false;
-    fetch("/api/copilotkit", {
+    fetch(runtimeUrl, {
       method: "POST",
       headers: { "content-type": "application/json", ...headers },
       body: JSON.stringify({ method: "capturia-keycheck" }),
@@ -183,7 +192,7 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers }: Capturi
     return () => {
       cancelled = true;
     };
-  }, [headers]);
+  }, [headers, runtimeUrl, vaultKeysSig]);
 
   // Deck state: cue cards to trigger, plus a compact view shared with the agent.
   const [cues, setCues] = useState<CueCard[]>([]);
@@ -288,6 +297,12 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers }: Capturi
     if (isListening) stopListening();
     else startListening();
   });
+
+  // Desktop tray: the Settings menu item rides the same channel as hotkeys.
+  useDesktopHotkey("open-settings", () => setSettingsOpen(true));
+
+  // Mirror voice state to the tray (Listening/Idle status, toggle enablement).
+  useDesktopStateReport({ listening: isListening, voiceSupported: isSupported });
 
   // Audio-reactive: publish a 0..1 speaking-energy to --mic-energy on the stage
   // root (derived from Web Speech RESULT events, NO AudioContext, so it never
