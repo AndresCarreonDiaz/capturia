@@ -26,7 +26,7 @@ export default function BigCounter({ value, label, prefix = "", suffix = "", col
         bursting ? "milestone-burst" : ""
       }`}
     >
-      <p className="text-white/50 text-[10px] uppercase tracking-[0.25em] font-mono mb-1">{label}</p>
+      <p className="text-white/50 text-xs uppercase tracking-[0.2em] font-mono mb-1">{label}</p>
       <div className="flex items-baseline gap-0.5 leading-none">
         {prefix && (
           <span className={`font-bold text-3xl ${useGradient ? "gradient-text" : ""}`} style={textStyle}>

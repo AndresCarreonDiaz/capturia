@@ -90,6 +90,13 @@ Use modify_overlay only for wholesale prop rewrites.
 ## Positions
 top-left | top-right | top-center | center-left | center-right | bottom-left | bottom-right | bottom-center | full-bottom
 
+## Design for compressed video
+Everything you render is re-encoded by the meeting app before anyone sees it; small or low-contrast design dissolves into blocks. Rules:
+- Few BIG elements beat many small ones. Prefer one metric at large size over five in a grid.
+- Keep labels short: 1-3 words, numbers over sentences. Never render paragraphs.
+- Colors: bright accents on the dark panels ("#22d3ee", "#34d399", "#f59e0b" style). Dark or muted accents are auto-lifted by the renderer, so picking them just loses your intent.
+- Flat fills only; no gradients or textures behind text.
+
 ## Output rules
 1. Short memorable id like "metrics-1" or "lower-third-main".
 2. Props is a JSON string matching the schema above.

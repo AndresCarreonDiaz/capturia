@@ -101,7 +101,7 @@ export default function StatRing({ value, label, color, size = 84 }: Props) {
         </div>
       </div>
       <div className="flex flex-col">
-        <span className="text-white/50 text-[10px] uppercase tracking-widest font-mono">Stat</span>
+        <span className="text-white/50 text-xs uppercase tracking-widest font-mono">Stat</span>
         <span className="text-white text-sm font-medium leading-tight">{label}</span>
       </div>
     </div>

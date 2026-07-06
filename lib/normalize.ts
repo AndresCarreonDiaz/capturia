@@ -3,11 +3,33 @@
 // app/studio/page.tsx so add_overlay/modify_overlay AND the deck validator
 // (lib/deck/validate.ts) coerce identically and never drift apart.
 
+import { ensureLegibleAccent } from "./legibility";
+
+// Props that tint feed surfaces. Every one of them goes through the
+// legibility gate: a too-dark accent gets lifted, an unparseable value falls
+// back to the component's tuned default.
+const ACCENT_PROPS = ["color", "accent"] as const;
+
 export function normalizeProps(
   type: string,
   props: Record<string, unknown>
 ): Record<string, unknown> {
   const out = { ...props };
+
+  for (const key of ACCENT_PROPS) {
+    if (!(key in out)) continue;
+    // KeywordHighlight's "auto" is a documented palette mode, not a color.
+    if (type === "KeywordHighlight" && key === "color" && out[key] === "auto") continue;
+    const safe = ensureLegibleAccent(out[key]);
+    if (safe !== undefined) {
+      out[key] = safe;
+    } else if (type === "KeywordHighlight" && key === "color") {
+      // Required by the schema; the auto palette is the legible fallback.
+      out[key] = "auto";
+    } else {
+      delete out[key];
+    }
+  }
 
   if (type === "KeywordHighlight") {
     const kws = out.keywords;
