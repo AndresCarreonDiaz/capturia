@@ -87,3 +87,21 @@ Then by hand:
    when the page remounts.
 7. Quit from the tray: the app exits fully (no lingering menu-bar icon, no
    process).
+
+## Packaged app (M8, unsigned)
+
+Automated: `npm run pack:mac` (static export + gen libs + electron-builder;
+prints a whisper provisioning warning if whisper-cli or the ggml model is
+missing from node_modules/nodejs-whisper), then
+`CAPTURIA_SMOKE=1 ./dist-app/mac-arm64/Capturia.app/Contents/MacOS/Capturia`
+(must print `[smoke] PASS`: static UI from inside the asar + preload bridge +
+authenticated loopback keycheck). Then by hand:
+
+1. Double-click Capturia.app: tray + Control Room appear, agent loop runs
+   BYOK exactly like the dev path (macOS will warn on first open while the
+   app is unsigned; right-click > Open).
+2. Voice transcription in the packaged app requires whisper provisioned
+   BEFORE packing (`npx nodejs-whisper download`); without it, expect the
+   provisioning error from the mic path, and everything else keeps working.
+3. Keys saved in the packaged app persist across relaunches (safeStorage
+   vault lives in the packaged app's userData, separate from dev's).
