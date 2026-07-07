@@ -55,7 +55,7 @@ import { sanitizeSurfaceTree } from "@/lib/a2ui-validate";
 import { coerceArrayArg, coerceRecordArg, toolArgText } from "@/lib/extract-json";
 import { oversizedToolArg } from "@/lib/limits";
 import { isPlaceableOverlayType } from "@/lib/catalog";
-import { matchCue } from "@/lib/deck/cues";
+import { matchCue, matchInterimCue } from "@/lib/deck/cues";
 import type { CueCard, DeckFacts } from "@/lib/deck/types";
 import type { OverlaySpec, OverlayPosition } from "@/lib/types";
 
@@ -291,23 +291,53 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
   // speaker most recently wanted; anything older is stale narration.
   const pendingVoiceRef = useRef<string | null>(null);
 
+  // Card already fired from INTERIM text for the current speech segment; a
+  // final (or session end) closes the segment. Lives in a ref because it
+  // must be read and written inside speech event callbacks.
+  const interimCueIdRef = useRef<string | null>(null);
+
   const { isListening, interimTranscript, speechStatus, lastError, lastResultAt, isSupported, startListening, stopListening } =
-    useStudioVoice((text) => {
-      if (text.split(/\s+/).length < 2) return;
-      setLastSent(text);
-      // Deterministic, offline cue match first: "show my revenue slide" fires a
-      // pre-built card without a model call. Falls through to the agent on miss.
-      const card = matchCue(cuesRef.current, text);
-      if (card) {
-        applyCue(card);
-        return;
+    useStudioVoice(
+      (text) => {
+        // The final ends the interim segment regardless of what it says.
+        interimCueIdRef.current = null;
+        if (text.split(/\s+/).length < 2) return;
+        setLastSent(text);
+        // Deterministic, offline cue match first: "show my revenue slide" fires a
+        // pre-built card without a model call. Falls through to the agent on miss.
+        // A card the interim path already fired lands here too and is swallowed
+        // the same way (applyCue merges by id, so the re-apply is a no-op).
+        const card = matchCue(cuesRef.current, text);
+        if (card) {
+          applyCue(card);
+          return;
+        }
+        sendMessage(`[VOICE] ${text}`)
+          .then((sent) => {
+            if (!sent) pendingVoiceRef.current = text;
+          })
+          .catch(() => {});
+      },
+      (interim) => {
+        // Mid-sentence: fire a primed cue card the moment the volatile
+        // hypothesis contains one of its aliases, once per segment. This is
+        // the M9 payoff: PDF-primed UI lands while the speaker is still
+        // talking, no model call, no waiting for the sentence final.
+        const { fire, nextFiredId } = matchInterimCue(
+          cuesRef.current,
+          interim,
+          interimCueIdRef.current
+        );
+        interimCueIdRef.current = nextFiredId;
+        if (fire) applyCue(fire);
       }
-      sendMessage(`[VOICE] ${text}`)
-        .then((sent) => {
-          if (!sent) pendingVoiceRef.current = text;
-        })
-        .catch(() => {});
-    });
+    );
+
+  // A session that ends without a final (error, device loss) must not carry
+  // its interim-fired card into the next session's dedup state.
+  useEffect(() => {
+    if (!isListening) interimCueIdRef.current = null;
+  }, [isListening]);
 
   // Flush the parked voice command once the agent run settles.
   useEffect(() => {

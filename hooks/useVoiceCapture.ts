@@ -50,7 +50,8 @@ export interface VoiceCaptureState {
 }
 
 export function useVoiceCapture(
-  onFinalResult: (text: string) => void
+  onFinalResult: (text: string) => void,
+  onInterimResult?: (text: string) => void
 ): VoiceCaptureState {
   const [isListening, setIsListening] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState("");
@@ -62,7 +63,11 @@ export function useVoiceCapture(
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const isListeningRef = useRef(false);
   const onFinalRef = useRef(onFinalResult);
-  onFinalRef.current = onFinalResult;
+  const onInterimRef = useRef(onInterimResult);
+  useEffect(() => {
+    onFinalRef.current = onFinalResult;
+    onInterimRef.current = onInterimResult;
+  });
 
   useEffect(() => {
     const SR = getSR();
@@ -122,6 +127,9 @@ export function useVoiceCapture(
       setSpeechStatus("recognizing…");
       setLastResultAt(performance.now());
       setInterimTranscript(interim);
+      // Current-cycle hypothesis; deterministic cue matching fires primed
+      // cards from it mid-sentence (M9).
+      if (interim.trim()) onInterimRef.current?.(interim);
       if (final.trim()) {
         setInterimTranscript("");
         setSpeechStatus("sent ✓");

@@ -12,12 +12,17 @@ import { useAppleSpeechCapture } from "./useAppleSpeechCapture";
 // All hooks are called unconditionally to satisfy Rules of Hooks; unused
 // ones are inert. A live session pins its engine: availability resolving
 // mid-session must not swap the state source under the studio.
+//
+// onInterimResult receives the volatile current-segment hypothesis from the
+// engines that stream one (apple-speech, Web Speech); chunked whisper has no
+// interims. The studio uses it for deterministic cue matching mid-sentence.
 export function useStudioVoice(
-  onFinalResult: (text: string) => void
+  onFinalResult: (text: string) => void,
+  onInterimResult?: (text: string) => void
 ): VoiceCaptureState {
-  const web = useVoiceCapture(onFinalResult);
+  const web = useVoiceCapture(onFinalResult, onInterimResult);
   const whisper = useDesktopVoiceCapture(onFinalResult);
-  const apple = useAppleSpeechCapture(onFinalResult);
+  const apple = useAppleSpeechCapture(onFinalResult, onInterimResult);
 
   const isDesktop =
     typeof window !== "undefined" && window.capturia?.isDesktop === true;

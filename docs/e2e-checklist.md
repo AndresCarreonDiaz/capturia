@@ -64,6 +64,13 @@ or human judgment; run them before a release-worthy merge.
    appear in any request or in the renderer.
 4. Drop a PDF on the deck rail; expect LLM cue cards (or deterministic
    fallback), and spoken cue aliases to fire the matching card.
+4a. Interim cue firing (streaming engines: macOS 26+ desktop, or Chrome on
+   the web studio): with a deck loaded, say a long sentence containing a
+   cue alias early ("our revenue this year, and I want to spend a minute
+   here, grew a lot"). The primed card must land while you are still
+   mid-sentence, not after the pause, and must NOT re-fire or flicker as
+   the interim text keeps growing. On chunked whisper (macOS <= 15) the
+   same sentence fires the card only after the pause; that is expected.
 
 ## Desktop static bundle + loopback runtime (M8)
 

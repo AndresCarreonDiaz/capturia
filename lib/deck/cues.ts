@@ -217,3 +217,24 @@ export function matchCue(cards: CueCard[], phrase: string): CueCard | null {
   // don't hijack normal speech.
   return best && best.score >= 4 ? best.card : null;
 }
+
+// Cue matching on INTERIM (volatile) transcript text, so a primed card lands
+// while the sentence is still being spoken instead of waiting for the
+// sentence final. firedId is the card already fired for the CURRENT interim
+// segment (the caller resets it at segment boundaries: a final arrived or the
+// session ended); carrying it stops a growing interim from re-firing the same
+// card on every ~1s update, while a revision that switches the match to a
+// DIFFERENT card still fires, because the newer hypothesis is the better one.
+export function matchInterimCue(
+  cards: CueCard[],
+  interim: string,
+  firedId: string | null
+): { fire: CueCard | null; nextFiredId: string | null } {
+  const text = interim.trim();
+  if (!text) return { fire: null, nextFiredId: firedId };
+  // Same guard as the final path: one lone word is not a command yet.
+  if (text.split(/\s+/).length < 2) return { fire: null, nextFiredId: firedId };
+  const card = matchCue(cards, text);
+  if (!card || card.id === firedId) return { fire: null, nextFiredId: firedId };
+  return { fire: card, nextFiredId: card.id };
+}

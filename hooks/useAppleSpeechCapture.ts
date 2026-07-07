@@ -19,7 +19,8 @@ interface SpeechEventPayload {
 }
 
 export function useAppleSpeechCapture(
-  onFinalResult: (text: string) => void
+  onFinalResult: (text: string) => void,
+  onInterimResult?: (text: string) => void
 ): VoiceCaptureState {
   const [isListening, setIsListening] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState("");
@@ -37,8 +38,10 @@ export function useAppleSpeechCapture(
   // start the user just asked for.
   const startingRef = useRef(false);
   const onFinalRef = useRef(onFinalResult);
+  const onInterimRef = useRef(onInterimResult);
   useEffect(() => {
     onFinalRef.current = onFinalResult;
+    onInterimRef.current = onInterimResult;
   });
 
   useEffect(() => {
@@ -82,6 +85,9 @@ export function useAppleSpeechCapture(
           if (typeof event.text === "string") {
             setInterimTranscript(event.text);
             setLastResultAt(performance.now());
+            // Volatile hypothesis for the current segment; deterministic cue
+            // matching fires primed cards from it mid-sentence (M9).
+            if (event.text) onInterimRef.current?.(event.text);
           }
           break;
         case "final": {
