@@ -59,6 +59,13 @@ function check(name, cond, extra = "") {
   if (!cond) failures += 1;
 }
 
+// A timeout kill now exits 0 in mic mode and 1-with-error in file mode, so
+// assert the run was not killed at all, not just the exit code.
+check(
+  "helper ran to completion (no timeout or kill)",
+  run.signal === null && !run.error,
+  `signal=${run.signal} error=${run.error ?? ""}`
+);
 check("helper exits 0", run.status === 0, `status=${run.status}`);
 check("no unparseable lines", !types.includes("UNPARSEABLE"));
 check("ready arrives", types.includes("ready"));

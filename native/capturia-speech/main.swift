@@ -194,7 +194,16 @@ Task {
         func requestStop() {
             if stopped { return }
             stopped = true
-            guard let gracefulStop else { exit(0) }
+            guard let gracefulStop else {
+                // File mode has no graceful path; a kill mid-transcription is
+                // a failure and must say so on the wire, not exit 0 like a
+                // completed run. Mic mode pre-pipeline keeps the clean exit.
+                if filePath != nil {
+                    emit(["type": "error", "message": "stopped before completion"])
+                    exit(1)
+                }
+                exit(0)
+            }
             gracefulStop()
             // Backstop: an analyzer that never got a buffer (mic permission
             // denied, dead device) can wedge finalize forever; stop must
@@ -237,7 +246,7 @@ Task {
         try await analyzer.start(inputSequence: inputSequence)
 
         let startedAt = Date()
-        func atMs() -> Int { Int(Date().timeIntervalSince(startedAt) * 1000) }
+        @Sendable func atMs() -> Int { Int(Date().timeIntervalSince(startedAt) * 1000) }
 
         let resultsTask = Task {
             do {
@@ -301,14 +310,19 @@ Task {
         )
         try mic.start()
 
-        gracefulStop = {
-            mic.stop()
-            inputBuilder.finish()
-            Task {
-                try? await analyzer.finalizeAndFinishThroughEndOfInput()
-                _ = await resultsTask.result
-                emit(["type": "done", "atMs": atMs()])
-                exit(0)
+        // Assigned on stopQueue so requestStop (which also only runs there)
+        // never reads it mid-write; a signal landing before this block runs
+        // takes the pre-pipeline exit, which the parent absorbs.
+        stopQueue.async {
+            gracefulStop = {
+                mic.stop()
+                inputBuilder.finish()
+                Task {
+                    try? await analyzer.finalizeAndFinishThroughEndOfInput()
+                    _ = await resultsTask.result
+                    emit(["type": "done", "atMs": atMs()])
+                    exit(0)
+                }
             }
         }
 

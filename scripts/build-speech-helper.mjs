@@ -42,12 +42,22 @@ try {
   console.log("[build-speech-helper] swiftc not found; skipping (whisper engine remains)");
   process.exit(0);
 }
+// --strict (pack:mac): a compile failure must fail the build rather than
+// silently package without the streaming engine. Default (preelectron, dev):
+// warn loudly but keep the shell bootable; an SDK without SpeechAnalyzer
+// (swiftc present, macOS 26 host, old Xcode) must not brick electron-dev.
+const strict = process.argv.includes("--strict");
 try {
   execFileSync("swiftc", ["-O", source, "-o", out], { stdio: "inherit" });
   console.log(`[build-speech-helper] built ${out}`);
 } catch {
-  console.error(
-    "[build-speech-helper] swiftc FAILED: main.swift does not compile. Refusing to package silently without the streaming engine; fix the source (or the SDK) and re-run."
+  if (strict) {
+    console.error(
+      "[build-speech-helper] swiftc FAILED: main.swift does not compile. Refusing to package silently without the streaming engine; fix the source (or the SDK) and re-run."
+    );
+    process.exit(1);
+  }
+  console.warn(
+    "[build-speech-helper] WARNING: swiftc failed; continuing without the streaming engine (whisper fallback). pack:mac runs this with --strict and would stop here."
   );
-  process.exit(1);
 }

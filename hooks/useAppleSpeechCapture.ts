@@ -30,6 +30,12 @@ export function useAppleSpeechCapture(
 
   const sessionIdRef = useRef<number | null>(null);
   const listeningRef = useRef(false);
+  // True while startListening awaits the speech.start() round trip. The
+  // just-stopped session's trailing done/error can cross that window (its
+  // id is still in sessionIdRef, so the stale-guard passes); resetting the
+  // listening state then would make the post-await guard cancel the fresh
+  // start the user just asked for.
+  const startingRef = useRef(false);
   const onFinalRef = useRef(onFinalResult);
   useEffect(() => {
     onFinalRef.current = onFinalResult;
@@ -91,8 +97,12 @@ export function useAppleSpeechCapture(
           setLastError(event.message || "speech helper error");
           setSpeechStatus(`error: ${event.message || "speech helper"}`);
           setInterimTranscript("");
-          listeningRef.current = false;
-          setIsListening(false);
+          // During a restart this event belongs to the draining old session;
+          // the fresh start must keep its listening intent.
+          if (!startingRef.current) {
+            listeningRef.current = false;
+            setIsListening(false);
+          }
           // The helper exits on every error, but ask main to stop anyway:
           // if the process somehow survived, abandoning the id here would
           // make it unstoppable.
@@ -104,12 +114,13 @@ export function useAppleSpeechCapture(
         case "done":
           // done while still "listening" means the session ended underneath
           // us (helper died cleanly); staying in the listening state would
-          // show a live mic with nothing behind it.
-          if (listeningRef.current) {
+          // show a live mic with nothing behind it. During a restart it is
+          // just the old session draining.
+          if (listeningRef.current && !startingRef.current) {
             listeningRef.current = false;
             setIsListening(false);
           }
-          setSpeechStatus("idle");
+          if (!startingRef.current) setSpeechStatus("idle");
           sessionIdRef.current = null;
           break;
       }
@@ -120,6 +131,7 @@ export function useAppleSpeechCapture(
     const speech = window.capturia?.speech;
     if (!speech || listeningRef.current) return;
     listeningRef.current = true;
+    startingRef.current = true;
     setIsListening(true);
     setLastError("");
     setInterimTranscript("");
@@ -140,6 +152,8 @@ export function useAppleSpeechCapture(
       setSpeechStatus(`error: ${msg}`);
       listeningRef.current = false;
       setIsListening(false);
+    } finally {
+      startingRef.current = false;
     }
   }, []);
 
