@@ -15,6 +15,7 @@ interface SpeechEventPayload {
   text?: string;
   message?: string;
   locale?: string;
+  sessionId?: number;
 }
 
 export function useAppleSpeechCapture(
@@ -57,6 +58,13 @@ export function useAppleSpeechCapture(
     const speech = typeof window !== "undefined" ? window.capturia?.speech : undefined;
     if (!speech?.onEvent) return;
     return speech.onEvent((event: SpeechEventPayload) => {
+      // Only the active session's events count: a restart leaves the OLD
+      // helper flushing trailing finals and a done on the same channel, and
+      // an untagged stale done would null the NEW session's id (orphaning
+      // the mic: stop would have nothing to stop).
+      if (typeof event.sessionId === "number" && event.sessionId !== sessionIdRef.current) {
+        return;
+      }
       switch (event.type) {
         case "downloading-model":
           setSpeechStatus("downloading speech model…");

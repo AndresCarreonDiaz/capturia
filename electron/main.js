@@ -135,12 +135,19 @@ function registerIpc() {
     "speech:start",
     guarded((event, locale) => {
       const sender = event.sender;
-      return speechHelper.startSpeechSession({
+      // Tag every forwarded event with its session id: a restart overlaps
+      // the old session's trailing finals/done with the new session's
+      // stream on the same channel, and the renderer must be able to tell
+      // them apart (an untagged stale "done" would clobber the live
+      // session's id and orphan the mic).
+      let sessionId;
+      sessionId = speechHelper.startSpeechSession({
         locale: typeof locale === "string" ? locale : "en_US",
         onEvent: (e) => {
-          if (!sender.isDestroyed()) sender.send("speech", e);
+          if (!sender.isDestroyed()) sender.send("speech", { ...e, sessionId });
         },
       });
+      return sessionId;
     })
   );
   ipcMain.handle(
