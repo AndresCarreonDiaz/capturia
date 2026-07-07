@@ -32,4 +32,14 @@ export default async function afterPack(context) {
   rmSync(dest, { recursive: true, force: true });
   cpSync(stage, dest, { recursive: true });
   console.log(`  • afterPack copied self-contained nodejs-whisper -> ${dest}`);
+
+  // The on-device streaming speech helper (macOS 26+). Optional: a build
+  // without it degrades to the whisper engine.
+  const speechHelper = join(root, "native", "capturia-speech", "capturia-speech");
+  if (existsSync(speechHelper)) {
+    cpSync(speechHelper, join(resources, "capturia-speech"));
+    console.log("  • afterPack copied capturia-speech helper");
+  } else {
+    console.log("  • afterPack: capturia-speech helper not built; whisper engine only");
+  }
 }

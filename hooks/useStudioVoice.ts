@@ -1,23 +1,29 @@
 "use client";
 import { useVoiceCapture, type VoiceCaptureState } from "./useVoiceCapture";
 import { useDesktopVoiceCapture } from "./useDesktopVoiceCapture";
+import { useAppleSpeechCapture } from "./useAppleSpeechCapture";
 
-// Voice-capture façade for the studio. Picks the correct backend based on
-// whether we're in the Electron renderer:
-//   - Desktop (window.capturia exists): local whisper.cpp via IPC
+// Voice-capture façade for the studio. Picks the best backend available:
+//   - Desktop on macOS 26+: on-device streaming SpeechAnalyzer helper
+//     (sentence finals DURING speech, ~1s interims)
+//   - Desktop otherwise: chunked local whisper.cpp sessions via IPC
 //   - Web browser: Web Speech API (Chrome/Edge only)
 //
-// Both hooks are called unconditionally to satisfy Rules of Hooks. The unused
-// one is inert (its isSupported flips to false, startListening is never
-// invoked through the studio because we return the other hook's state).
+// All hooks are called unconditionally to satisfy Rules of Hooks; unused
+// ones are inert. A live session pins its engine: availability resolving
+// mid-session must not swap the state source under the studio.
 export function useStudioVoice(
   onFinalResult: (text: string) => void
 ): VoiceCaptureState {
   const web = useVoiceCapture(onFinalResult);
-  const desktop = useDesktopVoiceCapture(onFinalResult);
+  const whisper = useDesktopVoiceCapture(onFinalResult);
+  const apple = useAppleSpeechCapture(onFinalResult);
 
   const isDesktop =
     typeof window !== "undefined" && window.capturia?.isDesktop === true;
 
-  return isDesktop ? desktop : web;
+  if (!isDesktop) return web;
+  if (apple.isListening) return apple;
+  if (whisper.isListening) return whisper;
+  return apple.isSupported ? apple : whisper;
 }

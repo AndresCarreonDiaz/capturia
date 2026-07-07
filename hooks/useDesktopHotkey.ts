@@ -43,6 +43,15 @@ interface CapturiaBridge {
   // Optional: a stale packaged preload may predate this method; callers must
   // treat it as possibly missing (useDesktopStateReport already does).
   reportState?: (state: DesktopStateReport) => Promise<void>;
+  // On-device streaming speech (macOS 26+ helper); optional for the same
+  // stale-preload reason. Events: ready | downloading-model | interim |
+  // final | error | done.
+  speech?: {
+    available: () => Promise<boolean>;
+    start: (locale?: string) => Promise<number>;
+    stop: (id: number) => Promise<void>;
+    onEvent: (handler: (event: { type: string; text?: string; message?: string }) => void) => () => void;
+  };
 }
 
 declare global {

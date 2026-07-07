@@ -15,6 +15,7 @@ const files = [
   "lib/system-prompt.ts",
   "lib/desktop-runtime.ts",
   "lib/tray-menu.ts",
+  "lib/speech-events.ts",
 ];
 const outDir = join(root, "electron", "gen");
 

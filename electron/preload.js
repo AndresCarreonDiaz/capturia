@@ -66,4 +66,29 @@ contextBridge.exposeInMainWorld("capturia", {
   reportState(state) {
     return ipcRenderer.invoke("state:report", state);
   },
+  // On-device streaming speech (macOS 26+): start/stop the mic helper and
+  // subscribe to its events (ready/interim/final/error/done).
+  speech: {
+    available() {
+      return ipcRenderer.invoke("speech:available");
+    },
+    start(locale) {
+      return ipcRenderer.invoke("speech:start", locale);
+    },
+    stop(id) {
+      return ipcRenderer.invoke("speech:stop", id);
+    },
+    onEvent(handler) {
+      const listener = (_event, payload) => {
+        if (!payload || typeof payload.type !== "string") return;
+        try {
+          handler(payload);
+        } catch (err) {
+          console.error("capturia.speech.onEvent handler threw:", err);
+        }
+      };
+      ipcRenderer.on("speech", listener);
+      return () => ipcRenderer.off("speech", listener);
+    },
+  },
 });

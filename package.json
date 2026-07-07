@@ -19,7 +19,9 @@
     "preelectron": "node scripts/build-electron-libs.mjs",
     "electron": "electron .",
     "electron-dev": "concurrently -k -n NEXT,ELECTRON -c blue,magenta \"npm run dev\" \"wait-on http://localhost:3000 && npm run electron\"",
-    "pack:mac": "npm run build:electron && node scripts/check-whisper-assets.mjs && node scripts/stage-whisper-resources.mjs && electron-builder --mac"
+    "pack:mac": "npm run build:electron && npm run build:speech && node scripts/check-whisper-assets.mjs && node scripts/stage-whisper-resources.mjs && electron-builder --mac",
+    "build:speech": "node scripts/build-speech-helper.mjs",
+    "smoke:speech": "node scripts/smoke-speech-helper.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.76",

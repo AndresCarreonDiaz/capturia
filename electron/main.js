@@ -22,6 +22,7 @@ const deckGen = require("./deck-generate");
 const { startRuntimeServer } = require("./runtime-server");
 const { createTray } = require("./tray");
 const { maybeOfferMoveToApplications } = require("./first-run");
+const speechHelper = require("./speech-helper");
 const {
   isTrustedSender,
   isAllowedUrl,
@@ -123,6 +124,29 @@ function registerIpc() {
       const provider = assertProvider(payload && payload.provider);
       const prompt = assertNonEmptyString(payload && payload.prompt, "Prompt");
       return deckGen.generateCues(prompt, provider);
+    })
+  );
+
+  // On-device streaming speech (macOS 26+ helper). One session at a time;
+  // events flow back over the "speech" channel. Availability is a cheap
+  // sync check the renderer uses to pick its engine.
+  ipcMain.handle("speech:available", guarded(() => speechHelper.isAppleSpeechAvailable()));
+  ipcMain.handle(
+    "speech:start",
+    guarded((event, locale) => {
+      const sender = event.sender;
+      return speechHelper.startSpeechSession({
+        locale: typeof locale === "string" ? locale : "en_US",
+        onEvent: (e) => {
+          if (!sender.isDestroyed()) sender.send("speech", e);
+        },
+      });
+    })
+  );
+  ipcMain.handle(
+    "speech:stop",
+    guarded((_event, id) => {
+      if (typeof id === "number") speechHelper.stopSpeechSession(id);
     })
   );
 
@@ -399,6 +423,7 @@ app.on("before-quit", () => {
 // Clean up the global shortcut and tray so they don't linger past app exit.
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
+  speechHelper.stopAllSpeechSessions();
   tray?.destroy();
   tray = null;
 });
