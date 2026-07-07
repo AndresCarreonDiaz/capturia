@@ -16,7 +16,7 @@
     "test:e2e": "playwright test",
     "build:electron": "node scripts/build-electron-export.mjs",
     "smoke:runtime": "node scripts/smoke-runtime-server.mjs",
-    "preelectron": "node scripts/build-electron-libs.mjs",
+    "preelectron": "node scripts/build-electron-libs.mjs && node scripts/build-speech-helper.mjs",
     "electron": "electron .",
     "electron-dev": "concurrently -k -n NEXT,ELECTRON -c blue,magenta \"npm run dev\" \"wait-on http://localhost:3000 && npm run electron\"",
     "pack:mac": "npm run build:electron && npm run build:speech && node scripts/check-whisper-assets.mjs && node scripts/stage-whisper-resources.mjs && electron-builder --mac",

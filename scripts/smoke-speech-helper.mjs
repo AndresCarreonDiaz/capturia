@@ -13,14 +13,20 @@ import { dirname, join } from "node:path";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const helper = join(root, "native", "capturia-speech", "capturia-speech");
+const source = join(root, "native", "capturia-speech", "main.swift");
 
 if (platform() !== "darwin" || Number(release().split(".")[0]) < 25) {
   console.log("[smoke:speech] SpeechAnalyzer needs macOS 26+; skipping");
   process.exit(0);
 }
+// The binary is never committed; the build script is freshness-checked and
+// cheap when the helper is already current, so always call it.
+execFileSync(process.execPath, [join(root, "scripts", "build-speech-helper.mjs")], {
+  stdio: "inherit",
+});
 if (!existsSync(helper)) {
-  console.error("[smoke:speech] helper not built; run node scripts/build-speech-helper.mjs");
-  process.exit(1);
+  console.log("[smoke:speech] helper unavailable on this machine (no Swift toolchain); skipping");
+  process.exit(0);
 }
 
 const dir = mkdtempSync(join(tmpdir(), "capturia-speech-smoke-"));
@@ -29,7 +35,9 @@ const wav = join(dir, "utterance.wav");
 execFileSync("say", ["show a metrics panel with revenue at two million", "-o", aiff]);
 execFileSync("afconvert", ["-f", "WAVE", "-d", "LEI16@16000", "-c", "1", aiff, wav]);
 
-const run = spawnSync(helper, ["--file", wav], { encoding: "utf8", timeout: 120000 });
+// Generous: a first run on a fresh machine downloads the speech model inside
+// this window (the helper emits downloading-model while it does).
+const run = spawnSync(helper, ["--file", wav], { encoding: "utf8", timeout: 300000 });
 const events = run.stdout
   .split("\n")
   .filter(Boolean)
@@ -63,5 +71,10 @@ check(
 );
 check("done closes the stream", types[types.length - 1] === "done");
 
+if (failures > 0 && types.includes("downloading-model")) {
+  console.log(
+    "[smoke:speech] note: a first-run speech model download happened inside the timeout window; if the failure above is a timeout or truncation, re-run now that the model is cached."
+  );
+}
 console.log(failures === 0 ? "[smoke:speech] PASS" : `[smoke:speech] ${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

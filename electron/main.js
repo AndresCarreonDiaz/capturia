@@ -245,6 +245,9 @@ function createWindow() {
   const resetRendererState = () => {
     rendererState = { reported: false, listening: false, voiceSupported: false };
     tray?.update();
+    // The page that owned the mic session is gone; without this a reload
+    // mid-session leaves the helper capturing with nothing able to stop it.
+    speechHelper.stopAllSpeechSessions();
   };
   mainWindow.webContents.on("render-process-gone", resetRendererState);
   mainWindow.webContents.on("did-navigate", resetRendererState);

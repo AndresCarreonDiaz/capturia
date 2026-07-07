@@ -87,15 +87,29 @@ export function useAppleSpeechCapture(
           }
           break;
         }
-        case "error":
+        case "error": {
           setLastError(event.message || "speech helper error");
           setSpeechStatus(`error: ${event.message || "speech helper"}`);
+          setInterimTranscript("");
           listeningRef.current = false;
           setIsListening(false);
+          // The helper exits on every error, but ask main to stop anyway:
+          // if the process somehow survived, abandoning the id here would
+          // make it unstoppable.
+          const deadId = sessionIdRef.current;
           sessionIdRef.current = null;
+          if (deadId !== null) speech?.stop(deadId).catch(() => {});
           break;
+        }
         case "done":
-          if (!listeningRef.current) setSpeechStatus("idle");
+          // done while still "listening" means the session ended underneath
+          // us (helper died cleanly); staying in the listening state would
+          // show a live mic with nothing behind it.
+          if (listeningRef.current) {
+            listeningRef.current = false;
+            setIsListening(false);
+          }
+          setSpeechStatus("idle");
           sessionIdRef.current = null;
           break;
       }
@@ -108,9 +122,18 @@ export function useAppleSpeechCapture(
     listeningRef.current = true;
     setIsListening(true);
     setLastError("");
+    setInterimTranscript("");
     setSpeechStatus("starting speech engine…");
     try {
-      sessionIdRef.current = await speech.start();
+      const id = await speech.start();
+      // A stop (or unmount, which clears listeningRef) can land during the
+      // IPC round trip; adopting the session then would leave a hot mic
+      // nothing points at.
+      if (!listeningRef.current) {
+        speech.stop(id).catch(() => {});
+        return;
+      }
+      sessionIdRef.current = id;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setLastError(msg);
@@ -136,8 +159,11 @@ export function useAppleSpeechCapture(
   }, []);
 
   // End the session with the component (page nav, output-mode unmount).
+  // Clearing listeningRef also makes an in-flight start() adopt-and-stop
+  // its session instead of orphaning it (see startListening).
   useEffect(() => {
     return () => {
+      listeningRef.current = false;
       const id = sessionIdRef.current;
       if (id !== null) window.capturia?.speech?.stop(id).catch(() => {});
     };

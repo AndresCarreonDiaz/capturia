@@ -60,12 +60,19 @@ final class MicSource: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate, @
     private let session = AVCaptureSession()
     private let queue = DispatchQueue(label: "capturia.speech.mic")
     private let onBuffer: (AVAudioPCMBuffer) -> Void
+    private let onDeviceLost: (String) -> Void
     private var converter: AVAudioConverter?
     private let targetFormat: AVAudioFormat
+    private var observers: [NSObjectProtocol] = []
 
-    init(targetFormat: AVAudioFormat, onBuffer: @escaping (AVAudioPCMBuffer) -> Void) {
+    init(
+        targetFormat: AVAudioFormat,
+        onBuffer: @escaping (AVAudioPCMBuffer) -> Void,
+        onDeviceLost: @escaping (String) -> Void
+    ) {
         self.targetFormat = targetFormat
         self.onBuffer = onBuffer
+        self.onDeviceLost = onDeviceLost
     }
 
     func start() throws {
@@ -78,12 +85,31 @@ final class MicSource: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate, @
         guard session.canAddInput(input), session.canAddOutput(output) else {
             throw NSError(domain: "capturia", code: 2, userInfo: [NSLocalizedDescriptionKey: "capture session rejected audio I/O"])
         }
+        // A device unplugged mid-session (Bluetooth drop, input switch) or a
+        // capture-session runtime error would otherwise leave a silent,
+        // apparently-live session; the checklist requires an error instead.
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(
+            forName: AVCaptureDevice.wasDisconnectedNotification, object: nil, queue: nil
+        ) { [weak self] note in
+            guard (note.object as? AVCaptureDevice) === device else { return }
+            self?.onDeviceLost("audio input device disconnected: \(device.localizedName)")
+        })
+        observers.append(center.addObserver(
+            forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: nil
+        ) { [weak self] note in
+            let error = note.userInfo?[AVCaptureSessionErrorKey] as? AVError
+            self?.onDeviceLost("capture session error: \(error?.localizedDescription ?? "unknown")")
+        })
         session.addInput(input)
         session.addOutput(output)
         session.startRunning()
     }
 
     func stop() {
+        let center = NotificationCenter.default
+        for observer in observers { center.removeObserver(observer) }
+        observers.removeAll()
         session.stopRunning()
     }
 
@@ -147,8 +173,47 @@ final class MicSource: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate, @
 
 let semaphore = DispatchSemaphore(value: 0)
 
+// Signal plumbing must live at top level: a DispatchSource local to a closure
+// is deallocated (silently cancelled) when the closure returns, and a source
+// scheduled on .main can never fire because the main thread parks in
+// semaphore.wait() instead of draining a run loop. Either mistake makes
+// SIGTERM inert while SIG_IGN suppresses the default kill, leaving the mic
+// captured until the parent dies.
+let stopQueue = DispatchQueue(label: "capturia.speech.stop")
+var signalSources: [DispatchSourceSignal] = []
+
 Task {
     do {
+        // Stop plumbing before any async setup: a SIGTERM that lands during
+        // the model download or analyzer startup must still exit cleanly
+        // (a signal death reads as a crash to the Electron parent). Until
+        // the capture pipeline exists, stopping is just a clean exit; mic
+        // mode swaps in the graceful finalize-then-done path below.
+        var stopped = false
+        var gracefulStop: (() -> Void)?
+        func requestStop() {
+            if stopped { return }
+            stopped = true
+            guard let gracefulStop else { exit(0) }
+            gracefulStop()
+            // Backstop: an analyzer that never got a buffer (mic permission
+            // denied, dead device) can wedge finalize forever; stop must
+            // still terminate the process.
+            stopQueue.asyncAfter(deadline: .now() + 5) {
+                emit(["type": "done"])
+                exit(0)
+            }
+        }
+        let installSignalHandler = { (signalName: Int32) in
+            let source = DispatchSource.makeSignalSource(signal: signalName, queue: stopQueue)
+            source.setEventHandler { requestStop() }
+            source.resume()
+            signal(signalName, SIG_IGN)
+            signalSources.append(source)
+        }
+        installSignalHandler(SIGTERM)
+        installSignalHandler(SIGINT)
+
         let locale = Locale(identifier: localeId)
         let transcriber = SpeechTranscriber(
             locale: locale,
@@ -184,7 +249,11 @@ Task {
                     ])
                 }
             } catch {
+                // Protocol: error is fatal (exit 1). Staying alive here would
+                // keep the mic captured with no results flowing and the
+                // parent convinced the session is healthy.
                 emit(["type": "error", "message": "results: \(error)"])
+                exit(1)
             }
         }
 
@@ -222,12 +291,17 @@ Task {
 
         // Mic mode: run until the parent says stop (SIGTERM/SIGINT) or stdin
         // closes (parent death), then finalize what was heard and exit.
-        let mic = MicSource(targetFormat: format) { buffer in
-            inputBuilder.yield(AnalyzerInput(buffer: buffer))
-        }
+        let mic = MicSource(
+            targetFormat: format,
+            onBuffer: { buffer in inputBuilder.yield(AnalyzerInput(buffer: buffer)) },
+            onDeviceLost: { message in
+                emit(["type": "error", "message": message])
+                exit(1)
+            }
+        )
         try mic.start()
 
-        let stopOnce = DispatchWorkItem {
+        gracefulStop = {
             mic.stop()
             inputBuilder.finish()
             Task {
@@ -237,21 +311,11 @@ Task {
                 exit(0)
             }
         }
-        let handle = { (signalName: Int32) in
-            let source = DispatchSource.makeSignalSource(signal: signalName, queue: .main)
-            source.setEventHandler { stopOnce.perform() }
-            source.resume()
-            signal(signalName, SIG_IGN)
-            return source
-        }
-        let termSource = handle(SIGTERM)
-        let intSource = handle(SIGINT)
-        _ = (termSource, intSource)
 
         // Parent-death watch: Electron closing our stdin means shut down.
         DispatchQueue.global().async {
             while readLine(strippingNewline: false) != nil {}
-            stopOnce.perform()
+            stopQueue.async { requestStop() }
         }
     } catch {
         fatalError("\(error)")

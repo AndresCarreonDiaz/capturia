@@ -33,6 +33,27 @@ function isAppleSpeechAvailable() {
 let current = null;
 let sessionCounter = 0;
 
+// SIGTERM first, SIGKILL if the helper has not exited after a grace period:
+// a wedged helper must never hold the mic forever. Scoped to the child, not
+// `current`, so a superseded session's helper still gets the escalation
+// after tracking moves on to the new session.
+function killWithEscalation(child) {
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    return; /* already gone */
+  }
+  const hardKill = setTimeout(() => {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      /* already gone */
+    }
+  }, 4000);
+  hardKill.unref();
+  child.once("close", () => clearTimeout(hardKill));
+}
+
 // Start the one mic session. onEvent receives every parsed helper event plus
 // a synthesized {type:"error"} on spawn failure and {type:"done"} when the
 // process ends. Returns the session id; stopSpeechSession(id) ends it.
@@ -63,11 +84,18 @@ function startSpeechSession({ locale, onEvent }) {
     onEvent({ type: "error", message: `helper: ${err.message}` });
     current = null;
   });
-  child.on("exit", (code) => {
+  // "close" and not "exit": close waits for stdout to drain, so the trailing
+  // finals the helper flushes while dying reach the splitter before "done".
+  child.on("close", (code, signal) => {
     if (current?.id !== id) return;
+    const requested = current.stopRequested;
     current = null;
-    // Non-zero without a prior error event still needs to surface.
-    if (code !== 0) onEvent({ type: "error", message: `helper exited ${code}` });
+    // Non-zero without a prior error event still needs to surface, but a
+    // death the user asked for is not an error (a stop that lands before
+    // the helper installs its signal handlers kills it with code null).
+    if (code !== 0 && !requested) {
+      onEvent({ type: "error", message: `helper exited ${signal ?? code}` });
+    }
     onEvent({ type: "done" });
   });
   return id;
@@ -75,24 +103,16 @@ function startSpeechSession({ locale, onEvent }) {
 
 function stopSpeechSession(id) {
   if (!current || current.id !== id) return;
-  const { child } = current;
-  // Detach first: trailing finals after SIGTERM still flow (the helper
-  // finalizes before exiting), so keep the pipe until exit but mark the
-  // session as ending so a racing start owns `current`.
-  try {
-    child.kill("SIGTERM");
-  } catch {
-    /* already gone */
-  }
+  // Keep the pipe until close: trailing finals after SIGTERM still flow (the
+  // helper finalizes before exiting).
+  current.stopRequested = true;
+  killWithEscalation(current.child);
 }
 
 function stopAllSpeechSessions() {
   if (current) {
-    try {
-      current.child.kill("SIGTERM");
-    } catch {
-      /* already gone */
-    }
+    current.stopRequested = true;
+    killWithEscalation(current.child);
     current = null;
   }
 }
