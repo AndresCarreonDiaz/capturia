@@ -55,6 +55,14 @@ export const catalogDefinitions = {
       indeterminate: z.boolean().optional(),
     }),
   },
+  CountdownTimer: {
+    description:
+      "Big on-feed countdown clock. Walks green, amber, red on its own and counts overtime upward past zero. Ticks client-side: render it ONCE and never update it; to extend or restart, re-issue with new seconds.",
+    props: z.object({
+      seconds: z.number().min(1).max(14400).describe("Duration in seconds, e.g. 300 for five minutes"),
+      label: z.string().optional().describe("Tiny caption above the digits, e.g. 'Q&A'"),
+    }),
+  },
   KeywordHighlight: {
     description:
       "Floating glowing word chips. Good for emphasizing terms, hashtags, buzzwords.",

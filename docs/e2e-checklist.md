@@ -46,6 +46,10 @@ or human judgment; run them before a release-worthy merge.
    expect it too. Two quick commands back to back must both land, in order
    (chunks queue behind one whisper job). The feed's energy vignette should
    breathe while you speak. Toggle again to release the mic.
+2b. Say "give me two minutes on the clock": a CountdownTimer lands (green),
+   turns amber at 30s left, red at 15s, pulses, then counts overtime upward
+   with a plus. It ticks locally: no agent turns while it runs. "Give me
+   five minutes" re-issues it fresh at 5:00.
 3. `Cmd+,`: save a Gemini key in the vault, restart, confirm it persists
    masked and the agent runs BYOK. In devtools, the agent requests go to
    `http://127.0.0.1:<port>/api/copilotkit` and carry only

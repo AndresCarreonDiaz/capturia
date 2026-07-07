@@ -12,6 +12,7 @@ import Ticker from "./Ticker";
 import LiveBadge from "./LiveBadge";
 import StatRing from "./StatRing";
 import BigCounter from "./BigCounter";
+import CountdownTimer from "./CountdownTimer";
 
 export const STAGGER_MS = 60;
 
@@ -28,6 +29,7 @@ export const ENTER_CLASS: Record<OverlaySpec["type"], string> = {
   LiveBadge: "overlay-enter-scale",
   StatRing: "overlay-enter-scale",
   BigCounter: "overlay-enter",
+  CountdownTimer: "overlay-enter-scale",
   // Authored surfaces (render_surface) only render through the A2UI host
   // (A2uiOverlay), never the direct switch below; the whole composed tree fades
   // in as one unit via this wrapper class.
@@ -93,6 +95,8 @@ function Inner({ overlay }: { overlay: Exclude<OverlaySpec, { type: "Letterbox" 
       return <StatRing {...overlay.props} />;
     case "BigCounter":
       return <BigCounter {...overlay.props} />;
+    case "CountdownTimer":
+      return <CountdownTimer {...overlay.props} />;
     case "Surface":
       // Agent-authored surfaces require the A2UI renderer; the direct React path
       // never renders them (the studio routes them to a dedicated A2uiOverlayLayer).

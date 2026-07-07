@@ -97,6 +97,15 @@ export function normalizeProps(
       typeof cs === "number" && Number.isFinite(cs) ? cs : Number(cs ?? 0) || 0;
   }
 
+  if (type === "CountdownTimer") {
+    // Models sometimes send seconds as a string ("300"); coerce before Zod.
+    const raw = out.seconds;
+    if (typeof raw === "string" && raw.trim() !== "") {
+      const n = Number(raw);
+      if (Number.isFinite(n)) out.seconds = n;
+    }
+  }
+
   if (type === "Ticker") {
     const raw = out.items;
     if (typeof raw === "string") {

@@ -29,3 +29,22 @@ describe("isPlaceableOverlayType", () => {
     expect(schema.safeParse({ label: "Yes" }).success).toBe(false);
   });
 });
+
+describe("CountdownTimer schema", () => {
+  const schema = catalogDefinitions.CountdownTimer.props;
+
+  it("accepts a plain duration and an optional label", () => {
+    expect(schema.safeParse({ seconds: 300 }).success).toBe(true);
+    expect(schema.safeParse({ seconds: 300, label: "Q&A" }).success).toBe(true);
+  });
+
+  it("rejects missing, zero, and absurd durations", () => {
+    expect(schema.safeParse({}).success).toBe(false);
+    expect(schema.safeParse({ seconds: 0 }).success).toBe(false);
+    expect(schema.safeParse({ seconds: 999999 }).success).toBe(false);
+  });
+
+  it("is placeable as a standalone overlay", () => {
+    expect(isPlaceableOverlayType("CountdownTimer")).toBe(true);
+  });
+});
