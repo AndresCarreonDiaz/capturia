@@ -60,3 +60,6 @@ next-env.d.ts
 
 # whisper packaging stage (self-contained copy for extraResources)
 /.whisper-stage/
+
+# native spike binaries (built ad hoc via swiftc)
+/native/capturia-speech/speech-spike
