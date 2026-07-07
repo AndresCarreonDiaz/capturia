@@ -314,7 +314,7 @@ export default function LiveDemo() {
           <div className="flex items-center gap-2 sm:gap-3 font-mono text-[9px] sm:text-[10px] tracking-[0.18em] uppercase text-[var(--studio-graphite)]">
             <span>Your&nbsp;camera</span>
             <span className="hidden sm:inline text-[var(--studio-fade)]">·</span>
-            <span className="hidden sm:inline">Zoom · Teams · Meet</span>
+            <span className="hidden sm:inline">Zoom · Meet · Slack</span>
           </div>
           <div className="flex items-center gap-2 sm:gap-3">
             <span className="font-mono text-[9px] sm:text-[10px] tracking-[0.18em] uppercase text-[var(--studio-graphite)] tabular-nums">
