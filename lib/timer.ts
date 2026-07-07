@@ -25,7 +25,11 @@ export function timerPhase(remainingSeconds: number, totalSeconds: number): Time
 // the display never shows a state that has not happened yet.
 export function formatClock(remainingSeconds: number): string {
   const overtime = remainingSeconds < 0;
-  const total = Math.floor(Math.abs(remainingSeconds));
+  // Counting down, round UP (0.4s left still reads 0:01; 0:00 means zero).
+  // Overtime counts elapsed time, so it floors like a stopwatch.
+  const total = overtime
+    ? Math.floor(Math.abs(remainingSeconds))
+    : Math.ceil(remainingSeconds);
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;

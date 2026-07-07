@@ -51,8 +51,12 @@ describe("formatClock", () => {
     expect(formatClock(-75)).toBe("+1:15");
   });
 
-  it("floors fractional seconds", () => {
-    expect(formatClock(59.9)).toBe("0:59");
+  it("rounds up while counting down, floors overtime like a stopwatch", () => {
+    // 0:00 must mean zero; 0.4s left still reads 0:01.
+    expect(formatClock(59.9)).toBe("1:00");
+    expect(formatClock(0.4)).toBe("0:01");
+    expect(formatClock(0)).toBe("0:00");
     expect(formatClock(-0.5)).toBe("+0:00");
+    expect(formatClock(-1.9)).toBe("+0:01");
   });
 });

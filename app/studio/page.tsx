@@ -494,7 +494,7 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
       type: z
         .string()
         .describe(
-          "Component type: MetricsPanel | Timeline | LowerThird | ProgressBar | KeywordHighlight | FloatingChart | ChatBubble | Letterbox | Ticker | LiveBadge | StatRing | BigCounter"
+          "Component type: MetricsPanel | Timeline | LowerThird | ProgressBar | KeywordHighlight | FloatingChart | ChatBubble | Letterbox | Ticker | LiveBadge | StatRing | BigCounter | CountdownTimer"
         ),
       position: z
         .string()

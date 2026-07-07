@@ -61,6 +61,7 @@ export const catalogDefinitions = {
     props: z.object({
       seconds: z.number().min(1).max(14400).describe("Duration in seconds, e.g. 300 for five minutes"),
       label: z.string().optional().describe("Tiny caption above the digits, e.g. 'Q&A'"),
+      startedAt: z.number().optional().describe("Set automatically on issue; always omit"),
     }),
   },
   KeywordHighlight: {
