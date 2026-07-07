@@ -97,6 +97,26 @@ export function normalizeProps(
       typeof cs === "number" && Number.isFinite(cs) ? cs : Number(cs ?? 0) || 0;
   }
 
+  if (type === "CountdownTimer") {
+    // Models sometimes send seconds as a string ("300"); coerce, then clamp
+    // to the schema's range HERE because the add_overlay/compose_scene tool
+    // paths never run the Zod schema. Non-numeric garbage ("a few minutes")
+    // is dropped so the component's own guard (render nothing) or the Zod
+    // paths (reject) handle it instead of a NaN clock on the live feed.
+    const raw = out.seconds;
+    const n = typeof raw === "number" ? raw : Number(raw);
+    if (Number.isFinite(n) && n > 0) {
+      out.seconds = Math.min(14400, Math.max(1, Math.floor(n)));
+    } else {
+      delete out.seconds;
+    }
+    // Issuance stamp: any re-issue restarts the clock, including one with
+    // the SAME duration ("restart the clock"), which a seconds-keyed reset
+    // alone cannot see. Models never set this; it is not part of the
+    // authoring contract.
+    out.startedAt = Date.now();
+  }
+
   if (type === "Ticker") {
     const raw = out.items;
     if (typeof raw === "string") {

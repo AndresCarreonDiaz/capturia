@@ -126,6 +126,14 @@ body {
   0%, 100% { opacity: 1;   transform: scale(1); }
   50%      { opacity: 0.6; transform: scale(1.25); }
 }
+@keyframes timer-critical {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0); }
+  50%      { box-shadow: 0 0 24px 2px rgba(244, 63, 94, 0.35); }
+}
+@keyframes timer-overtime {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
 
 .overlay-enter           { animation: overlay-in        350ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 .overlay-enter-left      { animation: overlay-in-left   400ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
@@ -143,6 +151,8 @@ body {
 .border-breathe          { animation: border-breathe 4.5s ease-in-out infinite; }
 .mic-glow                { animation: mic-glow 1.8s ease-in-out infinite; }
 .live-dot-pulse          { animation: live-dot-pulse 1.4s ease-in-out infinite; }
+.timer-critical          { animation: timer-critical 1.2s ease-in-out infinite; }
+.timer-overtime          { animation: timer-overtime 1s ease-in-out infinite; }
 .ticker-scroll           { animation: ticker-scroll 22s linear infinite; }
 .stripe-march            { animation: stripe-march 0.9s linear infinite; }
 

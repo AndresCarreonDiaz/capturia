@@ -17,6 +17,7 @@ import MetricsPanel from "@/components/overlays/MetricsPanel";
 import Timeline from "@/components/overlays/Timeline";
 import LowerThird from "@/components/overlays/LowerThird";
 import ProgressBar from "@/components/overlays/ProgressBar";
+import CountdownTimer from "@/components/overlays/CountdownTimer";
 import KeywordHighlight from "@/components/overlays/KeywordHighlight";
 import FloatingChart from "@/components/overlays/FloatingChart";
 import ChatBubble from "@/components/overlays/ChatBubble";
@@ -41,6 +42,7 @@ export const capturiaCatalog = createCatalog(
     Timeline: adapt(Timeline),
     LowerThird: adapt(LowerThird),
     ProgressBar: adapt(ProgressBar),
+    CountdownTimer: adapt(CountdownTimer),
     KeywordHighlight: adapt(KeywordHighlight),
     FloatingChart: adapt(FloatingChart),
     ChatBubble: adapt(ChatBubble),

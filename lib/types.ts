@@ -110,6 +110,12 @@ export type OverlaySpec =
       props: { value: number; label: string; prefix?: string; suffix?: string; color?: string };
     }
   | {
+      id: string;
+      type: "CountdownTimer";
+      position: OverlayPosition;
+      props: { seconds: number; label?: string };
+    }
+  | {
       // Agent-authored A2UI surface: the model composes a whole component tree
       // (layout primitives wrapping branded Capturia overlays) rather than
       // placing one fixed leaf. Rendered through the real A2UI v0.9 runtime by a

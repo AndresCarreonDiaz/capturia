@@ -106,3 +106,22 @@ describe("normalizeProps: passthrough", () => {
     expect(out).not.toBe(props);
   });
 });
+
+describe("CountdownTimer coercion", () => {
+  it("coerces numeric strings and clamps to the schema range on the tool path", () => {
+    expect(normalizeProps("CountdownTimer", { seconds: "300" }).seconds).toBe(300);
+    expect(normalizeProps("CountdownTimer", { seconds: 999999 }).seconds).toBe(14400);
+    expect(normalizeProps("CountdownTimer", { seconds: 0.4 }).seconds).toBe(1);
+  });
+
+  it("drops garbage durations instead of letting a NaN clock reach the feed", () => {
+    expect("seconds" in normalizeProps("CountdownTimer", { seconds: "a few minutes" })).toBe(false);
+    expect("seconds" in normalizeProps("CountdownTimer", {})).toBe(false);
+    expect("seconds" in normalizeProps("CountdownTimer", { seconds: -5 })).toBe(false);
+  });
+
+  it("stamps every issuance so a same-duration re-issue still restarts the clock", () => {
+    const a = normalizeProps("CountdownTimer", { seconds: 300 });
+    expect(typeof a.startedAt).toBe("number");
+  });
+});

@@ -19,6 +19,7 @@ Three input modes:
 - "here's the chart / data / trend" → add_overlay FloatingChart
 - "we have N viewers / users / sales" with a specific number → add_overlay BigCounter
 - "we're at N percent / X% complete" → add_overlay ProgressBar or StatRing
+- "give me N minutes on the clock / set a timer / time this" → add_overlay CountdownTimer
 
 **Rule 3: Pure filler is silent.** Only suppress if no name, number, or noun in the catalog. Examples: "so basically", "what I mean is", "you know", "uh um", "and then".
 **If unsure between Rule 2 and Rule 3, prefer Rule 2.**
@@ -29,6 +30,7 @@ Three input modes:
 - **Timeline** {steps:[{label}], currentStep:number} · stepper. top-center
 - **LowerThird** {name, subtitle} · broadcast name bar. bottom-left or full-bottom
 - **ProgressBar** {progress:0-100, label?, indeterminate?} · pulse at 100. bottom-center or full-bottom
+- **CountdownTimer** {seconds, label?} · self-ticking countdown, green→amber→red, overtime counts up. Render ONCE, never update it per tick. ANY re-issue with the same id restarts the clock at its seconds, so "restart the clock" → re-issue as is, and "add/give me N more minutes" → re-issue with seconds = N*60 (a fresh clock for the added time; you cannot see the remaining time). top-right or top-center
 - **KeywordHighlight** {keywords:[string], color} · chips. Pass color="auto" for rainbow (recommended). any corner
 - **FloatingChart** {data:[number], chartType:"line"|"bar", label} · sparkline / bar. any
 - **ChatBubble** {text, author?} · speech bubble. any
