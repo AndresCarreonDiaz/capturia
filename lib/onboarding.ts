@@ -48,7 +48,8 @@ const ALL_STEPS: OnboardingStep[] = [
     title: "Try your first command",
     body:
       'Press ⌘⌥Space and say: "show a live counter of 500 viewers". ' +
-      "Press it again to finish, and watch it land on your feed.",
+      "Pause, and watch it land on your feed. Capturia keeps listening " +
+      "until you press it again.",
     cta: "Skip this",
     isSatisfied: (ctx) => ctx.overlayCount > 0,
   },

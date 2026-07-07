@@ -282,6 +282,15 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
     });
   }, []);
 
+  // Continuous voice can finish transcribing a second command while the
+  // agent still renders the first. sendMessage drops mid-run turns by design
+  // (v2's runAgent CANCELS an active run instead of queueing, which would
+  // truncate the streaming turn's tool calls mid-render), so instead of
+  // losing the command, the newest dropped one parks here and fires when the
+  // run settles. Depth 1 on purpose: the freshest command is what the
+  // speaker most recently wanted; anything older is stale narration.
+  const pendingVoiceRef = useRef<string | null>(null);
+
   const { isListening, interimTranscript, speechStatus, lastError, lastResultAt, isSupported, startListening, stopListening } =
     useStudioVoice((text) => {
       if (text.split(/\s+/).length < 2) return;
@@ -293,13 +302,25 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
         applyCue(card);
         return;
       }
-      // sendMessage drops the turn (returns false) when a run is in flight:
-      // v2's runAgent CANCELS an active run instead of queueing, which would
-      // truncate the streaming turn's tool calls mid-render. Continuous speech
-      // keeps producing utterances, so a dropped one costs little; a corrupted
-      // thread kills the session.
-      sendMessage(`[VOICE] ${text}`).catch(() => {});
+      sendMessage(`[VOICE] ${text}`)
+        .then((sent) => {
+          if (!sent) pendingVoiceRef.current = text;
+        })
+        .catch(() => {});
     });
+
+  // Flush the parked voice command once the agent run settles.
+  useEffect(() => {
+    if (isRunning) return;
+    const parked = pendingVoiceRef.current;
+    if (!parked) return;
+    pendingVoiceRef.current = null;
+    sendMessage(`[VOICE] ${parked}`)
+      .then((sent) => {
+        if (!sent) pendingVoiceRef.current = parked;
+      })
+      .catch(() => {});
+  }, [isRunning, sendMessage]);
 
   // Desktop push-to-talk: Cmd+Alt+Space toggles voice from anywhere on the OS.
   useDesktopHotkey("toggle-voice", () => {

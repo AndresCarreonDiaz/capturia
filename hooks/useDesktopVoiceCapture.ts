@@ -1,36 +1,44 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { VoiceCaptureState } from "./useVoiceCapture";
+import { createVadState, stepVad, DEFAULT_VAD_CONFIG, type VadState } from "@/lib/vad";
+import { createSerialQueue, isLikelyHallucination } from "@/lib/transcript-stream";
 
-// Tap-to-start desktop voice capture backed by local whisper.cpp through the
-// Electron main process. Same VoiceCaptureState shape as useVoiceCapture so
-// the studio swap is a one-line import switch.
+// Continuous, hands-free desktop voice backed by local whisper.cpp through
+// the Electron main process (M9 part 1). Same VoiceCaptureState shape as the
+// web hook so the studio swap stays a one-line import switch.
 //
-// Flow: tap mic / hotkey -> record -> energy-based VAD detects end of speech
-// after VAD_TRAILING_SILENCE_MS of quiet -> auto-stop + transcribe -> fire
-// onFinalResult once. User can also tap again to stop manually mid-utterance.
-// No streaming / interim transcripts yet (next iteration if needed).
+// One toggle opens a SESSION, not an utterance: the mic stays open, the pure
+// VAD machine (lib/vad.ts) watches energy, and every pause slices the
+// recording into a chunk that transcribes in the background (serial queue;
+// whisper handles one job at a time) while the mic keeps listening. Toggling
+// again ends the session and flushes the last chunk.
+//
+// Lifecycle discipline (shaped by adversarial review): every session gets a
+// generation id and every async continuation checks it, so a stale handler
+// from a stopped session can never touch a newer session's stream. Each
+// recorder owns its chunks in closure (no shared buffer to race) and carries
+// an explicit intent; a stop event with NO intent is device-initiated (mic
+// unplugged, input switched) and ends the session with a visible error
+// instead of a zombie "listening" state.
 
 const WHISPER_SAMPLE_RATE = 16000;
-
-// VAD tuning. AudioContext + AnalyserNode run in parallel with MediaRecorder
-// on the same MediaStream (they don't conflict; the Web Speech / AudioContext
-// conflict noted in feedback memory doesn't apply here since we're not using
-// Web Speech).
 const VAD_POLL_MS = 50;
-const VAD_SILENCE_RMS = 0.015;        // RMS below this is considered silence
-const VAD_MIN_SPEECH_MS = 250;        // need this much speech before auto-stop arms
-const VAD_TRAILING_SILENCE_MS = 800;  // this much silence after speech triggers stop
-const VAD_MAX_WAIT_FOR_SPEECH_MS = 6000;  // give up if user opens mic but never speaks
-const VAD_MAX_RECORDING_MS = 30000;   // hard safety cap
+// Throttle for lastResultAt stamps while speaking; drives the audio-reactive
+// energy FX without re-rendering the studio at poll frequency.
+const ENERGY_STAMP_MS = 250;
+// More queued chunks than this means whisper cannot keep up; newest chunks
+// are dropped with a visible status rather than growing silently stale.
+const MAX_QUEUED_CHUNKS = 3;
+// A single chunk transcription taking longer than this is treated as hung.
+const TRANSCRIBE_TIMEOUT_MS = 60000;
 
-type VadPhase = "waiting_for_speech" | "speaking" | "trailing_silence";
+type RecorderIntent = "slice-transcribe" | "slice-discard" | "final-flush";
 
-interface VadState {
-  phase: VadPhase;
-  startedAt: number;
-  speechStartedAt: number;
-  silenceStartedAt: number;
+interface ManagedRecorder {
+  recorder: MediaRecorder;
+  chunks: Blob[];
+  intent: RecorderIntent | null;
 }
 
 export function useDesktopVoiceCapture(
@@ -41,18 +49,32 @@ export function useDesktopVoiceCapture(
   const [speechStatus, setSpeechStatus] = useState("idle");
   const [lastError, setLastError] = useState("");
   const [isSupported, setIsSupported] = useState(false);
+  const [lastResultAt, setLastResultAt] = useState(0);
 
-  const recorderRef = useRef<MediaRecorder | null>(null);
+  // Generation counter: bumped on every start AND stop, so continuations
+  // from any older session no-op against the current one.
+  const sessionRef = useRef(0);
+  const managedRef = useRef<ManagedRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
   const mimeRef = useRef<string>("");
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const vadTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const vadStateRef = useRef<VadState | null>(null);
   const isListeningRef = useRef(false);
+  const lastStampRef = useRef(0);
   const onFinalRef = useRef(onFinalResult);
   onFinalRef.current = onFinalResult;
+
+  // Serial transcription queue: whisper in main rejects concurrent jobs, and
+  // utterances must reach the agent in spoken order anyway.
+  const transcribeQueueRef = useRef(
+    createSerialQueue((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      setLastError(msg);
+      setSpeechStatus(`error: ${msg}`);
+    })
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -81,17 +103,21 @@ export function useDesktopVoiceCapture(
     audioCtxRef.current = null;
   }, []);
 
+  // Hard-release everything the current session holds. Safe to call twice.
   const teardown = useCallback(() => {
     stopVad();
-    const recorder = recorderRef.current;
-    if (recorder && recorder.state !== "inactive") {
+    const managed = managedRef.current;
+    if (managed && managed.recorder.state !== "inactive") {
+      // Mark as deliberate so the default onstop does not report a device
+      // failure for a stop we initiated.
+      managed.intent = "slice-discard";
       try {
-        recorder.stop();
+        managed.recorder.stop();
       } catch {
         /* ignore */
       }
     }
-    recorderRef.current = null;
+    managedRef.current = null;
     const stream = streamRef.current;
     if (stream) {
       stream.getTracks().forEach((t) => t.stop());
@@ -99,10 +125,116 @@ export function useDesktopVoiceCapture(
     streamRef.current = null;
   }, [stopVad]);
 
-  // Forward-declare stopListening so VAD timer can call it. We assign the
-  // real implementation after defining startListening to avoid hoisting
-  // issues with useCallback.
-  const stopListeningRef = useRef<() => void>(() => {});
+  // End the session because the capture device failed under us (track ended,
+  // recorder error). Visible error, full release, no zombie "listening".
+  const failSession = useCallback(
+    (session: number, why: string) => {
+      if (sessionRef.current !== session || !isListeningRef.current) return;
+      sessionRef.current += 1;
+      isListeningRef.current = false;
+      setIsListening(false);
+      setLastError(why);
+      setSpeechStatus(`error: ${why}`);
+      teardown();
+    },
+    [teardown]
+  );
+
+  // Transcribe one sliced utterance in the background. The session keeps
+  // recording while this runs; results fire in spoken order via the queue.
+  const transcribeChunk = useCallback((chunks: Blob[], mime: string) => {
+    if (transcribeQueueRef.current.pendingCount() >= MAX_QUEUED_CHUNKS) {
+      setSpeechStatus("whisper backlog, dropped a chunk");
+      return;
+    }
+    transcribeQueueRef.current(async () => {
+      const blob = new Blob(chunks, { type: mime });
+      const wav = await blobToWavMono16k(blob);
+      const transcript = await withTimeout(
+        window.capturia!.transcribe(wav),
+        TRANSCRIBE_TIMEOUT_MS,
+        "transcription timed out"
+      );
+      const text = (transcript || "").trim();
+      if (text && !isLikelyHallucination(text)) {
+        setSpeechStatus(isListeningRef.current ? "sent, still listening" : "sent ✓");
+        onFinalRef.current(text);
+      } else if (isListeningRef.current) {
+        setSpeechStatus("listening…");
+      } else {
+        setSpeechStatus("idle");
+      }
+    });
+  }, []);
+
+  // Create a recorder bound to `session`, with its chunks in closure and a
+  // default onstop that distinguishes deliberate slices from device death.
+  const makeRecorder = useCallback(
+    (stream: MediaStream, mime: string, session: number): ManagedRecorder => {
+      const managed: ManagedRecorder = {
+        recorder: new MediaRecorder(stream, { mimeType: mime }),
+        chunks: [],
+        intent: null,
+      };
+      managed.recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) managed.chunks.push(e.data);
+      };
+      managed.recorder.onerror = () => {
+        failSession(session, "microphone error");
+      };
+      managed.recorder.onstop = () => {
+        if (sessionRef.current !== session) return; // stale session: its teardown owns cleanup
+        const intent = managed.intent;
+
+        if (intent === "final-flush") {
+          // Deliberate session end: transcribe the tail, release the mic.
+          const stream2 = streamRef.current;
+          if (stream2) {
+            stream2.getTracks().forEach((t) => t.stop());
+            streamRef.current = null;
+          }
+          managedRef.current = null;
+          if (managed.chunks.length > 0) {
+            setSpeechStatus("transcribing…");
+            transcribeChunk(managed.chunks, mime);
+          } else {
+            setSpeechStatus("idle");
+          }
+          return;
+        }
+
+        if (intent === "slice-transcribe" || intent === "slice-discard") {
+          if (intent === "slice-transcribe" && managed.chunks.length > 0) {
+            setSpeechStatus("transcribing…");
+            transcribeChunk(managed.chunks, mime);
+          }
+          // Session continues: keep the mic hot with a fresh recorder.
+          if (isListeningRef.current && stream.active) {
+            try {
+              const next = makeRecorderRef.current!(stream, mime, session);
+              managedRef.current = next;
+              next.recorder.start();
+              vadStateRef.current = createVadState(Date.now());
+            } catch {
+              failSession(session, "microphone lost between utterances");
+            }
+          }
+          return;
+        }
+
+        // No intent: the device stopped us (mic unplugged, input switched).
+        failSession(session, "microphone disconnected");
+      };
+      return managed;
+    },
+    [failSession, transcribeChunk]
+  );
+  // Self-reference so onstop can build the successor recorder. Assigned in
+  // an effect (not during render); onstop only fires long after mount.
+  const makeRecorderRef = useRef<typeof makeRecorder | null>(null);
+  useEffect(() => {
+    makeRecorderRef.current = makeRecorder;
+  }, [makeRecorder]);
 
   const startListening = useCallback(async () => {
     if (isListeningRef.current) return;
@@ -111,11 +243,20 @@ export function useDesktopVoiceCapture(
       setSpeechStatus("error: bridge");
       return;
     }
+    const session = ++sessionRef.current;
+    // A previous session's final-flush may still be in flight; bumping the
+    // session id just made its onstop a stale no-op, so reclaim its stream
+    // here. Its tail chunk is dropped by design: the user is starting over.
+    const priorStream = streamRef.current;
+    if (priorStream) {
+      priorStream.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    managedRef.current = null;
     isListeningRef.current = true;
     setLastError("");
     setSpeechStatus("opening mic…");
     setIsListening(true);
-    chunksRef.current = [];
 
     try {
       const mime = pickRecorderMime();
@@ -123,64 +264,26 @@ export function useDesktopVoiceCapture(
       mimeRef.current = mime;
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (!isListeningRef.current) {
+      if (sessionRef.current !== session || !isListeningRef.current) {
+        // Session was stopped (or replaced) while the mic prompt was open.
         stream.getTracks().forEach((t) => t.stop());
         return;
       }
       streamRef.current = stream;
+      // Device death (Bluetooth drop, input switch) must end the session
+      // loudly, not leave the VAD polling a silent analyser forever.
+      stream.getAudioTracks().forEach((track) => {
+        track.addEventListener("ended", () => failSession(session, "microphone disconnected"));
+      });
 
-      const recorder = new MediaRecorder(stream, { mimeType: mime });
-      recorderRef.current = recorder;
+      const managed = makeRecorder(stream, mime, session);
+      managedRef.current = managed;
+      managed.recorder.start();
+      setSpeechStatus("listening…");
 
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
-      };
-
-      recorder.onstop = async () => {
-        stopVad();
-        const chunks = chunksRef.current;
-        chunksRef.current = [];
-        const s = streamRef.current;
-        if (s) {
-          s.getTracks().forEach((t) => t.stop());
-          streamRef.current = null;
-        }
-
-        if (chunks.length === 0) {
-          isListeningRef.current = false;
-          setIsListening(false);
-          setSpeechStatus("idle");
-          return;
-        }
-
-        try {
-          setSpeechStatus("transcribing…");
-          const blob = new Blob(chunks, { type: mimeRef.current });
-          const wav = await blobToWavMono16k(blob);
-          const transcript = await window.capturia!.transcribe(wav);
-
-          isListeningRef.current = false;
-          setIsListening(false);
-          if (transcript && transcript.trim()) {
-            setSpeechStatus("sent ✓");
-            onFinalRef.current(transcript.trim());
-          } else {
-            setSpeechStatus("idle");
-          }
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          setLastError(msg);
-          setSpeechStatus(`error: ${msg}`);
-          isListeningRef.current = false;
-          setIsListening(false);
-        }
-      };
-
-      recorder.start();
-      setSpeechStatus("listening, speak now");
-
-      // VAD pipeline: AnalyserNode on the same MediaStream watches energy.
-      // When silence persists after speech, auto-trigger stop.
+      // Energy watcher for the VAD. AnalyserNode + AudioContext are safe next
+      // to MediaRecorder on the same stream (the Web Speech conflict from the
+      // feedback memory does not apply here; no Web Speech on desktop).
       const AudioCtor =
         window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -191,17 +294,11 @@ export function useDesktopVoiceCapture(
       analyser.fftSize = 1024;
       sourceNode.connect(analyser);
       analyserRef.current = analyser;
-
-      const now = Date.now();
-      vadStateRef.current = {
-        phase: "waiting_for_speech",
-        startedAt: now,
-        speechStartedAt: 0,
-        silenceStartedAt: 0,
-      };
+      vadStateRef.current = createVadState(Date.now());
 
       const sampleBuffer = new Float32Array(analyser.fftSize);
       vadTimerRef.current = setInterval(() => {
+        if (sessionRef.current !== session) return;
         const state = vadStateRef.current;
         const a = analyserRef.current;
         if (!state || !a || !isListeningRef.current) return;
@@ -212,90 +309,72 @@ export function useDesktopVoiceCapture(
           sumSquares += sampleBuffer[i] * sampleBuffer[i];
         }
         const rms = Math.sqrt(sumSquares / sampleBuffer.length);
-        const t = Date.now();
-        const elapsed = t - state.startedAt;
+        const now = Date.now();
 
-        // Safety cap regardless of phase.
-        if (elapsed > VAD_MAX_RECORDING_MS) {
-          stopListeningRef.current();
-          return;
+        const step = stepVad(state, rms, now, DEFAULT_VAD_CONFIG);
+        vadStateRef.current = step.state;
+
+        // Audio-reactive energy: stamp while actually speaking, throttled so
+        // the studio does not re-render at poll frequency. performance.now()
+        // because that is useSpeechEnergy's clock (an epoch stamp pegs the
+        // decay math and the vignette never relaxes).
+        if (step.speaking && now - lastStampRef.current >= ENERGY_STAMP_MS) {
+          lastStampRef.current = now;
+          setLastResultAt(performance.now());
         }
 
-        if (state.phase === "waiting_for_speech") {
-          if (rms > VAD_SILENCE_RMS) {
-            state.phase = "speaking";
-            state.speechStartedAt = t;
-          } else if (elapsed > VAD_MAX_WAIT_FOR_SPEECH_MS) {
-            // User opened mic but never spoke. Stop without transcribing
-            // (empty buffer → onstop returns early).
-            stopListeningRef.current();
-          }
-          return;
-        }
-
-        if (state.phase === "speaking") {
-          if (rms > VAD_SILENCE_RMS) {
-            // still speaking; keep going
-          } else {
-            state.phase = "trailing_silence";
-            state.silenceStartedAt = t;
-          }
-          return;
-        }
-
-        if (state.phase === "trailing_silence") {
-          if (rms > VAD_SILENCE_RMS) {
-            // user resumed speaking; cancel the silence timer
-            state.phase = "speaking";
-          } else {
-            const speechDuration = state.silenceStartedAt - state.speechStartedAt;
-            const silenceDuration = t - state.silenceStartedAt;
-            if (
-              speechDuration >= VAD_MIN_SPEECH_MS &&
-              silenceDuration >= VAD_TRAILING_SILENCE_MS
-            ) {
-              setSpeechStatus("processing…");
-              stopListeningRef.current();
-            }
+        if (step.action !== "none") {
+          const managed2 = managedRef.current;
+          if (!managed2 || managed2.recorder.state === "inactive") return;
+          managed2.intent =
+            step.action === "utterance_end" ? "slice-transcribe" : "slice-discard";
+          try {
+            managed2.recorder.stop();
+          } catch {
+            failSession(session, "microphone error");
           }
         }
       }, VAD_POLL_MS);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setLastError(msg);
-      setSpeechStatus(`error: ${msg}`);
-      teardown();
-      isListeningRef.current = false;
-      setIsListening(false);
-    }
-  }, [teardown, stopVad]);
-
-  const stopListening = useCallback(() => {
-    if (!isListeningRef.current) return;
-    setSpeechStatus("stopping…");
-    stopVad();
-    const recorder = recorderRef.current;
-    if (recorder && recorder.state !== "inactive") {
-      try {
-        recorder.stop();
-      } catch {
+      if (sessionRef.current === session) {
+        setLastError(msg);
+        setSpeechStatus(`error: ${msg}`);
         teardown();
         isListeningRef.current = false;
         setIsListening(false);
       }
+    }
+  }, [teardown, makeRecorder, failSession]);
+
+  const stopListening = useCallback(() => {
+    if (!isListeningRef.current) return;
+    isListeningRef.current = false;
+    setIsListening(false);
+    setSpeechStatus("finishing…");
+    stopVad();
+
+    const managed = managedRef.current;
+    if (managed && managed.recorder.state !== "inactive") {
+      // Flush the last utterance; the recorder's own onstop releases the
+      // stream. The session id stays current so that onstop still runs; the
+      // NEXT startListening bumps it and takes fresh refs.
+      managed.intent = "final-flush";
+      try {
+        managed.recorder.stop();
+      } catch {
+        teardown();
+        setSpeechStatus("idle");
+      }
     } else {
       teardown();
-      isListeningRef.current = false;
-      setIsListening(false);
+      setSpeechStatus("idle");
     }
   }, [teardown, stopVad]);
 
-  // Keep the ref pointing at the latest stopListening so the VAD timer
-  // (which closes over the first ref value) always calls the current one.
-  stopListeningRef.current = stopListening;
-
   useEffect(() => {
     return () => {
+      sessionRef.current += 1;
       isListeningRef.current = false;
       teardown();
     };
@@ -306,14 +385,28 @@ export function useDesktopVoiceCapture(
     interimTranscript,
     speechStatus,
     lastError,
-    // Whisper transcribes whole chunks after the fact, so there is no live
-    // result stream to stamp; audio-reactive energy simply stays inert on
-    // desktop until a streaming backend lands.
-    lastResultAt: 0,
+    // Live VAD stamps: the feed's energy FX now breathes on desktop too.
+    lastResultAt,
     isSupported,
     startListening,
     stopListening,
   };
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(label)), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      }
+    );
+  });
 }
 
 function pickRecorderMime(): string {
