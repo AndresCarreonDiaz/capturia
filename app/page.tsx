@@ -195,7 +195,7 @@ function Hero() {
           <span aria-hidden className="trust-pip" />
           <span>One camera for every call app</span>
           <span aria-hidden className="trust-pip" />
-          <span>On-device speech · nothing recorded</span>
+          <span>macOS app: on-device speech · nothing recorded</span>
         </div>
       </div>
     </section>
@@ -318,8 +318,8 @@ function HowItWorks() {
           </span>{" "}
           you share the Control Room window in Zoom, Meet, or Slack, or route it
           through OBS. Your audience sees the same feed either way. A native
-          camera extension, where you pick Capturia like any webcam, is built and
-          waiting on Apple approval.
+          camera extension, where you pick Capturia like any webcam, is built; it
+          ships once Apple developer verification completes so it can be signed.
         </p>
       </div>
     </section>
@@ -340,7 +340,7 @@ function DeckSection() {
               <span className="italic text-[var(--signal)]">Your numbers stand by.</span>
             </>
           }
-          kicker="Give Capturia your PDF once. It reads every figure on your Mac and arms a cue card for each one. Mention your churn and the exact number from your deck lands on screen. Nothing on your feed is ever made up."
+          kicker="Give Capturia your PDF once. It reads every figure on your Mac and arms a cue card for each one. Mention your churn and the exact number from your deck lands on screen. Deck-primed cards render your file's values, not the model's guesses."
         />
 
         <div className="mt-12 sm:mt-16 reveal-up">
@@ -509,7 +509,7 @@ function Differentiators() {
     {
       tag: "Truth",
       title: "Real numbers only",
-      body: "Figures on your feed come from your deck or your words, never from a model guessing. If your audience sees it, you said it.",
+      body: "Deck-primed figures render straight from your file, and without a deck the AI uses clearly illustrative demo numbers. Your real data comes from you, not a guess.",
       accent: "var(--amber-cue)",
     },
     {
@@ -662,7 +662,7 @@ function Pricing() {
             Everything Capturia does, powered by your own AI key.
           </p>
           <ul className="mt-7 space-y-3.5 text-[14.5px] text-[var(--studio-graphite)] flex-1">
-            <Feature>Your key stays in the macOS Keychain, never on our servers</Feature>
+            <Feature>Your key is encrypted on your Mac with a key held in the macOS Keychain, never on our servers</Feature>
             <Feature>Full overlay library, voice control, deck priming</Feature>
             <Feature>The browser studio, free to try right now</Feature>
             <Feature>Open source under MIT</Feature>
@@ -744,7 +744,7 @@ const FAQS: Array<{ q: string; a: React.ReactNode }> = [
     a: (
       <>
         Not yet. The build is not signed for distribution, and we will not hand
-        out an unsigned app. Star or watch the{" "}
+        out an unsigned app. Watch releases on the{" "}
         <a href={GITHUB} target="_blank" rel="noopener noreferrer" className="cue-link">
           GitHub repo
         </a>{" "}
@@ -763,7 +763,8 @@ const FAQS: Array<{ q: string; a: React.ReactNode }> = [
         You share the Control Room window in Zoom, Meet, or Slack, or route it
         through OBS. Your audience sees the composed feed either way. The native
         camera extension, where Capturia shows up as a webcam you pick inside the
-        call app, is built and waiting on Apple approval.
+        call app, is built; it ships once Apple developer verification completes
+        so it can be signed.
       </>
     ),
   },
@@ -771,10 +772,10 @@ const FAQS: Array<{ q: string; a: React.ReactNode }> = [
     q: "Does it record my calls?",
     a: (
       <>
-        No. Speech is understood on your Mac and your call audio never leaves it.
-        No bot joins the meeting, nothing is uploaded, nothing is stored. Only
-        the short commands you speak are sent to your own AI provider to decide
-        what to render.
+        No. Speech is transcribed on your Mac and your call audio never leaves it.
+        No bot joins the meeting, nothing is recorded, nothing is stored by
+        Capturia. Your transcribed commands, and the deck you load, go only to
+        your own AI provider to decide what to render.
       </>
     ),
   },
@@ -783,7 +784,7 @@ const FAQS: Array<{ q: string; a: React.ReactNode }> = [
     a: (
       <>
         Capturia itself is free and open source under MIT. You bring your own AI
-        key, stored in the macOS Keychain and never sent to our servers, and you
+        key, encrypted on your Mac with a key held in the macOS Keychain and never sent to our servers, and you
         pay your model provider directly for what you use.
       </>
     ),
@@ -870,7 +871,8 @@ function FinalCta() {
         </h2>
         <p className="mt-6 text-[var(--studio-graphite)] max-w-xl mx-auto text-base sm:text-lg leading-relaxed">
           The fastest way to get it is to talk at the demo for thirty seconds.
-          Then star the repo, and the macOS release will find you.
+          Then watch releases on GitHub and the macOS build will land in your
+          feed the day it ships.
         </p>
 
         <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-3">
@@ -960,7 +962,7 @@ function SiteFooter() {
 
       <div className="border-t border-white/[0.04]">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 h-10 flex items-center justify-between font-mono text-[9px] tracking-[0.24em] uppercase text-[var(--studio-fade)]">
-          <span>Capturia · {new Date().getFullYear()}</span>
+          <span>Capturia · 2026</span>
           <span>Program&nbsp;out · standing&nbsp;by</span>
         </div>
       </div>
