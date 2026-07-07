@@ -1,5 +1,25 @@
 import { describe, expect, it, vi } from "vitest";
-import { TranscriptEmitter, createSerialQueue } from "./transcript-stream";
+import {
+  TranscriptEmitter,
+  createSerialQueue,
+  isLikelyHallucination,
+} from "./transcript-stream";
+
+describe("isLikelyHallucination", () => {
+  it("catches whisper's classic noise fillers regardless of punctuation", () => {
+    expect(isLikelyHallucination("Thank you.")).toBe(true);
+    expect(isLikelyHallucination("THANKS FOR WATCHING!")).toBe(true);
+    expect(isLikelyHallucination("[BLANK_AUDIO]")).toBe(true);
+    expect(isLikelyHallucination("(applause)")).toBe(true);
+    expect(isLikelyHallucination("you")).toBe(true);
+  });
+
+  it("never flags real commands, even ones containing filler phrases", () => {
+    expect(isLikelyHallucination("show a live counter of 500 viewers")).toBe(false);
+    expect(isLikelyHallucination("thank you all for coming, show the poll")).toBe(false);
+    expect(isLikelyHallucination("add a timer")).toBe(false);
+  });
+});
 
 describe("TranscriptEmitter", () => {
   it("delivers events to subscribers and honors unsubscribe", () => {

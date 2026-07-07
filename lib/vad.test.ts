@@ -80,6 +80,25 @@ describe("stepVad", () => {
     expect(step.action).toBe("utterance_end");
   });
 
+  it("keeps speech that STARTED just before the cap (no clipped words)", () => {
+    let state = createVadState(0);
+    // Silence almost to the cap, then the speaker starts a sentence.
+    state = stepVad(state, QUIET, CFG.maxUtteranceMs - 100, CFG).state;
+    state = stepVad(state, LOUD, CFG.maxUtteranceMs - 50, CFG).state;
+    const step = stepVad(state, LOUD, CFG.maxUtteranceMs + 50, CFG);
+    expect(step.action).toBe("utterance_end");
+  });
+
+  it("cap during trailing silence judges by real speech span, not clock now", () => {
+    let state = createVadState(0);
+    // A short noise blip right before the cap, already back in silence.
+    state = stepVad(state, LOUD, CFG.maxUtteranceMs - 300, CFG).state;
+    state = stepVad(state, QUIET, CFG.maxUtteranceMs - 200, CFG).state;
+    expect(state.phase).toBe("trailing_silence");
+    const step = stepVad(state, QUIET, CFG.maxUtteranceMs + 50, CFG);
+    expect(step.action).toBe("discard");
+  });
+
   it("force-close without speech discards", () => {
     const state = createVadState(0);
     const step = stepVad(state, QUIET, CFG.maxUtteranceMs + 200, CFG);

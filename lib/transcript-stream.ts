@@ -55,6 +55,37 @@ export class TranscriptEmitter {
   }
 }
 
+// Whisper's well-known noise hallucinations: on breath, hum, or clipped
+// audio it confidently emits these fillers. They would otherwise reach the
+// agent as commands. Matched as the WHOLE utterance (case/punctuation
+// insensitive), never as a substring, so a real "thank you all for coming,
+// show the poll" is untouched.
+const WHISPER_NOISE_UTTERANCES = new Set([
+  "you",
+  "bye",
+  "thank you",
+  "thanks",
+  "thank you very much",
+  "thanks for watching",
+  "thank you for watching",
+  "please subscribe",
+  "subtitles by the amara org community",
+  "blank audio",
+  "silence",
+  "music",
+  "applause",
+  "inaudible",
+]);
+
+export function isLikelyHallucination(text: string): boolean {
+  const normalized = text
+    .toLowerCase()
+    .replace(/[[\]().,!?'"*_-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized.length === 0 || WHISPER_NOISE_UTTERANCES.has(normalized);
+}
+
 // Serial async queue: tasks run one at a time in enqueue order. A rejected
 // task reports through onError and never breaks the chain, so a failed
 // transcription does not silence every utterance after it.

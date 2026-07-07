@@ -59,13 +59,24 @@ export function stepVad(
   const loud = rms > cfg.silenceRms;
   const next: VadState = { ...state };
 
-  // Safety cap: close the window regardless of phase. Whatever speech it
-  // holds is worth transcribing only if it cleared the minimum.
+  // Safety cap: close the window regardless of phase. Mid-speech, the window
+  // ALWAYS transcribes (clipping words because a sentence straddled the cap
+  // would be worse than an occasional short chunk; the next window catches
+  // the continuation). In trailing silence the utterance is judged by its
+  // real speech span; a window that never heard speech has nothing to keep.
   if (now - state.startedAt > cfg.maxUtteranceMs) {
-    const spoke =
-      state.phase !== "waiting_for_speech" &&
-      now - state.speechStartedAt >= cfg.minSpeechMs;
-    return { state: next, action: spoke ? "utterance_end" : "discard", speaking: false };
+    if (state.phase === "speaking") {
+      return { state: next, action: "utterance_end", speaking: loud };
+    }
+    if (state.phase === "trailing_silence") {
+      const speechDuration = state.silenceStartedAt - state.speechStartedAt;
+      return {
+        state: next,
+        action: speechDuration >= cfg.minSpeechMs ? "utterance_end" : "discard",
+        speaking: false,
+      };
+    }
+    return { state: next, action: "discard", speaking: false };
   }
 
   switch (state.phase) {
