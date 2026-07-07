@@ -22,6 +22,7 @@ const deckGen = require("./deck-generate");
 const { startRuntimeServer } = require("./runtime-server");
 const { createTray } = require("./tray");
 const { maybeOfferMoveToApplications } = require("./first-run");
+const speechHelper = require("./speech-helper");
 const {
   isTrustedSender,
   isAllowedUrl,
@@ -126,6 +127,36 @@ function registerIpc() {
     })
   );
 
+  // On-device streaming speech (macOS 26+ helper). One session at a time;
+  // events flow back over the "speech" channel. Availability is a cheap
+  // sync check the renderer uses to pick its engine.
+  ipcMain.handle("speech:available", guarded(() => speechHelper.isAppleSpeechAvailable()));
+  ipcMain.handle(
+    "speech:start",
+    guarded((event, locale) => {
+      const sender = event.sender;
+      // Tag every forwarded event with its session id: a restart overlaps
+      // the old session's trailing finals/done with the new session's
+      // stream on the same channel, and the renderer must be able to tell
+      // them apart (an untagged stale "done" would clobber the live
+      // session's id and orphan the mic).
+      let sessionId;
+      sessionId = speechHelper.startSpeechSession({
+        locale: typeof locale === "string" ? locale : "en_US",
+        onEvent: (e) => {
+          if (!sender.isDestroyed()) sender.send("speech", { ...e, sessionId });
+        },
+      });
+      return sessionId;
+    })
+  );
+  ipcMain.handle(
+    "speech:stop",
+    guarded((_event, id) => {
+      if (typeof id === "number") speechHelper.stopSpeechSession(id);
+    })
+  );
+
   // Renderer -> main: voice state for the tray (listening on/off, whether the
   // speech engine exists). Fire-and-forget from the renderer's point of view.
   ipcMain.handle(
@@ -214,6 +245,9 @@ function createWindow() {
   const resetRendererState = () => {
     rendererState = { reported: false, listening: false, voiceSupported: false };
     tray?.update();
+    // The page that owned the mic session is gone; without this a reload
+    // mid-session leaves the helper capturing with nothing able to stop it.
+    speechHelper.stopAllSpeechSessions();
   };
   mainWindow.webContents.on("render-process-gone", resetRendererState);
   mainWindow.webContents.on("did-navigate", resetRendererState);
@@ -399,6 +433,7 @@ app.on("before-quit", () => {
 // Clean up the global shortcut and tray so they don't linger past app exit.
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
+  speechHelper.stopAllSpeechSessions();
   tray?.destroy();
   tray = null;
 });

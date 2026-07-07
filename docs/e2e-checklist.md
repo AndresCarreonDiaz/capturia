@@ -46,6 +46,13 @@ or human judgment; run them before a release-worthy merge.
    expect it too. Two quick commands back to back must both land, in order
    (chunks queue behind one whisper job). The feed's energy vignette should
    breathe while you speak. Toggle again to release the mic.
+2a. Streaming voice (macOS 26+): with the helper built (`npm run
+   build:speech`), toggle voice and speak two sentences WITHOUT pausing;
+   overlays for the first sentence land while you speak the second (the
+   status pill shows interim text live). On macOS <= 15 the same toggle
+   uses chunked whisper and needs the pause. First streaming use may show
+   "downloading speech model" once. Mic-device swap mid-session (unplug
+   Bluetooth) must surface an error, not a stuck session.
 2b. Say "give me two minutes on the clock": a CountdownTimer lands (green),
    turns amber at 30s left, red at 15s, pulses, then counts overtime upward
    with a plus. It ticks locally: no agent turns while it runs. "Give me

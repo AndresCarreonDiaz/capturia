@@ -63,3 +63,7 @@ next-env.d.ts
 
 # native spike binaries (built ad hoc via swiftc)
 /native/capturia-speech/speech-spike
+
+# speech helper binary: arch-specific, built by scripts/build-speech-helper.mjs
+# (pack:mac and smoke:speech build it on demand; never commit it)
+/native/capturia-speech/capturia-speech
