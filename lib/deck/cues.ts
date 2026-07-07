@@ -201,12 +201,10 @@ export function toDeckFacts(extract: DeckExtract): DeckFacts {
   };
 }
 
-// Find the best cue for a spoken/typed phrase. Returns the card if a confident
-// alias match is found, else null (so the utterance falls through to the agent).
-export function matchCue(cards: CueCard[], phrase: string): CueCard | null {
-  const p = phrase.toLowerCase();
+function bestCue(cards: CueCard[], p: string, exclude?: ReadonlySet<string>): CueCard | null {
   let best: { card: CueCard; score: number } | null = null;
   for (const card of cards) {
+    if (exclude?.has(card.id)) continue;
     for (const alias of card.aliases) {
       let score = 0;
       if (p.includes(alias)) score = alias.length; // longer alias = stronger
@@ -218,23 +216,51 @@ export function matchCue(cards: CueCard[], phrase: string): CueCard | null {
   return best && best.score >= 4 ? best.card : null;
 }
 
+// Find the best cue for a spoken/typed phrase. Returns the card if a confident
+// alias match is found, else null (so the utterance falls through to the agent).
+export function matchCue(cards: CueCard[], phrase: string): CueCard | null {
+  return bestCue(cards, phrase.toLowerCase());
+}
+
 // Cue matching on INTERIM (volatile) transcript text, so a primed card lands
 // while the sentence is still being spoken instead of waiting for the
-// sentence final. firedId is the card already fired for the CURRENT interim
-// segment (the caller resets it at segment boundaries: a final arrived or the
-// session ended); carrying it stops a growing interim from re-firing the same
-// card on every ~1s update, while a revision that switches the match to a
-// DIFFERENT card still fires, because the newer hypothesis is the better one.
+// sentence final. The state is per speech segment; the caller resets it to
+// null at segment boundaries (a final arrived, the session ended, or the
+// engine reported a segment close).
+//
+// Two rules, both earned by watching real hypotheses fail simpler designs:
+//
+// 1. A card fires only after it wins TWO CONSECUTIVE updates. Growing
+//    hypotheses walk through shorter aliases of other cards on the way to
+//    the intended one ("so the next" matches a 'Next Steps' card one word
+//    before "next quarter plan" resolves), and 1s snapshot engines revise
+//    earlier words ("the number" becoming "the numbers" flips a BigCounter
+//    match to a MetricsPanel one). One update of patience filters both;
+//    the cost is roughly one extra word (Web Speech) or one snapshot
+//    (apple-speech) of latency.
+// 2. Cards already fired this segment are excluded from matching entirely.
+//    An oscillating hypothesis can therefore never re-fire a card, while a
+//    second card genuinely spoken later in the same sentence still fires
+//    once its own confirmation lands.
+export interface InterimCueState {
+  firedIds: string[]; // cards fired this segment, never re-fired within it
+  candidateId: string | null; // last update's winner, awaiting confirmation
+}
+
 export function matchInterimCue(
   cards: CueCard[],
   interim: string,
-  firedId: string | null
-): { fire: CueCard | null; nextFiredId: string | null } {
+  state: InterimCueState | null
+): { fire: CueCard | null; state: InterimCueState } {
+  const prev = state ?? { firedIds: [], candidateId: null };
   const text = interim.trim();
-  if (!text) return { fire: null, nextFiredId: firedId };
-  // Same guard as the final path: one lone word is not a command yet.
-  if (text.split(/\s+/).length < 2) return { fire: null, nextFiredId: firedId };
-  const card = matchCue(cards, text);
-  if (!card || card.id === firedId) return { fire: null, nextFiredId: firedId };
-  return { fire: card, nextFiredId: card.id };
+  // Same guard as the final path: one lone word is not a command yet. An
+  // empty or too-short update leaves the segment state untouched.
+  if (!text || text.split(/\s+/).length < 2) return { fire: null, state: prev };
+  const card = bestCue(cards, text.toLowerCase(), new Set(prev.firedIds));
+  if (!card) return { fire: null, state: { firedIds: prev.firedIds, candidateId: null } };
+  if (card.id !== prev.candidateId) {
+    return { fire: null, state: { firedIds: prev.firedIds, candidateId: card.id } };
+  }
+  return { fire: card, state: { firedIds: [...prev.firedIds, card.id], candidateId: null } };
 }

@@ -16,13 +16,18 @@ import { useAppleSpeechCapture } from "./useAppleSpeechCapture";
 // onInterimResult receives the volatile current-segment hypothesis from the
 // engines that stream one (apple-speech, Web Speech); chunked whisper has no
 // interims. The studio uses it for deterministic cue matching mid-sentence.
+// onSegmentEnd fires at every true segment boundary the engine can see,
+// including ones that produce no final (filtered hallucinations, recognizer
+// cycle restarts, session error/done), so interim dedup state never leaks
+// across sentences.
 export function useStudioVoice(
   onFinalResult: (text: string) => void,
-  onInterimResult?: (text: string) => void
+  onInterimResult?: (text: string) => void,
+  onSegmentEnd?: () => void
 ): VoiceCaptureState {
-  const web = useVoiceCapture(onFinalResult, onInterimResult);
+  const web = useVoiceCapture(onFinalResult, onInterimResult, onSegmentEnd);
   const whisper = useDesktopVoiceCapture(onFinalResult);
-  const apple = useAppleSpeechCapture(onFinalResult, onInterimResult);
+  const apple = useAppleSpeechCapture(onFinalResult, onInterimResult, onSegmentEnd);
 
   const isDesktop =
     typeof window !== "undefined" && window.capturia?.isDesktop === true;

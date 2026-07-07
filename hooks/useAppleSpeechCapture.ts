@@ -20,7 +20,8 @@ interface SpeechEventPayload {
 
 export function useAppleSpeechCapture(
   onFinalResult: (text: string) => void,
-  onInterimResult?: (text: string) => void
+  onInterimResult?: (text: string) => void,
+  onSegmentEnd?: () => void
 ): VoiceCaptureState {
   const [isListening, setIsListening] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState("");
@@ -39,9 +40,11 @@ export function useAppleSpeechCapture(
   const startingRef = useRef(false);
   const onFinalRef = useRef(onFinalResult);
   const onInterimRef = useRef(onInterimResult);
+  const onSegmentEndRef = useRef(onSegmentEnd);
   useEffect(() => {
     onFinalRef.current = onFinalResult;
     onInterimRef.current = onInterimResult;
+    onSegmentEndRef.current = onSegmentEnd;
   });
 
   useEffect(() => {
@@ -86,8 +89,12 @@ export function useAppleSpeechCapture(
             setInterimTranscript(event.text);
             setLastResultAt(performance.now());
             // Volatile hypothesis for the current segment; deterministic cue
-            // matching fires primed cards from it mid-sentence (M9).
-            if (event.text) onInterimRef.current?.(event.text);
+            // matching fires primed cards from it mid-sentence (M9). The
+            // hallucination gate mirrors the final path below: a silent-room
+            // "Thank you." must not fire a closing-slide card.
+            if (event.text && !isLikelyHallucination(event.text)) {
+              onInterimRef.current?.(event.text);
+            }
           }
           break;
         case "final": {
@@ -97,6 +104,10 @@ export function useAppleSpeechCapture(
             setSpeechStatus(listeningRef.current ? "sent, still listening" : "sent ✓");
             onFinalRef.current(text);
           }
+          // Every final closes the interim segment, INCLUDING filtered and
+          // empty ones the callback above never sees; consumers otherwise
+          // carry a dead segment's dedup state into the next sentence.
+          onSegmentEndRef.current?.();
           break;
         }
         case "error": {
@@ -115,6 +126,7 @@ export function useAppleSpeechCapture(
           const deadId = sessionIdRef.current;
           sessionIdRef.current = null;
           if (deadId !== null) speech?.stop(deadId).catch(() => {});
+          onSegmentEndRef.current?.();
           break;
         }
         case "done":
@@ -128,6 +140,7 @@ export function useAppleSpeechCapture(
           }
           if (!startingRef.current) setSpeechStatus("idle");
           sessionIdRef.current = null;
+          onSegmentEndRef.current?.();
           break;
       }
     });

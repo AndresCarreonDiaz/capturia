@@ -51,7 +51,8 @@ export interface VoiceCaptureState {
 
 export function useVoiceCapture(
   onFinalResult: (text: string) => void,
-  onInterimResult?: (text: string) => void
+  onInterimResult?: (text: string) => void,
+  onSegmentEnd?: () => void
 ): VoiceCaptureState {
   const [isListening, setIsListening] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState("");
@@ -64,9 +65,11 @@ export function useVoiceCapture(
   const isListeningRef = useRef(false);
   const onFinalRef = useRef(onFinalResult);
   const onInterimRef = useRef(onInterimResult);
+  const onSegmentEndRef = useRef(onSegmentEnd);
   useEffect(() => {
     onFinalRef.current = onFinalResult;
     onInterimRef.current = onInterimResult;
+    onSegmentEndRef.current = onSegmentEnd;
   });
 
   useEffect(() => {
@@ -138,6 +141,10 @@ export function useVoiceCapture(
     };
 
     recognition.onend = () => {
+      // A recognizer cycle is a segment boundary whether or not it produced
+      // a final: interims never survive a restart, so consumers must not
+      // carry this cycle's cue-dedup state into the next one.
+      onSegmentEndRef.current?.();
       if (isListeningRef.current) {
         // 600ms pause before restarting. Stops the crazy rapid cycling and
         // gives the status text time to be readable between attempts

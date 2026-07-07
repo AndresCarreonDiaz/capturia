@@ -55,7 +55,7 @@ import { sanitizeSurfaceTree } from "@/lib/a2ui-validate";
 import { coerceArrayArg, coerceRecordArg, toolArgText } from "@/lib/extract-json";
 import { oversizedToolArg } from "@/lib/limits";
 import { isPlaceableOverlayType } from "@/lib/catalog";
-import { matchCue, matchInterimCue } from "@/lib/deck/cues";
+import { matchCue, matchInterimCue, type InterimCueState } from "@/lib/deck/cues";
 import type { CueCard, DeckFacts } from "@/lib/deck/types";
 import type { OverlaySpec, OverlayPosition } from "@/lib/types";
 
@@ -291,16 +291,18 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
   // speaker most recently wanted; anything older is stale narration.
   const pendingVoiceRef = useRef<string | null>(null);
 
-  // Card already fired from INTERIM text for the current speech segment; a
-  // final (or session end) closes the segment. Lives in a ref because it
-  // must be read and written inside speech event callbacks.
-  const interimCueIdRef = useRef<string | null>(null);
+  // Interim cue-matching state for the CURRENT speech segment (cards already
+  // fired, candidate awaiting confirmation). The engines close segments via
+  // onSegmentEnd; a ref because it lives inside speech event callbacks.
+  const interimCueRef = useRef<InterimCueState | null>(null);
 
   const { isListening, interimTranscript, speechStatus, lastError, lastResultAt, isSupported, startListening, stopListening } =
     useStudioVoice(
       (text) => {
-        // The final ends the interim segment regardless of what it says.
-        interimCueIdRef.current = null;
+        // Capture before closing the segment: a card fired mid-sentence
+        // means this utterance was already answered deterministically.
+        const firedMidSentence = (interimCueRef.current?.firedIds.length ?? 0) > 0;
+        interimCueRef.current = null;
         if (text.split(/\s+/).length < 2) return;
         setLastSent(text);
         // Deterministic, offline cue match first: "show my revenue slide" fires a
@@ -312,6 +314,11 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
           applyCue(card);
           return;
         }
+        // A final the engine rescored ("roadmap" -> "road map") can miss an
+        // alias its own interims matched moments ago; sending it to the
+        // agent would author a second, competing response for the same
+        // sentence. One utterance, one response.
+        if (firedMidSentence) return;
         sendMessage(`[VOICE] ${text}`)
           .then((sent) => {
             if (!sent) pendingVoiceRef.current = text;
@@ -319,25 +326,23 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
           .catch(() => {});
       },
       (interim) => {
-        // Mid-sentence: fire a primed cue card the moment the volatile
-        // hypothesis contains one of its aliases, once per segment. This is
-        // the M9 payoff: PDF-primed UI lands while the speaker is still
-        // talking, no model call, no waiting for the sentence final.
-        const { fire, nextFiredId } = matchInterimCue(
-          cuesRef.current,
-          interim,
-          interimCueIdRef.current
-        );
-        interimCueIdRef.current = nextFiredId;
+        // Mid-sentence: fire a primed cue card once the volatile hypothesis
+        // confirms one of its aliases (two consecutive wins; see
+        // matchInterimCue). This is the M9 payoff: PDF-primed UI lands while
+        // the speaker is still talking, no model call, no waiting for the
+        // sentence final.
+        const { fire, state } = matchInterimCue(cuesRef.current, interim, interimCueRef.current);
+        interimCueRef.current = state;
         if (fire) applyCue(fire);
+      },
+      () => {
+        // Segment boundary with no final attached (filtered hallucination,
+        // recognizer cycle restart, session error/done): drop the dedup
+        // state so the next sentence starts clean. Boundaries WITH a final
+        // were already reset above; this second write is a no-op then.
+        interimCueRef.current = null;
       }
     );
-
-  // A session that ends without a final (error, device loss) must not carry
-  // its interim-fired card into the next session's dedup state.
-  useEffect(() => {
-    if (!isListening) interimCueIdRef.current = null;
-  }, [isListening]);
 
   // Flush the parked voice command once the agent run settles.
   useEffect(() => {
