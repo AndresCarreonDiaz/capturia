@@ -58,14 +58,22 @@ check("second host is rejected", wrongHost.status === 403, JSON.stringify(wrongH
 const vote1 = await api("POST", { type: "vote", viewerId: "viewer-aaaa0001", action: "yes" });
 check("first vote lands", vote1.status === 200 && vote1.body?.counts?.yes === 1, JSON.stringify(vote1));
 
+// Wall-clock aware: against a remote deploy, a slow round trip can outlast
+// the 750ms window, making a 200 legitimate. Only judge when the second
+// request landed inside the window.
+const fastStart = Date.now();
 const fast = await api("POST", { type: "vote", viewerId: "viewer-aaaa0001", action: "no" });
-check("instant re-vote is rate limited", fast.status === 429, JSON.stringify(fast));
+if (Date.now() - fastStart < 700) {
+  check("instant re-vote is rate limited", fast.status === 429, JSON.stringify(fast));
+} else {
+  console.log("SKIP  instant re-vote is rate limited (round trip exceeded the window)");
+}
 
-await new Promise((r) => setTimeout(r, 900));
+await new Promise((r) => setTimeout(r, 1500));
 const dup = await api("POST", { type: "vote", viewerId: "viewer-aaaa0001", action: "yes" });
 check("same-option re-vote conflicts", dup.status === 409, JSON.stringify(dup));
 
-await new Promise((r) => setTimeout(r, 900));
+await new Promise((r) => setTimeout(r, 1500));
 const sw = await api("POST", { type: "vote", viewerId: "viewer-aaaa0001", action: "no" });
 check(
   "switching moves the vote",
@@ -97,6 +105,34 @@ check(
 
 const state = await api("GET");
 check("GET snapshot matches", state.status === 200 && state.body?.round === 2, JSON.stringify(state));
+
+// Watch mode: both backends serve SSE (in-process push, or the Redis polling
+// bridge); the first data: frame must be the current snapshot.
+try {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  const res = await fetch(`${base}/api/vote/${room}?watch=1`, { signal: controller.signal });
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let snapshot = null;
+  while (snapshot === null) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const match = buffer.match(/data: (.+)\n\n/);
+    if (match) snapshot = JSON.parse(match[1]);
+  }
+  clearTimeout(timer);
+  controller.abort();
+  check(
+    "watch stream sends the live snapshot",
+    res.headers.get("content-type")?.includes("text/event-stream") && snapshot?.round === 2,
+    JSON.stringify(snapshot)
+  );
+} catch (err) {
+  check("watch stream sends the live snapshot", false, String(err));
+}
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

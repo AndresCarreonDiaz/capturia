@@ -79,39 +79,58 @@ export async function GET(request: Request, { params }: Params): Promise<Respons
 
   // Shared store without push: poll it server-side and emit only changes.
   // The stream deliberately ends after BRIDGE_MAX_MS (serverless functions
-  // have time budgets); EventSource reconnects and resumes.
+  // have time budgets); EventSource reconnects and resumes. cleanup is
+  // installed BEFORE the first await: ReadableStream delivers cancel() even
+  // while start() is still pending, and a viewer who scans the QR and
+  // closes the tab within the first round trip must not leave the interval
+  // polling the store for the full deadline.
   const stream = new ReadableStream({
     async start(controller) {
       let lastPayload = "";
       let closed = false;
-      const send = (e: VoteEvent) => {
-        const payload = JSON.stringify(e);
-        if (payload === lastPayload) return;
-        lastPayload = payload;
-        controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
-      };
-      const tick = async () => {
-        if (closed) return;
-        try {
-          send(await backend.getRoomState(room));
-        } catch {
-          // Transient store error: keep the stream; next tick retries.
-        }
-      };
-      await tick();
-      const interval = setInterval(tick, BRIDGE_POLL_MS);
-      const deadline = setTimeout(() => cleanup(), BRIDGE_MAX_MS);
+      let interval: ReturnType<typeof setInterval> | null = null;
+      let deadline: ReturnType<typeof setTimeout> | null = null;
       cleanup = () => {
         if (closed) return;
         closed = true;
-        clearInterval(interval);
-        clearTimeout(deadline);
+        if (interval) clearInterval(interval);
+        if (deadline) clearTimeout(deadline);
         try {
           controller.close();
         } catch {
           // already closed by the client
         }
       };
+      const send = (e: VoteEvent) => {
+        const payload = JSON.stringify(e);
+        if (payload === lastPayload) return;
+        lastPayload = payload;
+        try {
+          controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+        } catch {
+          // Enqueue onto a closed stream means the client is gone.
+          cleanup();
+        }
+      };
+      // Overlap guard: a store round trip slower than the poll period must
+      // not stack ticks or emit stale snapshots out of order.
+      let inFlight = false;
+      const tick = async () => {
+        if (closed || inFlight) return;
+        inFlight = true;
+        try {
+          const state = await backend.getRoomState(room);
+          if (!closed) send(state);
+        } catch {
+          // Transient store error: keep the stream; next tick retries.
+        } finally {
+          inFlight = false;
+        }
+      };
+      await tick();
+      if (closed) return;
+      interval = setInterval(tick, BRIDGE_POLL_MS);
+      deadline = setTimeout(() => cleanup(), BRIDGE_MAX_MS);
     },
     cancel() {
       cleanup();

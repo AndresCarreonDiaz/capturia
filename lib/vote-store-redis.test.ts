@@ -43,6 +43,17 @@ describe("publishPoll (redis)", () => {
     if (!res.ok) expect(res.status).toBe(403);
   });
 
+  it("maps the 503 room-cap reply", async () => {
+    const { run } = runnerReturning(["503"]);
+    const store = createRedisVoteStore(run);
+    const res = await store.publishPoll(ROOM, HOST, POLL);
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.status).toBe(503);
+      expect(res.error).toBe("room limit reached");
+    }
+  });
+
   it("builds the state event from the script reply and strips unknown poll keys", async () => {
     const { run, calls } = runnerReturning([
       "ok",
@@ -57,10 +68,11 @@ describe("publishPoll (redis)", () => {
       expect(res.event.counts).toEqual({ "opt-a": 3, "opt-b": 1 });
       expect((res.event.poll as unknown as Record<string, unknown>).sneaky).toBeUndefined();
     }
-    // EVAL with 3 keys, hostKey and the option-set key among ARGV.
+    // EVAL with 4 keys (room hashes + rooms index), hostKey among ARGV.
     expect(calls[0][0]).toBe("EVAL");
-    expect(calls[0][2]).toBe(3);
+    expect(calls[0][2]).toBe(4);
     expect(calls[0]).toContain(HOST);
+    expect(calls[0]).toContain("vote:rooms");
   });
 });
 
@@ -118,23 +130,23 @@ describe("castVote (redis)", () => {
 });
 
 describe("getRoomState (redis)", () => {
-  it("assembles state from the meta and counts hashes", async () => {
+  it("assembles state from the atomic snapshot script", async () => {
     const calls: (string | number)[][] = [];
     const store = createRedisVoteStore(async (command) => {
       calls.push(command);
-      if (command[1] === `vote:${ROOM}:meta`) {
-        return ["hostKey", HOST, "round", "3", "poll", JSON.stringify(POLL)];
-      }
-      return ["opt-a", "5", "opt-b", "2"];
+      return ["3", JSON.stringify(POLL), JSON.stringify(["opt-a", "5", "opt-b", "2"])];
     });
     const state = await store.getRoomState(ROOM);
     expect(state.round).toBe(3);
     expect(state.poll?.options).toHaveLength(2);
     expect(state.counts).toEqual({ "opt-a": 5, "opt-b": 2 });
+    // One EVAL, no torn two-command read.
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBe("EVAL");
   });
 
   it("an unknown room reads as the empty state", async () => {
-    const store = createRedisVoteStore(async () => []);
+    const store = createRedisVoteStore(async () => ["0", "", "{}"]);
     const state = await store.getRoomState(ROOM);
     expect(state).toEqual({ type: "state", round: 0, poll: null, counts: {} });
   });
