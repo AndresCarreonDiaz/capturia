@@ -16,10 +16,11 @@ import { useAppleSpeechCapture } from "./useAppleSpeechCapture";
 // onInterimResult receives the volatile current-segment hypothesis from the
 // engines that stream one (apple-speech, Web Speech); chunked whisper has no
 // interims. The studio uses it for deterministic cue matching mid-sentence.
-// onSegmentEnd fires at every true segment boundary the engine can see,
-// including ones that produce no final (filtered hallucinations, recognizer
-// cycle restarts, session error/done), so interim dedup state never leaks
-// across sentences.
+// onSegmentEnd covers segment boundaries that produce NO final (filtered
+// hallucinations, recognizer cycle restarts, session error/done). Boundaries
+// WITH a final only guarantee onFinalResult (on web a mid-cycle final fires
+// no onSegmentEnd), so consumers must treat BOTH callbacks as segment
+// closers or interim dedup state will leak across sentences.
 export function useStudioVoice(
   onFinalResult: (text: string) => void,
   onInterimResult?: (text: string) => void,

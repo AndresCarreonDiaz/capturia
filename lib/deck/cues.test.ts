@@ -1,9 +1,45 @@
 import { describe, expect, it } from "vitest";
 import { buildCues, matchCue, matchInterimCue, type InterimCueState } from "./cues";
-import type { CueCard, DeckExtract } from "./types";
+import type { CueCard, DeckExtract, DeckSlide } from "./types";
 
 function card(id: string, aliases: string[]): CueCard {
   return { id, label: id, aliases, slideIndex: 0, specs: [], adapted: false };
+}
+
+function slide(partial: Partial<DeckSlide> & { index: number; title: string }): DeckSlide {
+  return { text: "", bullets: [], numbers: [], names: [], ...partial };
+}
+
+function deck(slides: DeckSlide[]): DeckExtract {
+  return { fileName: "deck.pdf", source: "pdf", slideCount: slides.length, slides };
+}
+
+// Two numeric slides the way real pitch decks have them: buildCues gives both
+// MetricsPanels the same generic aliases ("the numbers", "metrics", ...), the
+// exact shape that makes one spoken mention able to chain-fire both cards.
+function numericCards(): CueCard[] {
+  const cards = buildCues(
+    deck([
+      slide({
+        index: 0,
+        title: "Q3 Results",
+        numbers: [
+          { label: "Revenue", value: "$1.8M" },
+          { label: "Margin", value: "47%" },
+        ],
+      }),
+      slide({
+        index: 1,
+        title: "Unit Economics",
+        numbers: [
+          { label: "CAC", value: "$40" },
+          { label: "LTV", value: "$400" },
+        ],
+      }),
+    ])
+  );
+  expect(cards).toHaveLength(2);
+  return cards;
 }
 
 // Fold a realistic interim sequence through the matcher, returning the fired
@@ -37,6 +73,31 @@ describe("matchCue", () => {
   it("returns null when nothing specific matches", () => {
     expect(matchCue([NEXT_STEPS, NEXT_QUARTER], "so as I was saying earlier")).toBeNull();
   });
+
+  it("excludes fired cards so one cannot shadow a second cue at the final", () => {
+    expect(matchCue([BIG_COUNTER, METRICS], "revenue and then the metrics", ["cue-3"])?.id).toBe("cue-4");
+  });
+
+  it("does not replay consumed evidence into a sibling card sharing the alias", () => {
+    // The interim path fired cards[0] off "the numbers"; the sentence final
+    // still contains that same mention and nothing else. The sibling numeric
+    // card must not ride it. Proven failing on the previous design.
+    const cards = numericCards();
+    expect(matchCue(cards, "let's look at the numbers for this quarter", [cards[0].id])).toBeNull();
+  });
+
+  it("consumption widens to the fired card's longest alias present in the final", () => {
+    // The interim path fired the quarter card off "quarter" alone; by the
+    // final the sentence grew the stronger "next quarter plan", and the
+    // steps card must not ride the leftover "plan" and "next" title words.
+    expect(matchCue([NEXT_STEPS, NEXT_QUARTER], "the next quarter plan is simple", ["cue-2"])).toBeNull();
+  });
+
+  it("a second cue grounded in fresh text still fires at the final", () => {
+    expect(
+      matchCue([BIG_COUNTER, METRICS], "show the numbers here and the revenue counter", ["cue-4"])?.id
+    ).toBe("cue-3");
+  });
 });
 
 describe("matchInterimCue", () => {
@@ -51,9 +112,25 @@ describe("matchInterimCue", () => {
     expect(state?.candidateId).toBe("cue-3");
   });
 
+  it("short title-word aliases never fire mid-sentence, even when they persist", () => {
+    // "plan" (4 chars) heads a sentence that ends up about next steps; the
+    // interim floor keeps it from firing the quarter-plan card while the
+    // hypothesis is still resolving. Proven failing on the previous design.
+    const { fired } = runInterims(
+      [NEXT_STEPS, NEXT_QUARTER],
+      [
+        "let's plan",
+        "let's plan out",
+        "let's plan out the",
+        "let's plan out the next",
+        "let's plan out the next steps",
+        "let's plan out the next steps together",
+      ]
+    );
+    expect(fired).toEqual(["cue-1"]);
+  });
+
   it("word-by-word growth through a shared shorter alias fires only the intended card", () => {
-    // "next" would match the Next Steps card one word early; the
-    // confirmation rule must let the hypothesis resolve first.
     const { fired } = runInterims(
       [NEXT_STEPS, NEXT_QUARTER],
       ["so the next", "so the next quarter", "so the next quarter plan", "so the next quarter plan is"]
@@ -62,8 +139,6 @@ describe("matchInterimCue", () => {
   });
 
   it("a snapshot revision flipping a substring pair fires only the revised winner", () => {
-    // apple-speech style: 1s snapshots where "the number" is rescored to
-    // "the numbers" (BigCounter alias is a substring of the MetricsPanel one).
     const { fired } = runInterims(
       [BIG_COUNTER, METRICS],
       ["show the number here", "show the numbers here we", "show the numbers here we can"]
@@ -79,7 +154,72 @@ describe("matchInterimCue", () => {
     expect(fired).toEqual([]);
   });
 
-  it("never re-fires a card within the segment, but a second card can still fire once", () => {
+  it("consumed evidence cannot chain-fire another card sharing the alias", () => {
+    // One mention of "the numbers" must fire exactly one card no matter how
+    // long the sentence keeps growing. Proven failing on the previous
+    // design (both MetricsPanels fired and stacked).
+    const cards = numericCards();
+    const { fired } = runInterims(cards, [
+      "let's look at the numbers",
+      "let's look at the numbers for",
+      "let's look at the numbers for this",
+      "let's look at the numbers for this quarter",
+    ]);
+    expect(fired).toEqual([cards[0].id]);
+  });
+
+  it("a one-character rescore around consumed evidence cannot double-fire a sibling", () => {
+    // apple-speech and Web Speech both revise earlier words; here the engine
+    // inserts an apostrophe after the fire. An offset-based consumption
+    // design shifted the consumed mention past its stored boundary and fired
+    // the second MetricsPanel; re-anchoring by alias text must not.
+    const cards = numericCards();
+    const { fired } = runInterims(cards, [
+      "lets look at the numbers",
+      "lets look at the numbers for",
+      "let's look at the numbers for",
+      "let's look at the numbers for this",
+    ]);
+    expect(fired).toEqual([cards[0].id]);
+  });
+
+  it("a revision inserting words before consumed evidence cannot double-fire a sibling", () => {
+    const cards = numericCards();
+    const { fired } = runInterims(cards, [
+      "look at the numbers",
+      "look at the numbers for",
+      "well look at the numbers for this quarter",
+      "well look at the numbers for this quarter and",
+    ]);
+    expect(fired).toEqual([cards[0].id]);
+  });
+
+  it("a genuinely repeated mention is fresh evidence and can fire the sibling card", () => {
+    // Saying the shared alias a second time is a real second cue: the first
+    // occurrence stays consumed, the new one drives the next numeric card.
+    const cards = numericCards();
+    const { fired } = runInterims(cards, [
+      "the numbers here",
+      "the numbers here and",
+      "the numbers here and again the numbers",
+      "the numbers here and again the numbers over there",
+    ]);
+    expect(fired).toEqual([cards[0].id, cards[1].id]);
+  });
+
+  it("the final transcript cannot chain-fire a sibling from evidence the interim path consumed", () => {
+    // End to end the way the studio wires it: interims fire cards[0], then
+    // the sentence final goes through matchCue with the segment's fired ids.
+    const cards = numericCards();
+    const { fired, state } = runInterims(cards, [
+      "let's look at the numbers",
+      "let's look at the numbers for",
+    ]);
+    expect(fired).toEqual([cards[0].id]);
+    expect(matchCue(cards, "let's look at the numbers for this quarter", state?.firedIds)).toBeNull();
+  });
+
+  it("a second cue spoken later in the sentence still fires once", () => {
     const { fired } = runInterims(
       [BIG_COUNTER, METRICS],
       [
@@ -122,31 +262,21 @@ describe("matchInterimCue", () => {
     expect(fired).toEqual(["cue-3"]);
   });
 
-  it("behaves the same over real buildCues alias sets", () => {
-    const extract: DeckExtract = {
-      fileName: "deck.pdf",
-      source: "pdf",
-      slideCount: 2,
-      slides: [
-        {
+  it("behaves the same over real buildCues alias sets for steps slides", () => {
+    const cards = buildCues(
+      deck([
+        slide({
           index: 0,
           title: "Next Steps",
-          text: "",
           bullets: ["Ship the beta", "Collect feedback", "Iterate fast"],
-          numbers: [],
-          names: [],
-        },
-        {
+        }),
+        slide({
           index: 1,
           title: "Next Quarter Plan",
-          text: "",
           bullets: ["Grow the team", "Launch pricing", "Expand to teams"],
-          numbers: [],
-          names: [],
-        },
-      ],
-    };
-    const cards = buildCues(extract);
+        }),
+      ])
+    );
     expect(cards).toHaveLength(2);
     const { fired } = runInterims(cards, [
       "so the next",

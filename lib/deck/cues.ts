@@ -201,51 +201,117 @@ export function toDeckFacts(extract: DeckExtract): DeckFacts {
   };
 }
 
-function bestCue(cards: CueCard[], p: string, exclude?: ReadonlySet<string>): CueCard | null {
-  let best: { card: CueCard; score: number } | null = null;
+interface CueMatch {
+  card: CueCard;
+  alias: string;
+  score: number;
+}
+
+type Span = readonly [start: number, end: number];
+
+function overlapsAny(start: number, end: number, spans: readonly Span[]): boolean {
+  return spans.some(([s, e]) => start < e && s < end);
+}
+
+// Evidence already spent by fired cards, RE-DERIVED against the current text:
+// each fired card consumes the first occurrence of its longest alias present.
+// Deriving spans fresh every update (instead of storing offsets) keeps
+// consumption stable while engines rescore words, insert apostrophes, or
+// split compounds, and it widens naturally as the hypothesis grows through a
+// longer alias of the fired card ("quarter" fired, "next quarter plan" is
+// what ends up consumed). A fired mention the engine rescored away simply
+// consumes nothing; the fired card itself stays excluded regardless.
+function consumedSpans(cards: CueCard[], p: string, fired: ReadonlySet<string>): Span[] {
+  const spans: Span[] = [];
   for (const card of cards) {
-    if (exclude?.has(card.id)) continue;
+    if (!fired.has(card.id)) continue;
+    let best: Span | null = null;
+    let bestLen = 0;
     for (const alias of card.aliases) {
-      let score = 0;
-      if (p.includes(alias)) score = alias.length; // longer alias = stronger
-      if (score > 0 && (!best || score > best.score)) best = { card, score };
+      if (alias.length <= bestLen) continue;
+      const idx = p.indexOf(alias);
+      if (idx === -1) continue;
+      best = [idx, idx + alias.length];
+      bestLen = alias.length;
     }
+    if (best) spans.push(best);
   }
+  return spans;
+}
+
+function bestCueMatch(
+  cards: CueCard[],
+  p: string,
+  opts?: { fired?: ReadonlySet<string>; minScore?: number }
+): CueMatch | null {
+  const fired = opts?.fired;
   // Require a reasonably specific match (>= 4 chars) so single short words
   // don't hijack normal speech.
-  return best && best.score >= 4 ? best.card : null;
+  const minScore = opts?.minScore ?? 4;
+  const spans = fired?.size ? consumedSpans(cards, p, fired) : [];
+  let best: CueMatch | null = null;
+  for (const card of cards) {
+    if (fired?.has(card.id)) continue;
+    for (const alias of card.aliases) {
+      if (alias.length < minScore) continue;
+      // Latest occurrence that is not consumed evidence = newest usable
+      // evidence; step left past occurrences a fired card already spent.
+      let idx = p.lastIndexOf(alias);
+      while (idx !== -1 && overlapsAny(idx, idx + alias.length, spans)) {
+        idx = idx > 0 ? p.lastIndexOf(alias, idx - 1) : -1;
+      }
+      if (idx === -1) continue;
+      const score = alias.length; // longer alias = stronger
+      if (!best || score > best.score) best = { card, alias, score };
+    }
+  }
+  return best;
 }
 
 // Find the best cue for a spoken/typed phrase. Returns the card if a confident
 // alias match is found, else null (so the utterance falls through to the agent).
-export function matchCue(cards: CueCard[], phrase: string): CueCard | null {
-  return bestCue(cards, phrase.toLowerCase());
+// firedIds carries the segment's already-fired cards into the final match:
+// they are excluded outright AND the evidence they consumed cannot be
+// replayed, so only a cue grounded in fresh text can fire at the final.
+export function matchCue(
+  cards: CueCard[],
+  phrase: string,
+  firedIds?: readonly string[]
+): CueCard | null {
+  const fired = firedIds?.length ? new Set(firedIds) : undefined;
+  return bestCueMatch(cards, phrase.toLowerCase(), { fired })?.card ?? null;
 }
 
 // Cue matching on INTERIM (volatile) transcript text, so a primed card lands
 // while the sentence is still being spoken instead of waiting for the
-// sentence final. The state is per speech segment; the caller resets it to
-// null at segment boundaries (a final arrived, the session ended, or the
-// engine reported a segment close).
+// sentence final. The state is per speech segment; the caller resets it at
+// segment boundaries.
 //
-// Two rules, both earned by watching real hypotheses fail simpler designs:
+// The interim path is deliberately higher-precision than the final path;
+// every rule below was earned by watching real hypotheses break a simpler
+// design:
 //
-// 1. A card fires only after it wins TWO CONSECUTIVE updates. Growing
-//    hypotheses walk through shorter aliases of other cards on the way to
-//    the intended one ("so the next" matches a 'Next Steps' card one word
-//    before "next quarter plan" resolves), and 1s snapshot engines revise
-//    earlier words ("the number" becoming "the numbers" flips a BigCounter
-//    match to a MetricsPanel one). One update of patience filters both;
-//    the cost is roughly one extra word (Web Speech) or one snapshot
-//    (apple-speech) of latency.
-// 2. Cards already fired this segment are excluded from matching entirely.
-//    An oscillating hypothesis can therefore never re-fire a card, while a
-//    second card genuinely spoken later in the same sentence still fires
-//    once its own confirmation lands.
+// 1. Stronger aliases only (>= 6 chars). buildCues sprays 4-5 char single
+//    title words ("plan", "next", "steps") across cards; mid-hypothesis
+//    those routinely belong to a sentence heading somewhere else. They
+//    still fire via the final path once the sentence is complete.
+// 2. A card fires only after winning TWO CONSECUTIVE updates: growing
+//    hypotheses walk through other cards' aliases and 1s snapshot engines
+//    revise earlier words. Cost: about one word (Web Speech) or one
+//    snapshot (apple-speech) of latency.
+// 3. Fired cards are excluded outright for the rest of the segment: an
+//    oscillating hypothesis can never re-fire one.
+// 4. Fired EVIDENCE is consumed: a fired card's strongest alias span in the
+//    current text is off-limits to other cards (see consumedSpans), so one
+//    spoken "the numbers" cannot chain-fire every numeric slide sharing
+//    that alias, no matter how the hypothesis is revised around it. The
+//    final path applies the same rule through matchCue(cards, text, fired).
 export interface InterimCueState {
   firedIds: string[]; // cards fired this segment, never re-fired within it
   candidateId: string | null; // last update's winner, awaiting confirmation
 }
+
+const INTERIM_MIN_SCORE = 6;
 
 export function matchInterimCue(
   cards: CueCard[],
@@ -257,10 +323,16 @@ export function matchInterimCue(
   // Same guard as the final path: one lone word is not a command yet. An
   // empty or too-short update leaves the segment state untouched.
   if (!text || text.split(/\s+/).length < 2) return { fire: null, state: prev };
-  const card = bestCue(cards, text.toLowerCase(), new Set(prev.firedIds));
-  if (!card) return { fire: null, state: { firedIds: prev.firedIds, candidateId: null } };
-  if (card.id !== prev.candidateId) {
-    return { fire: null, state: { firedIds: prev.firedIds, candidateId: card.id } };
+  const m = bestCueMatch(cards, text.toLowerCase(), {
+    fired: new Set(prev.firedIds),
+    minScore: INTERIM_MIN_SCORE,
+  });
+  if (!m) return { fire: null, state: { ...prev, candidateId: null } };
+  if (m.card.id !== prev.candidateId) {
+    return { fire: null, state: { ...prev, candidateId: m.card.id } };
   }
-  return { fire: card, state: { firedIds: [...prev.firedIds, card.id], candidateId: null } };
+  return {
+    fire: m.card,
+    state: { firedIds: [...prev.firedIds, m.card.id], candidateId: null },
+  };
 }

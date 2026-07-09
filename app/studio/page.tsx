@@ -296,20 +296,27 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
   // onSegmentEnd; a ref because it lives inside speech event callbacks.
   const interimCueRef = useRef<InterimCueState | null>(null);
 
+  // Cue ids are per-deck (cue-<slideIndex>), so a deck swap mid-segment would
+  // let a stale fired list poison the new deck's identical ids and silently
+  // swallow the sentence final. New deck, clean segment.
+  useEffect(() => {
+    interimCueRef.current = null;
+  }, [cues]);
+
   const { isListening, interimTranscript, speechStatus, lastError, lastResultAt, isSupported, startListening, stopListening } =
     useStudioVoice(
       (text) => {
-        // Capture before closing the segment: a card fired mid-sentence
-        // means this utterance was already answered deterministically.
-        const firedMidSentence = (interimCueRef.current?.firedIds.length ?? 0) > 0;
+        // Capture before closing the segment: cards the interim path already
+        // fired were answered deterministically mid-sentence.
+        const fired = interimCueRef.current?.firedIds ?? [];
         interimCueRef.current = null;
         if (text.split(/\s+/).length < 2) return;
         setLastSent(text);
         // Deterministic, offline cue match first: "show my revenue slide" fires a
         // pre-built card without a model call. Falls through to the agent on miss.
-        // A card the interim path already fired lands here too and is swallowed
-        // the same way (applyCue merges by id, so the re-apply is a no-op).
-        const card = matchCue(cuesRef.current, text);
+        // Already-fired cards are excluded and the evidence they consumed
+        // cannot be replayed, so only a genuinely second cue fires here.
+        const card = matchCue(cuesRef.current, text, fired);
         if (card) {
           applyCue(card);
           return;
@@ -318,7 +325,7 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
         // alias its own interims matched moments ago; sending it to the
         // agent would author a second, competing response for the same
         // sentence. One utterance, one response.
-        if (firedMidSentence) return;
+        if (fired.length > 0) return;
         sendMessage(`[VOICE] ${text}`)
           .then((sent) => {
             if (!sent) pendingVoiceRef.current = text;
@@ -343,6 +350,15 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
         interimCueRef.current = null;
       }
     );
+
+  // A listening transition is a hard segment boundary: a quick stop/start on
+  // the apple-speech engine can drop the aborted segment's closing events
+  // entirely (the replaced helper's trailing final and done never reach the
+  // renderer), and stale fired state would swallow the new session's first
+  // command. Stop and start both land here.
+  useEffect(() => {
+    interimCueRef.current = null;
+  }, [isListening]);
 
   // Flush the parked voice command once the agent run settles.
   useEffect(() => {

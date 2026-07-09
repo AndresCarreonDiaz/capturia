@@ -127,17 +127,18 @@ export function useVoiceCapture(
         if (result.isFinal) final += text;
         else interim += text;
       }
-      setSpeechStatus("recognizing…");
+      setSpeechStatus(final.trim() ? "sent ✓" : "recognizing…");
       setLastResultAt(performance.now());
-      setInterimTranscript(interim);
+      // Finals precede interims positionally in event.results, and one event
+      // routinely carries utterance A's final plus utterance B's first
+      // hypothesis. Dispatch in that order: the final must close A's cue
+      // segment before B's interim seeds the next one, or A's stale
+      // candidate could be confirmed by B's unrelated first words.
+      if (final.trim()) onFinalRef.current(final.trim());
       // Current-cycle hypothesis; deterministic cue matching fires primed
       // cards from it mid-sentence (M9).
       if (interim.trim()) onInterimRef.current?.(interim);
-      if (final.trim()) {
-        setInterimTranscript("");
-        setSpeechStatus("sent ✓");
-        onFinalRef.current(final.trim());
-      }
+      setInterimTranscript(interim);
     };
 
     recognition.onend = () => {
