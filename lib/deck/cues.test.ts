@@ -266,21 +266,60 @@ describe("matchInterimCue", () => {
     // remaining "the number" text sits INSIDE the sibling's brand-new
     // "the numbers" command. Word-boundary anchoring must leave it alone so
     // the explicit second cue still fires instead of going silent.
+    const afterFire = runInterims(
+      [BIG_COUNTER, METRICS],
+      ["the number of signups", "the number of signups doubled"]
+    );
+    expect(afterFire.fired).toEqual(["cue-3"]);
     const { fired } = runInterims(
       [BIG_COUNTER, METRICS],
       [
-        "the number of signups",
-        "the number of signups doubled",
         "a number of signups doubled and show the numbers",
         "a number of signups doubled and show the numbers now",
+      ],
+      afterFire.state
+    );
+    expect(fired).toEqual(["cue-4"]);
+    expect(
+      matchCue(
+        [BIG_COUNTER, METRICS],
+        "a number of signups doubled and show the numbers now",
+        afterFire.state?.fired
+      )?.id
+    ).toBe("cue-4");
+  });
+
+  it("a mention the engine grew into its plural stays consumed for the substring sibling", () => {
+    // The same physical mention, rescored in place from "the number" to
+    // "the numbers": its before-context is unchanged, so consumption holds
+    // and the MetricsPanel cannot ride it, mid-sentence or at the final.
+    const { fired, state } = runInterims(
+      [BIG_COUNTER, METRICS],
+      [
+        "look at the number",
+        "look at the number here",
+        "look at the numbers here we",
+        "look at the numbers here we can",
       ]
     );
-    expect(fired).toEqual(["cue-3", "cue-4"]);
+    expect(fired).toEqual(["cue-3"]);
     expect(
-      matchCue([BIG_COUNTER, METRICS], "a number of signups doubled and show the numbers now", [
-        { id: "cue-3", alias: "the number" },
-      ])?.id
-    ).toBe("cue-4");
+      matchCue([BIG_COUNTER, METRICS], "look at the numbers here we can see", state?.fired)
+    ).toBeNull();
+  });
+
+  it("a cue fired inside a plural keeps its title words consumed at the final", () => {
+    // The matching side found "next quarter plan" inside "plans"; anchoring
+    // must re-find that same embedded occurrence so the leftover short
+    // title words cannot leak the steps card at the final.
+    const { fired, state } = runInterims(
+      [NEXT_STEPS, NEXT_QUARTER],
+      ["so the next quarter", "so the next quarter plans", "so the next quarter plans are"]
+    );
+    expect(fired).toEqual(["cue-2"]);
+    expect(
+      matchCue([NEXT_STEPS, NEXT_QUARTER], "so the next quarter plans are simple", state?.fired)
+    ).toBeNull();
   });
 
   it("consumption stays on the fired evidence and cannot steal a sibling's fresh mention", () => {

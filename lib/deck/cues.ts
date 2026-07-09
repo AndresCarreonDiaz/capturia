@@ -204,6 +204,7 @@ export function toDeckFacts(extract: DeckExtract): DeckFacts {
 interface CueMatch {
   card: CueCard;
   alias: string;
+  idx: number; // start of the matched occurrence in the lowercased phrase
   score: number;
 }
 
@@ -214,39 +215,74 @@ function overlapsAny(start: number, end: number, spans: readonly Span[]): boolea
 }
 
 // A cue that fired this segment: the card stays excluded from matching, and
-// the alias records WHICH evidence the fire consumed so it can be found
-// again inside every revision of the hypothesis.
+// the alias plus its surrounding context record WHICH evidence the fire
+// consumed so the same mention can be found again inside every revision of
+// the hypothesis. Context is what disambiguates the two ways "the number"
+// can sit inside "the numbers": the fired mention rescored in place keeps
+// its neighboring words, while a sibling's genuinely fresh mention has
+// different neighbors and must stay matchable.
 export interface FiredCue {
   id: string;
   alias: string;
+  before?: string; // text just before the fired occurrence (context anchor)
+  after?: string; // text just after it
 }
 
 const ANCHOR_MIN = 4;
+const CONTEXT_CHARS = 12;
+const CONTEXT_MATCH_MIN = 4;
 
-function isWordChar(ch: string | undefined): boolean {
-  return ch !== undefined && /[a-z0-9]/.test(ch);
+function contextBefore(p: string, idx: number): string {
+  return p.slice(Math.max(0, idx - CONTEXT_CHARS), idx);
 }
 
-// An anchor occurrence must sit on word boundaries: "the number" INSIDE a
-// sibling's fresh "the numbers" mention is not the fired mention, it is the
-// sibling's own evidence, and consuming it would silence a genuinely new
-// command (no card AND no agent fallback).
-function atWordBoundary(p: string, idx: number, len: number): boolean {
-  return !isWordChar(p[idx - 1]) && !isWordChar(p[idx + len]);
+function contextAfter(p: string, end: number): string {
+  return p.slice(end, end + CONTEXT_CHARS);
+}
+
+// A side matches when the strings share enough adjacent characters (suffix
+// of the before-side, prefix of the after-side). Empty-vs-empty is a match
+// (both at the text edge); empty-vs-text is not.
+function sideMatches(stored: string, current: string, fromEnd: boolean): boolean {
+  if (!stored.length || !current.length) return stored.length === current.length;
+  let n = 0;
+  while (
+    n < stored.length &&
+    n < current.length &&
+    (fromEnd
+      ? stored[stored.length - 1 - n] === current[current.length - 1 - n]
+      : stored[n] === current[n])
+  ) {
+    n++;
+  }
+  return n >= Math.min(CONTEXT_MATCH_MIN, stored.length, current.length);
+}
+
+// One matching side is enough: a suffix rescore ("the number" grown to "the
+// numbers" in place) breaks the after-side but keeps the before-side, while
+// words inserted at the sentence start break the before-side but keep the
+// after-side. A fresh mention elsewhere breaks both and is rejected. A
+// FiredCue without stored context (hand-built) accepts any occurrence.
+function contextAccepts(f: FiredCue, p: string, idx: number, end: number): boolean {
+  if (f.before === undefined && f.after === undefined) return true;
+  return (
+    (f.before !== undefined && sideMatches(f.before, contextBefore(p, idx), true)) ||
+    (f.after !== undefined && sideMatches(f.after, contextAfter(p, end), false))
+  );
 }
 
 // Re-locate the evidence each fired cue consumed inside the CURRENT text.
-// Anchoring is by the alias that actually fired, never the card's strongest
-// alias anywhere in the sentence: the latter teleports consumption onto a
-// disjoint later mention (un-consuming the real one) or onto a substring of
-// a sibling's genuinely fresh evidence. Fires anchor in order, each claiming
-// the leftmost whole-word occurrence no earlier fire claimed, so a repeated
-// alias means distinct mentions and can never free one for a third card. If
-// the engine rescored the mention, progressively shorter prefixes of the
-// fired alias (down to a couple of characters, floor 4) still find it ("the
-// numbers" rescored to "the number"), but only at word boundaries; beyond
-// that the mention is gone and consumes nothing, though the fired card
-// itself stays excluded regardless.
+// Anchoring is by the alias that actually fired plus its stored context,
+// never the card's strongest alias anywhere in the sentence: the latter
+// teleports consumption onto a disjoint later mention (un-consuming the
+// real one) or onto a substring of a sibling's genuinely fresh evidence.
+// Fires anchor in order, each claiming the leftmost context-matching
+// occurrence no earlier fire claimed, so a repeated alias means distinct
+// mentions and can never free one for a third card. If the engine rescored
+// the mention's tail, progressively shorter prefixes of the fired alias
+// (floor 4) still find it ("the numbers" rescored to "the number"); a
+// mention whose context is gone everywhere consumes nothing, though the
+// fired card itself stays excluded regardless.
 function consumedSpans(cards: CueCard[], p: string, fired: readonly FiredCue[]): Span[] {
   const spans: Span[] = [];
   for (const f of fired) {
@@ -257,7 +293,8 @@ function consumedSpans(cards: CueCard[], p: string, fired: readonly FiredCue[]):
       let idx = p.indexOf(probe);
       while (
         idx !== -1 &&
-        (overlapsAny(idx, idx + probe.length, spans) || !atWordBoundary(p, idx, probe.length))
+        (overlapsAny(idx, idx + probe.length, spans) ||
+          !contextAccepts(f, p, idx, idx + probe.length))
       ) {
         idx = p.indexOf(probe, idx + 1);
       }
@@ -280,11 +317,7 @@ function consumedSpans(cards: CueCard[], p: string, fired: readonly FiredCue[]):
           while (idx !== -1) {
             const end = idx + alias.length;
             const overlapping = idx < span[1] && span[0] < end;
-            if (
-              overlapping &&
-              (idx < span[0] || end > span[1]) &&
-              atWordBoundary(p, idx, alias.length)
-            ) {
+            if (overlapping && (idx < span[0] || end > span[1])) {
               span = [Math.min(span[0], idx), Math.max(span[1], end)];
               grew = true;
             }
@@ -322,7 +355,7 @@ function bestCueMatch(
       }
       if (idx === -1) continue;
       const score = alias.length; // longer alias = stronger
-      if (!best || score > best.score) best = { card, alias, score };
+      if (!best || score > best.score) best = { card, alias, idx, score };
     }
   }
   return best;
@@ -382,7 +415,8 @@ export function matchInterimCue(
   // Same guard as the final path: one lone word is not a command yet. An
   // empty or too-short update leaves the segment state untouched.
   if (!text || text.split(/\s+/).length < 2) return { fire: null, state: prev };
-  const m = bestCueMatch(cards, text.toLowerCase(), {
+  const p = text.toLowerCase();
+  const m = bestCueMatch(cards, p, {
     fired: prev.fired,
     minScore: INTERIM_MIN_SCORE,
   });
@@ -390,8 +424,20 @@ export function matchInterimCue(
   if (m.card.id !== prev.candidateId) {
     return { fire: null, state: { ...prev, candidateId: m.card.id } };
   }
+  const end = m.idx + m.alias.length;
   return {
     fire: m.card,
-    state: { fired: [...prev.fired, { id: m.card.id, alias: m.alias }], candidateId: null },
+    state: {
+      fired: [
+        ...prev.fired,
+        {
+          id: m.card.id,
+          alias: m.alias,
+          before: contextBefore(p, m.idx),
+          after: contextAfter(p, end),
+        },
+      ],
+      candidateId: null,
+    },
   };
 }
