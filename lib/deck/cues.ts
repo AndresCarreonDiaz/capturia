@@ -223,17 +223,30 @@ export interface FiredCue {
 
 const ANCHOR_MIN = 4;
 
+function isWordChar(ch: string | undefined): boolean {
+  return ch !== undefined && /[a-z0-9]/.test(ch);
+}
+
+// An anchor occurrence must sit on word boundaries: "the number" INSIDE a
+// sibling's fresh "the numbers" mention is not the fired mention, it is the
+// sibling's own evidence, and consuming it would silence a genuinely new
+// command (no card AND no agent fallback).
+function atWordBoundary(p: string, idx: number, len: number): boolean {
+  return !isWordChar(p[idx - 1]) && !isWordChar(p[idx + len]);
+}
+
 // Re-locate the evidence each fired cue consumed inside the CURRENT text.
 // Anchoring is by the alias that actually fired, never the card's strongest
 // alias anywhere in the sentence: the latter teleports consumption onto a
 // disjoint later mention (un-consuming the real one) or onto a substring of
 // a sibling's genuinely fresh evidence. Fires anchor in order, each claiming
-// the leftmost occurrence no earlier fire claimed, so a repeated alias means
-// distinct mentions and can never free one for a third card. If the engine
-// rescored the mention, progressively shorter prefixes of the fired alias
-// (down to a couple of characters, floor 4) still find it ("the numbers"
-// rescored to "the number"); beyond that the mention is gone and consumes
-// nothing, though the fired card itself stays excluded regardless.
+// the leftmost whole-word occurrence no earlier fire claimed, so a repeated
+// alias means distinct mentions and can never free one for a third card. If
+// the engine rescored the mention, progressively shorter prefixes of the
+// fired alias (down to a couple of characters, floor 4) still find it ("the
+// numbers" rescored to "the number"), but only at word boundaries; beyond
+// that the mention is gone and consumes nothing, though the fired card
+// itself stays excluded regardless.
 function consumedSpans(cards: CueCard[], p: string, fired: readonly FiredCue[]): Span[] {
   const spans: Span[] = [];
   for (const f of fired) {
@@ -242,7 +255,10 @@ function consumedSpans(cards: CueCard[], p: string, fired: readonly FiredCue[]):
     for (let len = f.alias.length; len >= minLen && !span; len--) {
       const probe = f.alias.slice(0, len);
       let idx = p.indexOf(probe);
-      while (idx !== -1 && overlapsAny(idx, idx + probe.length, spans)) {
+      while (
+        idx !== -1 &&
+        (overlapsAny(idx, idx + probe.length, spans) || !atWordBoundary(p, idx, probe.length))
+      ) {
         idx = p.indexOf(probe, idx + 1);
       }
       if (idx !== -1) span = [idx, idx + probe.length];
@@ -264,7 +280,11 @@ function consumedSpans(cards: CueCard[], p: string, fired: readonly FiredCue[]):
           while (idx !== -1) {
             const end = idx + alias.length;
             const overlapping = idx < span[1] && span[0] < end;
-            if (overlapping && (idx < span[0] || end > span[1])) {
+            if (
+              overlapping &&
+              (idx < span[0] || end > span[1]) &&
+              atWordBoundary(p, idx, alias.length)
+            ) {
               span = [Math.min(span[0], idx), Math.max(span[1], end)];
               grew = true;
             }

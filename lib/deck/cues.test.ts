@@ -261,6 +261,28 @@ describe("matchInterimCue", () => {
     expect(matchCue([BIG_COUNTER, METRICS], "show the number here we can see", state?.fired)).toBeNull();
   });
 
+  it("a rescore that destroys the fired mention cannot consume a sibling's fresh command", () => {
+    // The fired "the number" mention got rescored to "a number"; the only
+    // remaining "the number" text sits INSIDE the sibling's brand-new
+    // "the numbers" command. Word-boundary anchoring must leave it alone so
+    // the explicit second cue still fires instead of going silent.
+    const { fired } = runInterims(
+      [BIG_COUNTER, METRICS],
+      [
+        "the number of signups",
+        "the number of signups doubled",
+        "a number of signups doubled and show the numbers",
+        "a number of signups doubled and show the numbers now",
+      ]
+    );
+    expect(fired).toEqual(["cue-3", "cue-4"]);
+    expect(
+      matchCue([BIG_COUNTER, METRICS], "a number of signups doubled and show the numbers now", [
+        { id: "cue-3", alias: "the number" },
+      ])?.id
+    ).toBe("cue-4");
+  });
+
   it("consumption stays on the fired evidence and cannot steal a sibling's fresh mention", () => {
     // The BigCounter fired off "revenue"; its "the number" alias also lives
     // INSIDE the sibling's fresh "the numbers" mention. Anchoring by the
