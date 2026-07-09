@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createRedisVoteStore } from "./vote-store-redis";
+import type { StoreResult } from "./vote-store";
 
 // Glue-level tests: the fake runner plays the Redis side, returning what the
 // Lua scripts return, so these pin argument marshaling, status mapping, and
@@ -25,13 +26,19 @@ function runnerReturning(result: unknown) {
   return { run, calls };
 }
 
+// StoreResult is a discriminated union and only the rejection arm carries a
+// status, so narrow on ok before reading it; null marks an unexpected success.
+function rejectionStatus(res: StoreResult): number | null {
+  return res.ok ? null : res.status;
+}
+
 describe("publishPoll (redis)", () => {
   it("rejects invalid input before touching Redis", async () => {
     const { run, calls } = runnerReturning(["ok", "1", "[]"]);
     const store = createRedisVoteStore(run);
-    expect((await store.publishPoll("bad room!", HOST, POLL)).status).toBe(422);
-    expect((await store.publishPoll(ROOM, "x", POLL)).status).toBe(422);
-    expect((await store.publishPoll(ROOM, HOST, { title: "t", options: [] })).status).toBe(422);
+    expect(rejectionStatus(await store.publishPoll("bad room!", HOST, POLL))).toBe(422);
+    expect(rejectionStatus(await store.publishPoll(ROOM, "x", POLL))).toBe(422);
+    expect(rejectionStatus(await store.publishPoll(ROOM, HOST, { title: "t", options: [] }))).toBe(422);
     expect(calls).toHaveLength(0);
   });
 
@@ -87,7 +94,7 @@ describe("castVote (redis)", () => {
   it("rejects an invalid viewer id before touching Redis", async () => {
     const { run, calls } = runnerReturning(reply("ok"));
     const store = createRedisVoteStore(run);
-    expect((await store.castVote(ROOM, "!!", "opt-a")).status).toBe(422);
+    expect(rejectionStatus(await store.castVote(ROOM, "!!", "opt-a"))).toBe(422);
     expect(calls).toHaveLength(0);
   });
 
