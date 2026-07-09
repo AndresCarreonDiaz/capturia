@@ -71,6 +71,8 @@ cat > "${SYSEX}/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>${MIN_OS}</string>
+  <key>NSSystemExtensionUsageDescription</key>
+  <string>Capturia provides a virtual camera so your calls can show AI-composed overlays.</string>
   <key>CMIOExtension</key>
   <dict>
     <key>CMIOExtensionMachServiceName</key><string>${MACH_SERVICE}</string>
