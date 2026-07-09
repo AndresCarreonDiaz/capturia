@@ -399,7 +399,16 @@ private func deviceSourceOf(_ device: CMIOExtensionDevice?) -> CapturiaDeviceSou
 }
 
 // MARK: - Entry point
+//
+// @main (not top-level statements) so the file compiles under Xcode, where
+// top-level code is only allowed in a file named main.swift. build.sh passes
+// -parse-as-library for the same reason.
 
-let providerSource = CapturiaProviderSource(clientQueue: nil)
-CMIOExtensionProvider.startService(provider: providerSource.provider)
-CFRunLoopRun()
+@main
+struct CapturiaCameraExtensionMain {
+  static func main() {
+    let providerSource = CapturiaProviderSource(clientQueue: nil)
+    CMIOExtensionProvider.startService(provider: providerSource.provider)
+    CFRunLoopRun()
+  }
+}
