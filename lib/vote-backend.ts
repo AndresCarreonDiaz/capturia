@@ -28,7 +28,9 @@ export interface VoteBackend {
 
 let cached: VoteBackend | null = null;
 
-export function getVoteBackend(env: NodeJS.ProcessEnv = process.env): VoteBackend {
+// env is a plain string map (see upstashFromEnv) so tests can pass literal
+// subsets without casting around Next's required NODE_ENV augmentation.
+export function getVoteBackend(env: Record<string, string | undefined> = process.env): VoteBackend {
   if (cached) return cached;
   const upstash = upstashFromEnv(env);
   if (upstash) {

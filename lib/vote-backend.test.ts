@@ -19,7 +19,7 @@ afterEach(() => {
 
 describe("getVoteBackend selection", () => {
   it("uses the in-memory store when no Upstash env exists", () => {
-    const backend = getVoteBackend({} as NodeJS.ProcessEnv);
+    const backend = getVoteBackend({});
     expect(backend.mode).toBe("memory");
     expect(typeof backend.subscribe).toBe("function");
   });
@@ -28,7 +28,7 @@ describe("getVoteBackend selection", () => {
     const backend = getVoteBackend({
       UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
       UPSTASH_REDIS_REST_TOKEN: "tok",
-    } as NodeJS.ProcessEnv);
+    });
     expect(backend.mode).toBe("redis");
     expect(backend.subscribe).toBeUndefined();
   });
@@ -37,29 +37,29 @@ describe("getVoteBackend selection", () => {
     const backend = getVoteBackend({
       KV_REST_API_URL: "https://example.upstash.io",
       KV_REST_API_TOKEN: "tok",
-    } as NodeJS.ProcessEnv);
+    });
     expect(backend.mode).toBe("redis");
   });
 
   it("memoizes until reset", () => {
-    const first = getVoteBackend({} as NodeJS.ProcessEnv);
+    const first = getVoteBackend({});
     const second = getVoteBackend({
       UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
       UPSTASH_REDIS_REST_TOKEN: "tok",
-    } as NodeJS.ProcessEnv);
+    });
     expect(second).toBe(first);
     _resetVoteBackend();
     const third = getVoteBackend({
       UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
       UPSTASH_REDIS_REST_TOKEN: "tok",
-    } as NodeJS.ProcessEnv);
+    });
     expect(third.mode).toBe("redis");
   });
 });
 
 describe("memory backend delegation", () => {
   it("round-trips publish, vote, and state through the async facade", async () => {
-    const backend = getVoteBackend({} as NodeJS.ProcessEnv);
+    const backend = getVoteBackend({});
     const published = await backend.publishPoll(ROOM, HOST, POLL);
     expect(published.ok).toBe(true);
 

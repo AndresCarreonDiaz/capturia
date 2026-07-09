@@ -10,7 +10,10 @@ export interface UpstashConfig {
 // Vercel's Upstash marketplace integration exports UPSTASH_REDIS_REST_*;
 // the older Vercel KV flavor exports KV_REST_API_*. Accept both so "click
 // the integration" is the only setup step.
-export function upstashFromEnv(env: NodeJS.ProcessEnv = process.env): UpstashConfig | null {
+// Typed as a plain string map instead of NodeJS.ProcessEnv: Next augments
+// ProcessEnv with a required NODE_ENV that this helper never reads, and
+// demanding it would force tests to fabricate a full env object.
+export function upstashFromEnv(env: Record<string, string | undefined> = process.env): UpstashConfig | null {
   const url = env.UPSTASH_REDIS_REST_URL || env.KV_REST_API_URL;
   const token = env.UPSTASH_REDIS_REST_TOKEN || env.KV_REST_API_TOKEN;
   if (!url || !token) return null;
