@@ -306,9 +306,9 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
   const { isListening, interimTranscript, speechStatus, lastError, lastResultAt, isSupported, startListening, stopListening } =
     useStudioVoice(
       (text) => {
-        // Capture before closing the segment: cards the interim path already
+        // Capture before closing the segment: cues the interim path already
         // fired were answered deterministically mid-sentence.
-        const fired = interimCueRef.current?.firedIds ?? [];
+        const fired = interimCueRef.current?.fired ?? [];
         interimCueRef.current = null;
         if (text.split(/\s+/).length < 2) return;
         setLastSent(text);
@@ -351,13 +351,15 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
       }
     );
 
-  // A listening transition is a hard segment boundary: a quick stop/start on
-  // the apple-speech engine can drop the aborted segment's closing events
+  // Session START is a hard segment boundary: a quick stop/start on the
+  // apple-speech engine can drop the aborted segment's closing events
   // entirely (the replaced helper's trailing final and done never reach the
   // renderer), and stale fired state would swallow the new session's first
-  // command. Stop and start both land here.
+  // command. START only: both engines deliver a trailing final AFTER a stop
+  // by design, and that final must still see the segment's fired cues or a
+  // rescored sentence would double-respond through the agent.
   useEffect(() => {
-    interimCueRef.current = null;
+    if (isListening) interimCueRef.current = null;
   }, [isListening]);
 
   // Flush the parked voice command once the agent run settles.

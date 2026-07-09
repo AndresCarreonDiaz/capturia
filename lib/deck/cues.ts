@@ -213,28 +213,67 @@ function overlapsAny(start: number, end: number, spans: readonly Span[]): boolea
   return spans.some(([s, e]) => start < e && s < end);
 }
 
-// Evidence already spent by fired cards, RE-DERIVED against the current text:
-// each fired card consumes the first occurrence of its longest alias present.
-// Deriving spans fresh every update (instead of storing offsets) keeps
-// consumption stable while engines rescore words, insert apostrophes, or
-// split compounds, and it widens naturally as the hypothesis grows through a
-// longer alias of the fired card ("quarter" fired, "next quarter plan" is
-// what ends up consumed). A fired mention the engine rescored away simply
-// consumes nothing; the fired card itself stays excluded regardless.
-function consumedSpans(cards: CueCard[], p: string, fired: ReadonlySet<string>): Span[] {
+// A cue that fired this segment: the card stays excluded from matching, and
+// the alias records WHICH evidence the fire consumed so it can be found
+// again inside every revision of the hypothesis.
+export interface FiredCue {
+  id: string;
+  alias: string;
+}
+
+const ANCHOR_MIN = 4;
+
+// Re-locate the evidence each fired cue consumed inside the CURRENT text.
+// Anchoring is by the alias that actually fired, never the card's strongest
+// alias anywhere in the sentence: the latter teleports consumption onto a
+// disjoint later mention (un-consuming the real one) or onto a substring of
+// a sibling's genuinely fresh evidence. Fires anchor in order, each claiming
+// the leftmost occurrence no earlier fire claimed, so a repeated alias means
+// distinct mentions and can never free one for a third card. If the engine
+// rescored the mention, progressively shorter prefixes of the fired alias
+// (down to a couple of characters, floor 4) still find it ("the numbers"
+// rescored to "the number"); beyond that the mention is gone and consumes
+// nothing, though the fired card itself stays excluded regardless.
+function consumedSpans(cards: CueCard[], p: string, fired: readonly FiredCue[]): Span[] {
   const spans: Span[] = [];
-  for (const card of cards) {
-    if (!fired.has(card.id)) continue;
-    let best: Span | null = null;
-    let bestLen = 0;
-    for (const alias of card.aliases) {
-      if (alias.length <= bestLen) continue;
-      const idx = p.indexOf(alias);
-      if (idx === -1) continue;
-      best = [idx, idx + alias.length];
-      bestLen = alias.length;
+  for (const f of fired) {
+    let span: Span | null = null;
+    const minLen = Math.max(ANCHOR_MIN, f.alias.length - 2);
+    for (let len = f.alias.length; len >= minLen && !span; len--) {
+      const probe = f.alias.slice(0, len);
+      let idx = p.indexOf(probe);
+      while (idx !== -1 && overlapsAny(idx, idx + probe.length, spans)) {
+        idx = p.indexOf(probe, idx + 1);
+      }
+      if (idx !== -1) span = [idx, idx + probe.length];
     }
-    if (best) spans.push(best);
+    if (!span) continue;
+    // One mention often grows into a longer alias of the same card ("quarter"
+    // becomes "next quarter plan"): widen across every OVERLAPPING occurrence
+    // of the fired card's aliases so title words riding the same phrase
+    // cannot leak to siblings. Overlap-only on purpose: a longer alias
+    // somewhere else in the sentence must not move consumption off the
+    // mention that fired.
+    const card = cards.find((c) => c.id === f.id);
+    if (card) {
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const alias of card.aliases) {
+          let idx = p.indexOf(alias);
+          while (idx !== -1) {
+            const end = idx + alias.length;
+            const overlapping = idx < span[1] && span[0] < end;
+            if (overlapping && (idx < span[0] || end > span[1])) {
+              span = [Math.min(span[0], idx), Math.max(span[1], end)];
+              grew = true;
+            }
+            idx = p.indexOf(alias, idx + 1);
+          }
+        }
+      }
+    }
+    spans.push(span);
   }
   return spans;
 }
@@ -242,16 +281,17 @@ function consumedSpans(cards: CueCard[], p: string, fired: ReadonlySet<string>):
 function bestCueMatch(
   cards: CueCard[],
   p: string,
-  opts?: { fired?: ReadonlySet<string>; minScore?: number }
+  opts?: { fired?: readonly FiredCue[]; minScore?: number }
 ): CueMatch | null {
   const fired = opts?.fired;
   // Require a reasonably specific match (>= 4 chars) so single short words
   // don't hijack normal speech.
   const minScore = opts?.minScore ?? 4;
-  const spans = fired?.size ? consumedSpans(cards, p, fired) : [];
+  const spans = fired?.length ? consumedSpans(cards, p, fired) : [];
+  const excluded = fired?.length ? new Set(fired.map((f) => f.id)) : null;
   let best: CueMatch | null = null;
   for (const card of cards) {
-    if (fired?.has(card.id)) continue;
+    if (excluded?.has(card.id)) continue;
     for (const alias of card.aliases) {
       if (alias.length < minScore) continue;
       // Latest occurrence that is not consumed evidence = newest usable
@@ -270,15 +310,14 @@ function bestCueMatch(
 
 // Find the best cue for a spoken/typed phrase. Returns the card if a confident
 // alias match is found, else null (so the utterance falls through to the agent).
-// firedIds carries the segment's already-fired cards into the final match:
-// they are excluded outright AND the evidence they consumed cannot be
+// fired carries the segment's already-fired cues into the final match: their
+// cards are excluded outright AND the evidence they consumed cannot be
 // replayed, so only a cue grounded in fresh text can fire at the final.
 export function matchCue(
   cards: CueCard[],
   phrase: string,
-  firedIds?: readonly string[]
+  fired?: readonly FiredCue[]
 ): CueCard | null {
-  const fired = firedIds?.length ? new Set(firedIds) : undefined;
   return bestCueMatch(cards, phrase.toLowerCase(), { fired })?.card ?? null;
 }
 
@@ -301,13 +340,13 @@ export function matchCue(
 //    snapshot (apple-speech) of latency.
 // 3. Fired cards are excluded outright for the rest of the segment: an
 //    oscillating hypothesis can never re-fire one.
-// 4. Fired EVIDENCE is consumed: a fired card's strongest alias span in the
-//    current text is off-limits to other cards (see consumedSpans), so one
-//    spoken "the numbers" cannot chain-fire every numeric slide sharing
-//    that alias, no matter how the hypothesis is revised around it. The
-//    final path applies the same rule through matchCue(cards, text, fired).
+// 4. Fired EVIDENCE is consumed: the alias occurrence each fire spent is
+//    re-anchored inside every revision of the hypothesis (see consumedSpans)
+//    and is off-limits to other cards, so one spoken "the numbers" cannot
+//    chain-fire every numeric slide sharing that alias. The final path
+//    applies the same rule through matchCue(cards, text, fired).
 export interface InterimCueState {
-  firedIds: string[]; // cards fired this segment, never re-fired within it
+  fired: FiredCue[]; // cues fired this segment, in firing order
   candidateId: string | null; // last update's winner, awaiting confirmation
 }
 
@@ -318,13 +357,13 @@ export function matchInterimCue(
   interim: string,
   state: InterimCueState | null
 ): { fire: CueCard | null; state: InterimCueState } {
-  const prev = state ?? { firedIds: [], candidateId: null };
+  const prev = state ?? { fired: [], candidateId: null };
   const text = interim.trim();
   // Same guard as the final path: one lone word is not a command yet. An
   // empty or too-short update leaves the segment state untouched.
   if (!text || text.split(/\s+/).length < 2) return { fire: null, state: prev };
   const m = bestCueMatch(cards, text.toLowerCase(), {
-    fired: new Set(prev.firedIds),
+    fired: prev.fired,
     minScore: INTERIM_MIN_SCORE,
   });
   if (!m) return { fire: null, state: { ...prev, candidateId: null } };
@@ -333,6 +372,6 @@ export function matchInterimCue(
   }
   return {
     fire: m.card,
-    state: { firedIds: [...prev.firedIds, m.card.id], candidateId: null },
+    state: { fired: [...prev.fired, { id: m.card.id, alias: m.alias }], candidateId: null },
   };
 }
