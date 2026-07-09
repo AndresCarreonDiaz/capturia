@@ -1,23 +1,23 @@
 #!/bin/bash
-# Assemble the Capturia camera extension + host harness app (M7b).
+# Ad-hoc assembly check for the Capturia camera extension + host app (M7b).
 #
 # Produces dist/Capturia Camera Host.app with the CMIO system extension
-# embedded at Contents/Library/SystemExtensions/. Everything compiles and
-# assembles with Xcode's toolchain alone; SIGNING decides whether macOS will
-# actually load it:
+# embedded at Contents/Library/SystemExtensions/, compiled with swiftc and
+# ad-hoc signed. Use it as a fast compile/bundle sanity check (works on CI,
+# needs no Apple Developer account). The output CANNOT be activated: the host
+# claims the restricted com.apple.developer.system-extension.install
+# entitlement, and without a provisioning profile AMFI SIGKILLs it at launch.
 #
-#   CAPTURIA_TEAM_ID unset  -> ad-hoc signing ("-"). Assembly/bundle sanity
-#                              only; activation WILL be rejected by macOS.
-#   CAPTURIA_TEAM_ID=XXXXXXXXXX (Andres's PERSONAL team, NEVER the Exodus
-#                              Movement work team) + CAPTURIA_SIGN_IDENTITY
-#                              ("Apple Development: ..." cert from that team)
-#                              -> real signing; requires provisioning profiles
-#                              carrying the system-extension entitlement once
-#                              the membership is active.
+# For a runnable, activatable build use build-signed.sh instead. It drives
+# CapturiaCamera.xcodeproj with automatic signing and embeds real development
+# provisioning profiles:
+#
+#   CAPTURIA_TEAM_ID=XXXXXXXXXX bash native/CapturiaCamera/build-signed.sh
 #
 # Run:  bash native/CapturiaCamera/build.sh
-# Then: cp -R dist/"Capturia Camera Host.app" /Applications/ and run
-#       ".../Contents/MacOS/CapturiaCameraHost activate"
+# (CAPTURIA_TEAM_ID / CAPTURIA_SIGN_IDENTITY are still honored below for a
+# certificate-signed assembly without profiles, but that build is launchable
+# only with the entitlement stripped; prefer build-signed.sh.)
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -43,7 +43,9 @@ rm -rf "${DIST}"
 mkdir -p "${SYSEX}/Contents/MacOS" "${APP}/Contents/MacOS"
 
 echo "== compiling extension =="
-xcrun swiftc -swift-version 5 -O \
+# -parse-as-library: the extension uses @main (required by the Xcode build,
+# where top-level code is only allowed in main.swift).
+xcrun swiftc -swift-version 5 -O -parse-as-library \
   -target "arm64-apple-macos${MIN_OS}" -sdk "${SDK}" \
   -framework CoreMediaIO -framework CoreMedia -framework CoreVideo -framework IOSurface \
   -o "${SYSEX}/Contents/MacOS/${EXT_ID}" \
@@ -135,7 +137,7 @@ codesign -dv "${SYSEX}" 2>&1 | grep -E 'Identifier|TeamIdentifier|Signature'
 echo
 echo "Built: ${APP}"
 if [ -z "${TEAM_ID}" ]; then
-  echo "NOTE: ad-hoc signed. Bundle assembly is valid, but macOS will refuse"
-  echo "activation until it is re-signed with the personal team's identity and"
-  echo "provisioning profiles (set CAPTURIA_TEAM_ID + CAPTURIA_SIGN_IDENTITY)."
+  echo "NOTE: ad-hoc signed. Bundle assembly is valid, but this build cannot"
+  echo "launch or activate (no provisioning profile). For a signed, runnable"
+  echo "build use: CAPTURIA_TEAM_ID=XXXXXXXXXX bash native/CapturiaCamera/build-signed.sh"
 fi

@@ -49,7 +49,14 @@ final class RequestDelegate: NSObject, OSSystemExtensionRequestDelegate {
   }
 }
 
-let mode = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "activate"
+guard CommandLine.arguments.count > 1 else {
+  // No args: print usage instead of firing a request. Doubles as the smoke
+  // test that AMFI accepted the signature + provisioning profile (an app
+  // claiming system-extension.install without a profile is SIGKILLed here).
+  print("usage: CapturiaCameraHost <activate|deactivate>")
+  exit(0)
+}
+let mode = CommandLine.arguments[1]
 let delegate = RequestDelegate()
 
 let request: OSSystemExtensionRequest

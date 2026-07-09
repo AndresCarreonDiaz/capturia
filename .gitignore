@@ -67,3 +67,8 @@ next-env.d.ts
 # speech helper binary: arch-specific, built by scripts/build-speech-helper.mjs
 # (pack:mac and smoke:speech build it on demand; never commit it)
 /native/capturia-speech/capturia-speech
+
+# camera extension signed builds (Xcode) and local Xcode state
+native/CapturiaCamera/dist-signed/
+native/CapturiaCamera/DerivedData/
+xcuserdata/

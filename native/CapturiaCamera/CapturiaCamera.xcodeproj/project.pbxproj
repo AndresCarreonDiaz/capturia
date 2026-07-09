@@ -1,0 +1,315 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		CA9700000000000000000020 /* CapturiaCameraExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA9700000000000000000010 /* CapturiaCameraExtension.swift */; };
+		CA9700000000000000000021 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA9700000000000000000013 /* main.swift */; };
+		CA9700000000000000000022 /* com.capturia.camera.extension.systemextension in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = CA9700000000000000000016 /* com.capturia.camera.extension.systemextension */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		CA9700000000000000000050 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = CA9700000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CA9700000000000000000040;
+			remoteInfo = CapturiaCameraExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		CA9700000000000000000034 /* Embed System Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(SYSTEM_EXTENSIONS_FOLDER_PATH)";
+			dstSubfolderSpec = 16;
+			files = (
+				CA9700000000000000000022 /* com.capturia.camera.extension.systemextension in Embed System Extensions */,
+			);
+			name = "Embed System Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		CA9700000000000000000010 /* CapturiaCameraExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapturiaCameraExtension.swift; sourceTree = "<group>"; };
+		CA9700000000000000000011 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		CA9700000000000000000012 /* CapturiaCameraExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CapturiaCameraExtension.entitlements; sourceTree = "<group>"; };
+		CA9700000000000000000013 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		CA9700000000000000000014 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		CA9700000000000000000015 /* CapturiaCameraHost.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CapturiaCameraHost.entitlements; sourceTree = "<group>"; };
+		CA9700000000000000000016 /* com.capturia.camera.extension.systemextension */ = {isa = PBXFileReference; explicitFileType = "wrapper.system-extension"; includeInIndex = 0; path = "com.capturia.camera.extension.systemextension"; sourceTree = BUILT_PRODUCTS_DIR; };
+		CA9700000000000000000017 /* CapturiaCameraHost.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CapturiaCameraHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		CA9700000000000000000031 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CA9700000000000000000033 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		CA9700000000000000000002 = {
+			isa = PBXGroup;
+			children = (
+				CA9700000000000000000004 /* Extension */,
+				CA9700000000000000000005 /* HostApp */,
+				CA9700000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		CA9700000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				CA9700000000000000000016 /* com.capturia.camera.extension.systemextension */,
+				CA9700000000000000000017 /* CapturiaCameraHost.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		CA9700000000000000000004 /* Extension */ = {
+			isa = PBXGroup;
+			children = (
+				CA9700000000000000000010 /* CapturiaCameraExtension.swift */,
+				CA9700000000000000000011 /* Info.plist */,
+				CA9700000000000000000012 /* CapturiaCameraExtension.entitlements */,
+			);
+			path = Extension;
+			sourceTree = "<group>";
+		};
+		CA9700000000000000000005 /* HostApp */ = {
+			isa = PBXGroup;
+			children = (
+				CA9700000000000000000013 /* main.swift */,
+				CA9700000000000000000014 /* Info.plist */,
+				CA9700000000000000000015 /* CapturiaCameraHost.entitlements */,
+			);
+			path = HostApp;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		CA9700000000000000000040 /* CapturiaCameraExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CA9700000000000000000071 /* Build configuration list for PBXNativeTarget "CapturiaCameraExtension" */;
+			buildPhases = (
+				CA9700000000000000000030 /* Sources */,
+				CA9700000000000000000031 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CapturiaCameraExtension;
+			productName = CapturiaCameraExtension;
+			productReference = CA9700000000000000000016 /* com.capturia.camera.extension.systemextension */;
+			productType = "com.apple.product-type.system-extension";
+		};
+		CA9700000000000000000041 /* CapturiaCameraHost */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CA9700000000000000000072 /* Build configuration list for PBXNativeTarget "CapturiaCameraHost" */;
+			buildPhases = (
+				CA9700000000000000000032 /* Sources */,
+				CA9700000000000000000033 /* Frameworks */,
+				CA9700000000000000000034 /* Embed System Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				CA9700000000000000000051 /* PBXTargetDependency */,
+			);
+			name = CapturiaCameraHost;
+			productName = CapturiaCameraHost;
+			productReference = CA9700000000000000000017 /* CapturiaCameraHost.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		CA9700000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					CA9700000000000000000040 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+					CA9700000000000000000041 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = CA9700000000000000000070 /* Build configuration list for PBXProject "CapturiaCamera" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = CA9700000000000000000002;
+			productRefGroup = CA9700000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				CA9700000000000000000041 /* CapturiaCameraHost */,
+				CA9700000000000000000040 /* CapturiaCameraExtension */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		CA9700000000000000000030 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CA9700000000000000000020 /* CapturiaCameraExtension.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CA9700000000000000000032 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CA9700000000000000000021 /* main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		CA9700000000000000000051 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CA9700000000000000000040 /* CapturiaCameraExtension */;
+			targetProxy = CA9700000000000000000050 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		CA9700000000000000000060 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_HARDENED_RUNTIME = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		CA9700000000000000000061 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_HARDENED_RUNTIME = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		CA9700000000000000000062 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Extension/CapturiaCameraExtension.entitlements;
+				INFOPLIST_FILE = Extension/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = com.capturia.camera.extension;
+				PRODUCT_NAME = com.capturia.camera.extension;
+				PROVISIONING_PROFILE_REQUIRED = YES;
+			};
+			name = Debug;
+		};
+		CA9700000000000000000063 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Extension/CapturiaCameraExtension.entitlements;
+				INFOPLIST_FILE = Extension/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = com.capturia.camera.extension;
+				PRODUCT_NAME = com.capturia.camera.extension;
+				PROVISIONING_PROFILE_REQUIRED = YES;
+			};
+			name = Release;
+		};
+		CA9700000000000000000064 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = HostApp/CapturiaCameraHost.entitlements;
+				INFOPLIST_FILE = HostApp/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = com.capturia.camera.host;
+				PRODUCT_NAME = CapturiaCameraHost;
+			};
+			name = Debug;
+		};
+		CA9700000000000000000065 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = HostApp/CapturiaCameraHost.entitlements;
+				INFOPLIST_FILE = HostApp/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = com.capturia.camera.host;
+				PRODUCT_NAME = CapturiaCameraHost;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		CA9700000000000000000070 /* Build configuration list for PBXProject "CapturiaCamera" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CA9700000000000000000060 /* Debug */,
+				CA9700000000000000000061 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CA9700000000000000000071 /* Build configuration list for PBXNativeTarget "CapturiaCameraExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CA9700000000000000000062 /* Debug */,
+				CA9700000000000000000063 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CA9700000000000000000072 /* Build configuration list for PBXNativeTarget "CapturiaCameraHost" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CA9700000000000000000064 /* Debug */,
+				CA9700000000000000000065 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = CA9700000000000000000001 /* Project object */;
+}
