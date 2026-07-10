@@ -1,8 +1,32 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
-// Studio smoke tests plus one key-gated live-agent run. The mic/voice paths
-// can't run headless (Web Speech needs a real Chrome + mic); those live in
+// Studio smoke tests, the mirror-channel flow (Control Room -> ?out=1 output
+// pages), plus one key-gated live-agent run. The mic/voice paths can't run
+// headless (Web Speech needs a real Chrome + mic); those live in
 // docs/e2e-checklist.md as a manual checklist.
+
+// Drive overlay state through the dev-only window.capturiaDrive hook (the
+// real agent path is key-gated, see the live-agent test below). The hook only
+// exists on dev builds, which is exactly what the Playwright web server runs.
+async function driveOverlays(page: Page, specs: unknown[]) {
+  await page.waitForFunction(
+    () => Boolean((window as { capturiaDrive?: unknown }).capturiaDrive)
+  );
+  await page.evaluate((s) => {
+    (
+      window as unknown as { capturiaDrive: { setOverlays: (v: unknown[]) => void } }
+    ).capturiaDrive.setOverlays(s);
+  }, specs);
+}
+
+const LOWER_THIRD = [
+  {
+    id: "lt-mirror",
+    type: "LowerThird",
+    position: "bottom-left",
+    props: { name: "Mirror Check", subtitle: "Live from the Control Room" },
+  },
+];
 
 test("the studio loads: webcam layer, command bar, quick actions", async ({ page }) => {
   await page.goto("/studio");
@@ -19,6 +43,109 @@ test("program output (?out=1) is chrome-free: webcam only, no operator UI", asyn
   await expect(page.locator("video").first()).toBeVisible();
   await expect(page.getByPlaceholder(/Add a lower third/)).toHaveCount(0);
   await expect(page.getByText("Progress 73%")).toHaveCount(0);
+});
+
+// The mirror channel: the visible studio (primary) publishes its overlay
+// state over a BroadcastChannel and a ?out=1 page in the same browser adopts
+// it. This is what feeds the native Capturia camera (the offscreen Electron
+// window loads ?out=1) and OBS browser-source tabs on web.
+test("an out page mirrors the control room's overlays, live and on removal", async ({
+  page,
+  context,
+}) => {
+  await page.goto("/studio");
+  const outPage = await context.newPage();
+  await outPage.goto("/studio?out=1");
+
+  // Live update: created AFTER both pages are up, so this rides the
+  // state-change republish, not the hello snapshot.
+  await driveOverlays(page, LOWER_THIRD);
+  await expect(page.getByText("Mirror Check")).toBeVisible();
+  await expect(outPage.getByText("Mirror Check")).toBeVisible();
+
+  // Removal mirrors too (the out page must not hold stale overlays).
+  await driveOverlays(page, []);
+  await expect(outPage.getByText("Mirror Check")).toHaveCount(0);
+  await outPage.close();
+});
+
+test("a late-joining out page receives the current snapshot (hello handshake)", async ({
+  page,
+  context,
+}) => {
+  await page.goto("/studio");
+  await driveOverlays(page, LOWER_THIRD);
+  await expect(page.getByText("Mirror Check")).toBeVisible();
+
+  // Opened AFTER the state already exists: only the hello/snapshot handshake
+  // can deliver this overlay.
+  const outPage = await context.newPage();
+  await outPage.goto("/studio?out=1");
+  await expect(outPage.getByText("Mirror Check")).toBeVisible();
+  await outPage.close();
+});
+
+test("mirroring is one-directional: an out page's local state never renders or leaks", async ({
+  page,
+  context,
+}) => {
+  await page.goto("/studio");
+  const outPage = await context.newPage();
+  await outPage.goto("/studio?out=1");
+
+  // Drive state INTO the receiver. It renders the adopted snapshot only, so
+  // this must show up nowhere: not on the out page, not on the primary.
+  await driveOverlays(outPage, [
+    {
+      id: "rogue-1",
+      type: "LowerThird",
+      position: "bottom-left",
+      props: { name: "Rogue Receiver", subtitle: "should never render" },
+    },
+  ]);
+  await outPage.waitForTimeout(500);
+  await expect(outPage.getByText("Rogue Receiver")).toHaveCount(0);
+  await expect(page.getByText("Rogue Receiver")).toHaveCount(0);
+  await outPage.close();
+});
+
+test("the out page shows the PRIMARY's vote QR, not a room of its own", async ({
+  page,
+  context,
+}) => {
+  // ?vote=1 pins voting on; the poll derives from a surface with 2+
+  // ActionButtons (lib/derive-poll.ts), driven here without a model turn.
+  await page.goto("/studio?vote=1");
+  await driveOverlays(page, [
+    {
+      id: "surface-poll",
+      type: "Surface",
+      position: "center-right",
+      props: {
+        components: [
+          { id: "root", component: "Column", children: ["q", "a", "b"] },
+          { id: "q", component: "ChatBubble", text: "Which demo next?" },
+          { id: "a", component: "ActionButton", label: "APIs", actionName: "vote_apis" },
+          { id: "b", component: "ActionButton", label: "Pricing", actionName: "vote_pricing" },
+        ],
+      },
+    },
+  ]);
+  // The badge prints the vote URL (host + /vote/<room>) under the QR canvas.
+  const primaryUrlText = await page
+    .locator("span", { hasText: /\/vote\// })
+    .first()
+    .innerText();
+
+  const outPage = await context.newPage();
+  await outPage.goto("/studio?out=1");
+  await expect(outPage.getByText("Which demo next?")).toBeVisible();
+  // Same room slug as the primary: the receiver mirrors the URL verbatim
+  // instead of minting its own tab-scoped room.
+  await expect(outPage.locator("span", { hasText: /\/vote\// }).first()).toHaveText(
+    primaryUrlText
+  );
+  await outPage.close();
 });
 
 // The core product loop: a command drives the agent to render an overlay. This

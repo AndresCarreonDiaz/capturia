@@ -31,7 +31,10 @@
 // the page behaves like the web studio, so it cannot state:report (which
 // would fight the visible window's tray state), never joins the loopback
 // runtime, and has no speech bridge (voice only starts on operator action,
-// and hotkey sends target the main window alone).
+// and hotkey sends target the main window alone). The Control Room's live
+// overlays still reach this page: ?out=1 marks it a mirror RECEIVER, and the
+// visible studio broadcasts its state over a same-origin BroadcastChannel
+// (lib/mirror.ts + hooks/useStudioMirror.ts), no preload required.
 
 const { BrowserWindow } = require("electron");
 const path = require("path");

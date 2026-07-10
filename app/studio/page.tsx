@@ -38,6 +38,8 @@ const A2uiOverlayLayer = dynamic(() => import("@/components/A2uiOverlayLayer"), 
 });
 import { useStudioVoice } from "@/hooks/useStudioVoice";
 import { useSpeechEnergy } from "@/hooks/useSpeechEnergy";
+import { useStudioMirror } from "@/hooks/useStudioMirror";
+import { detectMirrorRole, type MirrorSnapshot } from "@/lib/mirror";
 import { useVoteRoom } from "@/hooks/useVoteRoom";
 import VoteQRBadge from "@/components/VoteQRBadge";
 import { derivePollFromOverlays } from "@/lib/derive-poll";
@@ -159,6 +161,19 @@ interface CapturiaProps {
 }
 
 function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUrl }: CapturiaProps) {
+  // Mirror role, fixed by how the page was LOADED (not by the outputMode
+  // toggle below): a ?out=1 page is a dedicated output surface (the desktop
+  // app's offscreen camera window, an OBS browser-source tab) and RECEIVES
+  // the visible Control Room's state over the mirror channel instead of
+  // owning its own show. Everything a receiver must not do (publish state,
+  // run the keycheck probe, publish a vote room, open agent runs from surface
+  // taps) is gated on this. Lazy init is hydration-safe: the role never
+  // changes the first-paint DOM, only effects and post-adoption renders.
+  const [mirrorRole] = useState(() =>
+    detectMirrorRole(typeof window === "undefined" ? "" : window.location.search)
+  );
+  const isMirrorReceiver = mirrorRole === "receiver";
+
   const [overlays, setOverlays] = useState<OverlaySpec[]>([]);
   const [lastSent, setLastSent] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -185,6 +200,11 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
   const vaultKeysSig = vault.keys.map((k) => `${k.provider}:${k.has ? 1 : 0}`).join(",");
   useEffect(() => {
     void vaultKeysSig; // re-probe when a key is saved or cleared
+    // A mirror receiver never runs the agent and never shows ModelKeyBanner
+    // (operator chrome is hidden in Program Output), so probing would be a
+    // wasted POST; over file:// (the packaged offscreen window) the relative
+    // route does not even exist.
+    if (isMirrorReceiver) return;
     let cancelled = false;
     fetch(runtimeUrl, {
       method: "POST",
@@ -201,7 +221,7 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
     return () => {
       cancelled = true;
     };
-  }, [headers, runtimeUrl, vaultKeysSig]);
+  }, [headers, runtimeUrl, vaultKeysSig, isMirrorReceiver]);
 
   // Deck state: cue cards to trigger, plus a compact view shared with the agent.
   const [cues, setCues] = useState<CueCard[]>([]);
@@ -212,8 +232,8 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
     cuesRef.current = cues;
   }, [cues]);
 
-  // Program Output: a chrome-free view (just webcam + overlays) that OBS (or a
-  // future native camera extension) captures as the published feed.
+  // Program Output: a chrome-free view (just webcam + overlays) that OBS or
+  // the native Capturia camera captures as the published feed.
   const [outputMode, setOutputMode] = useState(false);
 
   // Surface Mode: render the SAME overlays through the real A2UI runtime
@@ -429,12 +449,6 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
   // Mirror voice state to the tray (Listening/Idle status, toggle enablement).
   useDesktopStateReport({ listening: isListening, voiceSupported: isSupported });
 
-  // Audio-reactive: publish a 0..1 speaking-energy to --mic-energy on the stage
-  // root (derived from Web Speech RESULT events, NO AudioContext, so it never
-  // fights voice). The feed breathes as the speaker talks via the .energy-*
-  // CSS rules. The FX pill / ?fx=0 lets the operator pin a static frame.
-  useSpeechEnergy({ targetRef: stageRef, lastResultAt, isListening: isListening && fxOn });
-
   // The poll currently on screen (first authored surface with ActionButtons);
   // see lib/derive-poll.ts. Memoized so the vote-room publish effect keys off
   // real content changes, not render churn.
@@ -489,11 +503,83 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
   // failure being swallowed.
   const [votePublishError, setVotePublishError] = useState<string | null>(null);
   const { voteUrl, castHostVote } = useVoteRoom({
-    enabled: voteOn,
+    // A mirror receiver must never publish a vote room of its own: its
+    // mirrored overlays would derive the same poll and claim a second room
+    // nobody's phones are in. It shows the PRIMARY's QR instead (below).
+    enabled: voteOn && !isMirrorReceiver,
     poll: livePoll,
     onCounts: applyAudienceCounts,
     onPublishError: setVotePublishError,
   });
+
+  // Mirror channel: the Control Room (primary) publishes its live broadcast
+  // state; a ?out=1 page (the desktop app's offscreen camera window, an OBS
+  // browser-source tab) adopts it. Full protocol rationale in lib/mirror.ts.
+  // The snapshot is memoized so the hook's republish effect fires on real
+  // state changes, not render churn.
+  const mirrorSnapshot = useMemo<MirrorSnapshot>(
+    () => ({
+      overlays,
+      surfaceMode,
+      fxOn,
+      listening: isListening && fxOn,
+      voteUrl: voteOn ? voteUrl : null,
+    }),
+    [overlays, surfaceMode, fxOn, isListening, voteOn, voteUrl]
+  );
+  const mirror = useStudioMirror({
+    role: mirrorRole,
+    snapshot: mirrorSnapshot,
+    speakAt: lastResultAt,
+  });
+
+  // What the FEED renders. A receiver ignores its own (empty) state wholesale
+  // in favor of the adopted snapshot, so mirroring stays one-directional by
+  // construction: nothing a receiver does locally can reach the feed or leak
+  // back. Until the first snapshot lands it shows the bare webcam, exactly
+  // what the camera page showed before mirroring existed.
+  const feedOverlays = isMirrorReceiver ? mirror.adopted?.overlays ?? [] : overlays;
+  const feedSurfaceMode = isMirrorReceiver
+    ? mirror.adopted?.surfaceMode ?? false
+    : surfaceMode;
+  // FX on a receiver needs BOTH switches: the mirrored master (the operator's
+  // FX pill) and the local ?fx=0 pin, so an OBS scene pinned static stays
+  // static even while the Control Room breathes.
+  const feedFxOn = isMirrorReceiver ? fxOn && (mirror.adopted?.fxOn ?? true) : fxOn;
+  // Room ids are minted per tab (useVoteRoom), so a receiver must show the
+  // primary's QR verbatim; its own room would tally nobody.
+  const feedVoteUrl = isMirrorReceiver ? mirror.adopted?.voteUrl ?? null : voteOn ? voteUrl : null;
+
+  // Audio-reactive: publish a 0..1 speaking-energy to --mic-energy on the stage
+  // root (derived from Web Speech RESULT events, NO AudioContext, so it never
+  // fights voice). The feed breathes as the speaker talks via the .energy-*
+  // CSS rules. The FX pill / ?fx=0 lets the operator pin a static frame. A
+  // mirror receiver has no speech engine, so its envelope runs off the
+  // primary's throttled speak pings instead, through the exact same easing.
+  useSpeechEnergy({
+    targetRef: stageRef,
+    lastResultAt: isMirrorReceiver ? mirror.adoptedSpeakAt : lastResultAt,
+    isListening: isMirrorReceiver
+      ? Boolean(mirror.adopted?.listening) && fxOn
+      : isListening && fxOn,
+  });
+
+  // Dev-only E2E driver: lets Playwright (and the desktop camera harness in
+  // scripts/e2e-desktop-camera.mjs) place overlays without a live model turn,
+  // since the real agent path is key-gated. NODE_ENV is inlined at build
+  // time, so production bundles compile this whole effect away.
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    const w = window as unknown as {
+      capturiaDrive?: { setOverlays: (specs: OverlaySpec[]) => void };
+    };
+    w.capturiaDrive = {
+      setOverlays: (specs) => setOverlays(Array.isArray(specs) ? specs : []),
+    };
+    return () => {
+      delete w.capturiaDrive;
+    };
+  }, []);
 
   // Closed loop: a tap on an interactive leaf (ActionButton) inside an
   // agent-authored surface arrives here via A2uiOverlayLayer's onAction. Re-inject
@@ -877,11 +963,12 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
   // Leaf overlays render through the active renderer (direct React, or the A2UI
   // host when Surface Mode is on). Authored surfaces ALWAYS need the A2UI host, so
   // they render through their own dedicated A2uiOverlayLayer regardless of the
-  // Surface Mode toggle — kept separate so toggling modes never re-animates the
+  // Surface Mode toggle, kept separate so toggling modes never re-animates the
   // leaf overlays, and the surface layer is always mounted so a removed surface's
   // 320ms exit animation plays out before its provider would tear down.
-  const leafOverlays = overlays.filter((o) => o.type !== "Surface");
-  const surfaceOverlays = overlays.filter((o) => o.type === "Surface");
+  // Split from feedOverlays so a mirror receiver renders the adopted state.
+  const leafOverlays = feedOverlays.filter((o) => o.type !== "Surface");
+  const surfaceOverlays = feedOverlays.filter((o) => o.type === "Surface");
 
   return (
     <div
@@ -897,15 +984,16 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
       <WebcamFeed />
 
       {/* Layer 0.4: audio-reactive vignette. Breathes with --mic-energy (set by
-          useSpeechEnergy from speech results). Stays in Program Output since the
-          breathing IS part of the broadcast look; inert (energy 0) when idle and
-          unmounted entirely when the operator switches FX off. */}
-      {fxOn && <div className="energy-vignette" aria-hidden />}
+          useSpeechEnergy from speech results, or from mirrored speak pings on
+          a receiver). Stays in Program Output since the breathing IS part of
+          the broadcast look; inert (energy 0) when idle and unmounted entirely
+          when FX are off. */}
+      {feedFxOn && <div className="energy-vignette" aria-hidden />}
 
       {/* Layer 0.45: audience-voting QR. Part of the BROADCAST look on purpose:
           Zoom/Meet viewers scan it off the published feed, so it must survive
-          Program Output. */}
-      {voteOn && voteUrl && <VoteQRBadge url={voteUrl} />}
+          Program Output. On a mirror receiver this is the PRIMARY's room. */}
+      {feedVoteUrl && <VoteQRBadge url={feedVoteUrl} />}
 
       {/* Layer 0.5: ambient floating particles when voice is active (hidden in clean output) */}
       {!outputMode && <AmbientParticles active={isListening} />}
@@ -913,7 +1001,7 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
       {/* Layer 1: leaf overlays (the published feed). Surface Mode renders these
           through the live A2UI runtime; default is the direct React renderer.
           Both read the one `overlays` source of truth. */}
-      {surfaceMode ? (
+      {feedSurfaceMode ? (
         <A2uiOverlayLayer overlays={leafOverlays} />
       ) : (
         <OverlayLayer overlays={leafOverlays} />
@@ -923,8 +1011,13 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
           trees, so they always render through their own A2UI host, independent
           of the Surface Mode toggle. Always mounted so exit animations finish.
           onSurfaceAction closes the loop: a tap on an authored ActionButton is
-          re-injected as an [ACTION] turn so the agent can respond live. */}
-      <A2uiOverlayLayer overlays={surfaceOverlays} onSurfaceAction={handleSurfaceAction} />
+          re-injected as an [ACTION] turn so the agent can respond live. A
+          mirror receiver gets NO handler: its copy of the surface must never
+          open agent runs or cast votes (the Control Room owns interaction). */}
+      <A2uiOverlayLayer
+        overlays={surfaceOverlays}
+        onSurfaceAction={isMirrorReceiver ? undefined : handleSurfaceAction}
+      />
 
       {/* Everything below is operator chrome, hidden in Program Output so OBS /
           the virtual camera capture only the webcam + overlays. */}

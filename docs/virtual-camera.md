@@ -61,13 +61,21 @@ painting flips the label to "Camera: Frozen" so a stuck feed never
 masquerades as healthy. `CAPTURIA_CAMERA_LOG=1` makes main log pump stats
 every 5s.
 
-Current limitations:
+How the Control Room's overlays reach the camera: the offscreen Program
+Output page is its own studio instance, so the visible window mirrors its
+live state to it over a same-origin BroadcastChannel (`lib/mirror.ts`). The
+Control Room (any studio page NOT loaded with `?out=1`) publishes the overlay
+state, the Surface Mode flag, the FX switch, the speaking-energy heartbeat,
+and the vote-room URL on every change; every `?out=1` page adopts it, and a
+late-joining output page requests a snapshot on load. This also works on the
+web: an OBS browser-source tab on `/studio?out=1` mirrors the studio tab in
+the same browser profile. Mirroring is strictly one-directional; output pages
+never publish, never run speech, never open agent runs, and never claim a
+vote room (they show the Control Room's QR verbatim). Known limitation: two
+open Control Room tabs both publish and the last writer wins on the camera
+page, so keep one Control Room per machine.
 
-- The offscreen Program Output page is its own studio instance, so overlays
-  driven in the Control Room window do not yet appear on the native camera
-  feed (they do on the OBS bridge, which captures the visible window).
-  Mirroring the live overlay state into the camera page is the next
-  milestone; until then the native camera publishes the webcam layer.
+Current limitations:
 - Packaged builds (`npm run pack:mac`) do not ship the capturia-frames addon
   yet (see the deferred-work notes in electron-builder.yml), so the native
   camera works from a source checkout (`npm run electron`) only; the packaged
