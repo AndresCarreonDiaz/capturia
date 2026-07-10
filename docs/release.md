@@ -51,7 +51,8 @@ Environment summary (the first two are the pack:mac contract, see
 | `CSC_NAME` | Keychain signing identity, no certificate-type prefix. Release builds need the Developer ID Application identity to resolve (electron-builder prefers it automatically). |
 | `CAPTURIA_TEAM_ID` | Apple Team ID; builds/verifies the embedded camera extension and pins the signature assertions. |
 | `CAPTURIA_PROVISIONING_PROFILE` | Path to a `.provisionprofile` for `com.capturia.desktop` authorizing the system-extension entitlement (below). Without it the app still signs, but in-app camera install reports itself unavailable. |
-| `CAPTURIA_EXT_PROVISIONING_PROFILE` | Path to the portal-minted **Developer ID** `.provisionprofile` for `com.capturia.camera.extension` (below). Set: the afterPack hook re-signs the embedded camera extension into the Developer ID distribution flavor (see "The embedded camera extension"). Unset: the extension ships as the dev flavor and `notarize:mac` refuses to submit a build that embeds it. |
+| `CAPTURIA_EXT_PROVISIONING_PROFILE` | Path to the portal-minted **Developer ID** `.provisionprofile` for `com.capturia.camera.extension` (below). Set: the afterPack hook re-signs the embedded camera extension into the Developer ID distribution flavor (see "The embedded camera extension"). Needs the Developer ID identity in a searchable keychain: the CSC_LINK temp-keychain flow happens after the hook runs, so this step supports the `CSC_NAME` flow only. Unset: the extension ships as the dev flavor and `notarize:mac` refuses to submit a build that embeds it. |
+| `CAPTURIA_EXT_SIGN_IDENTITY_SHA1` | Optional. Pins the exact Developer ID Application certificate (its SHA-1 from `security find-identity -v -p codesigning`) for the extension re-sign when two distinct certificates share a name, e.g. a renewed certificate coexisting with its predecessor; the build refuses to pick one by surprise and names this variable. |
 | `CAPTURIA_NOTARY_PROFILE` | Name of a `notarytool store-credentials` keychain profile (below). Unset: notarization is skipped with a clear log line. Set: the DMG is submitted with `--wait`, rejection fails the build loudly (the developer log is printed), then app and DMG are stapled and `spctl --assess` must accept the app. |
 
 ## One-time portal setup: the Developer ID provisioning profile
@@ -174,10 +175,18 @@ in `native/CapturiaCamera/dist-signed` untouched. Concretely, the re-sign:
 
 The step is asserted in the same fail-loudly style as the rest of the pack:
 the profile must be the Developer ID flavor (all-devices, no device list) FOR
-the extension's App ID and team, and after the re-sign the bundle must verify
-deep-strict with a Developer ID signature, matching team, hardened runtime,
-secure timestamp, the entitlement set above, and the exact profile embedded.
-`pack:mac` validates the whole contract before spending minutes building.
+the extension's App ID and team; BEFORE the re-sign the embedded bundle's
+provenance must match the signing team (its Info.plist bakes the build-time
+team into `CMIOExtensionMachServiceName`, which no re-sign can fix, so a
+stale `dist-signed` build from another team is refused with a rebuild
+instruction instead of shipping a notarized but camera-dead artifact); and
+after the re-sign the bundle must verify deep-strict with a Developer ID
+signature, matching team, hardened runtime, secure timestamp, the entitlement
+set above (probed structurally, key by key), and the exact profile embedded.
+`pack:mac` validates the whole contract before spending minutes building, and
+after packing asserts the OUTER app's signing team equals the extension
+profile's (electron-builder resolves `CSC_NAME` with no team awareness, and
+an app from another team could not activate its own extension).
 Without the env var nothing changes: the dev flavor ships as-is (the dev loop
 stays byte-identical) and `notarize:mac` keeps refusing to submit a build
 that embeds it. Notarization-bound builds can also still pack WITHOUT the

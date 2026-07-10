@@ -140,22 +140,82 @@ export function resolveDeveloperIdIdentity(env, team) {
     .filter((line) => line.includes('"Developer ID Application'))
     .filter((line) => line.includes(`(${team})`));
   if (env.CSC_NAME) lines = lines.filter((line) => line.includes(env.CSC_NAME));
-  if (lines.length === 0) {
+  // The same certificate visible from two keychains lists twice under one
+  // SHA-1: dedupe by hash so only GENUINELY distinct certificates (say, a
+  // renewed one coexisting with its predecessor, same name) stay ambiguous.
+  let hashes = [...new Set(lines.map((line) => /([0-9A-F]{40})/.exec(line)?.[1]).filter(Boolean))];
+  // The escape hatch for exactly that renewed-certificate case, where no
+  // name filter can tell the two apart: pin the certificate by its hash.
+  const pinned = env.CAPTURIA_EXT_SIGN_IDENTITY_SHA1?.toUpperCase();
+  if (pinned) {
+    if (!hashes.includes(pinned)) {
+      throw new Error(
+        "CAPTURIA_EXT_SIGN_IDENTITY_SHA1 does not name a Developer ID Application identity " +
+          "for the profile's team in this keychain; compare it against " +
+          "security find-identity -v -p codesigning."
+      );
+    }
+    hashes = [pinned];
+  }
+  if (hashes.length === 0) {
     throw new Error(
       "CAPTURIA_EXT_PROVISIONING_PROFILE is set but no Developer ID Application identity " +
         "for the profile's team is in the keychain (CSC_NAME, when set, must match it too); " +
         "the extension cannot be distribution-signed. docs/release.md covers the certificate setup."
     );
   }
-  if (lines.length > 1) {
+  if (hashes.length > 1) {
     throw new Error(
-      "more than one Developer ID Application identity matches; set CSC_NAME so the " +
-        "extension re-sign cannot pick one by surprise."
+      "more than one distinct Developer ID Application certificate matches (a renewed " +
+        "certificate coexisting with its predecessor does this); pin the right one with " +
+        "CAPTURIA_EXT_SIGN_IDENTITY_SHA1=<its SHA-1 hash from security find-identity -v -p codesigning>."
     );
   }
-  const hash = /([0-9A-F]{40})/.exec(lines[0])?.[1];
-  if (!hash) throw new Error("could not parse the Developer ID identity's keychain hash.");
-  return hash;
+  return hashes[0];
+}
+
+// Pre-re-sign provenance for the embedded bundle. The extension's Info.plist
+// bakes the BUILD-time team into CMIOExtensionMachServiceName
+// ($(DEVELOPMENT_TEAM).<group>.frames in the Xcode project), and CMIO only
+// serves a mach name prefixed by an app group the signature actually holds.
+// Re-signing a stale bundle from another team rewrites TeamIdentifier and the
+// group entitlement but NOT Info.plist, shipping a notarizable extension
+// whose camera is dead on arrival, while destroying the very evidence (the
+// old TeamIdentifier) that would have exposed it. So this runs BEFORE any
+// re-sign, against the ORIGINAL signature and the baked-in mach name, on the
+// dev path (team = CAPTURIA_TEAM_ID) and the release path (team = the
+// extension profile's) alike.
+export function assertExtensionTeamProvenance(bundlePath, team) {
+  const mach = spawnSync(
+    "plutil",
+    [
+      "-extract",
+      "CMIOExtension.CMIOExtensionMachServiceName",
+      "raw",
+      "-o",
+      "-",
+      join(bundlePath, "Contents", "Info.plist"),
+    ],
+    { encoding: "utf8" }
+  );
+  const machService = mach.status === 0 ? mach.stdout.trim() : "";
+  if (!machService.startsWith(`${team}.`)) {
+    throw new Error(
+      "the extension's Info.plist CMIOExtensionMachServiceName was baked for a different " +
+        "team than the one signing this build; a re-sign cannot fix a mach service name, " +
+        "so the camera would be dead on arrival. Rebuild the extension under the signing " +
+        "team: CAPTURIA_TEAM_ID=<that team> bash native/CapturiaCamera/build-signed.sh."
+    );
+  }
+  const detail = spawnSync("codesign", ["-dv", bundlePath], { encoding: "utf8" });
+  const builtTeam = /TeamIdentifier=(\S+)/.exec(`${detail.stderr || ""}${detail.stdout || ""}`)?.[1];
+  if (builtTeam !== team) {
+    throw new Error(
+      "the extension bundle was originally signed under a different team than the one " +
+        "signing this build (a stale dist-signed output); rebuild it under the signing " +
+        "team: CAPTURIA_TEAM_ID=<that team> bash native/CapturiaCamera/build-signed.sh."
+    );
+  }
 }
 
 function entitlementsPlist(team) {
@@ -238,20 +298,37 @@ export function assertDistSignedExtension({ bundlePath, team, requireProfile = t
   // sandbox, the team-prefixed app group (what the extension and app share
   // frames through), the identity claims the profile authorizes, and no
   // development-only get-task-allow (an instant notarization rejection).
-  const ent = spawnSync("codesign", ["-d", "--entitlements", "-", bundlePath], {
+  // Probed STRUCTURALLY on the XML plist form: a flat substring check for the
+  // group could never fail (the group is a prefix of the application-
+  // identifier claim), so each value is asserted under its own key.
+  const ent = spawnSync("codesign", ["-d", "--entitlements", "-", "--xml", bundlePath], {
     encoding: "utf8",
   });
-  const entReport = `${ent.stdout || ""}${ent.stderr || ""}`;
-  for (const needed of [
-    "com.apple.security.app-sandbox",
-    `${team}.${APP_GROUP}`,
-    `${team}.${EXT_ID}`,
-  ]) {
-    if (!entReport.includes(needed)) {
-      throw new Error(`the re-signed extension's entitlements lack ${needed}.`);
-    }
+  const entXml = ent.stdout || "";
+  if (ent.status !== 0 || !entXml.includes("<plist")) {
+    throw new Error("could not read the re-signed extension's entitlements as XML.");
   }
-  if (entReport.includes("get-task-allow")) {
+  const quote = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const plistEntry = (key, valueXml) =>
+    new RegExp(`<key>${quote(key)}</key>\\s*${valueXml}`).test(entXml);
+  if (!plistEntry("com.apple.security.app-sandbox", "<true/>")) {
+    throw new Error("the re-signed extension's entitlements lack the app sandbox.");
+  }
+  const groups = /<key>com\.apple\.security\.application-groups<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(
+    entXml
+  )?.[1];
+  if (!groups || !new RegExp(`<string>${quote(`${team}.${APP_GROUP}`)}</string>`).test(groups)) {
+    throw new Error(
+      "the re-signed extension's application-groups entitlement lacks the team app group."
+    );
+  }
+  if (!plistEntry("com.apple.application-identifier", `<string>${quote(`${team}.${EXT_ID}`)}</string>`)) {
+    throw new Error("the re-signed extension's entitlements lack the application-identifier claim.");
+  }
+  if (!plistEntry("com.apple.developer.team-identifier", `<string>${quote(team)}</string>`)) {
+    throw new Error("the re-signed extension's entitlements lack the team-identifier claim.");
+  }
+  if (entXml.includes("get-task-allow")) {
     throw new Error(
       "the re-signed extension still claims get-task-allow (development flavor); " +
         "notarization would reject it."

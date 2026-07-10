@@ -35,6 +35,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
   EXT_ID,
+  assertExtensionTeamProvenance,
   distSignEmbeddedExtension,
   resolveDeveloperIdIdentity,
   validateExtDistSignEnv,
@@ -87,6 +88,15 @@ function embedCameraExtension(resourcesSiblingContents) {
   // cp -R, not cpSync: preserves the bundle byte-for-byte the way codesign
   // sealed it (build-signed.sh uses the same to stage its dist).
   execFileSync("cp", ["-R", distSigned, dest]);
+
+  // Provenance, BEFORE any re-sign can rewrite the evidence: a pre-existing
+  // dist-signed bundle is reused as-is, so it can be a stale build from
+  // another team, and its Info.plist mach service name bakes that team in
+  // (unfixable by signing; the camera would ship dead). Checked against the
+  // release team (the extension profile's) or, on the dev path, against
+  // CAPTURIA_TEAM_ID; with neither there is no team claim to hold it to.
+  const expectedTeam = distSign?.team ?? teamId;
+  if (expectedTeam) assertExtensionTeamProvenance(dest, expectedTeam);
 
   // Release flavor: re-sign the embedded copy with the Developer ID identity,
   // the regenerated distribution entitlements, and the portal profile, then
