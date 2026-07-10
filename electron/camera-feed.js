@@ -36,7 +36,7 @@
 // visible studio broadcasts its state over a same-origin BroadcastChannel
 // (lib/mirror.ts + hooks/useStudioMirror.ts), no preload required.
 
-const { BrowserWindow } = require("electron");
+const { app, BrowserWindow } = require("electron");
 const path = require("path");
 
 const {
@@ -55,6 +55,14 @@ const {
   cameraToggleAction,
 } = require("./gen/camera-feed");
 
+// Where the addon lives per layout. Dev: the node-gyp output inside the
+// checkout. Packaged: Contents/Resources/capturia_frames.node, placed there
+// by scripts/after-pack.mjs (a .node cannot load from inside the asar, so it
+// ships as a real file next to the other native pieces).
+const ADDON_PATH = app.isPackaged
+  ? path.join(process.resourcesPath, "capturia_frames.node")
+  : path.join(__dirname, "..", "native", "capturia-frames", "build", "Release", "capturia_frames.node");
+
 // Lazy addon load. A failed load is retried only when retryAfterFailure is
 // set (start(), a user intent), so cheap callers like getState() never spam
 // require attempts, but fixing the environment (building the addon, moving
@@ -64,19 +72,15 @@ function loadAddon(retryAfterFailure = false) {
   if (addon) return addon;
   if (addon === null && !retryAfterFailure) return null;
   try {
-    addon = require(path.join(
-      __dirname,
-      "..",
-      "native",
-      "capturia-frames",
-      "build",
-      "Release",
-      "capturia_frames.node"
-    ));
+    addon = require(ADDON_PATH);
   } catch (err) {
     addon = null;
+    // Keep the dev message stable: scripts/e2e-desktop-camera.mjs matches
+    // "capturia-frames addon not built" to classify its environment skip.
     console.error(
-      "Capturia: capturia-frames addon not built (cd native/capturia-frames && npx node-gyp rebuild):",
+      app.isPackaged
+        ? `Capturia: capturia-frames addon missing from the packaged app (${ADDON_PATH}); repack with npm run pack:mac:`
+        : "Capturia: capturia-frames addon not built (cd native/capturia-frames && npx node-gyp rebuild):",
       err.message
     );
   }

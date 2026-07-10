@@ -41,6 +41,7 @@ import { useSpeechEnergy } from "@/hooks/useSpeechEnergy";
 import { useStudioMirror } from "@/hooks/useStudioMirror";
 import { controlRoomSearch, detectMirrorRole, type MirrorSnapshot } from "@/lib/mirror";
 import { useVoteRoom } from "@/hooks/useVoteRoom";
+import { voteUrlLocalhostOnly } from "@/lib/vote-url";
 import VoteQRBadge from "@/components/VoteQRBadge";
 import { derivePollFromOverlays } from "@/lib/derive-poll";
 import type { PollOption } from "@/lib/vote-store";
@@ -521,7 +522,7 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
   // operator knows why the on-feed QR is showing an empty room, instead of the
   // failure being swallowed.
   const [votePublishError, setVotePublishError] = useState<string | null>(null);
-  const { voteUrl, castHostVote } = useVoteRoom({
+  const { voteUrl, voteOriginUnusable, castHostVote } = useVoteRoom({
     // A mirror receiver must never publish a vote room of its own: its
     // mirrored overlays would derive the same poll and claim a second room
     // nobody's phones are in. It shows the PRIMARY's QR instead (below).
@@ -1068,7 +1069,7 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
               clears the CueDeck header (top-16 left-4) on narrow viewports. */}
           {(() => {
             const voteUrlUnreachable =
-              voteOn && !!voteUrl && /\/\/(localhost|127\.0\.0\.1)[:/]/.test(voteUrl);
+              voteOn && (voteOriginUnusable || (!!voteUrl && voteUrlLocalhostOnly(voteUrl)));
             const publishError = voteOn ? votePublishError : null;
             if (!(!isSupported || modelKeyError || voteUrlUnreachable || publishError || runError))
               return null;
@@ -1110,8 +1111,11 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
                     </div>
                   </div>
                 )}
-                {/* The vote QR points at localhost: phones (and Zoom viewers)
-                    can't reach it. Operator-only; the QR itself stays clean. */}
+                {/* Phones can't reach the vote page from here. Two flavors:
+                    localhost (QR still renders; the operator may be demoing
+                    on this machine) and a non-http(s) origin like the
+                    packaged app's file:// (the QR is suppressed entirely, so
+                    say why the feed shows none). Operator-only either way. */}
                 {voteUrlUnreachable && (
                   <div className="flex items-start gap-3 rounded-xl border border-amber-400/30 bg-black/70 px-4 py-3 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.4)]">
                     <span
@@ -1120,13 +1124,27 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
                       style={{ boxShadow: "0 0 8px #fbbf24" }}
                     />
                     <div className="text-[13px] leading-snug text-white/80">
-                      <span className="font-semibold text-white">
-                        The vote QR points at localhost,
-                      </span>{" "}
-                      so phones can&apos;t reach it. For an in-room audience, open the studio
-                      via your LAN IP (e.g. http://192.168.x.x:3000/studio). For remote
-                      viewers on Zoom/Meet, self-host or tunnel Capturia and set
-                      NEXT_PUBLIC_CAPTURIA_ORIGIN to that public URL.
+                      {voteUrl ? (
+                        <>
+                          <span className="font-semibold text-white">
+                            The vote QR points at localhost,
+                          </span>{" "}
+                          so phones can&apos;t reach it. For an in-room audience, open the
+                          studio via your LAN IP (e.g. http://192.168.x.x:3000/studio). For
+                          remote viewers on Zoom/Meet, self-host or tunnel Capturia and set
+                          NEXT_PUBLIC_CAPTURIA_ORIGIN to that public URL.
+                        </>
+                      ) : (
+                        <>
+                          <span className="font-semibold text-white">
+                            Audience voting is off the feed:
+                          </span>{" "}
+                          this studio runs from a file:// origin phones can&apos;t reach, so
+                          no QR is shown. Voting needs a hosted Capturia: self-host or tunnel
+                          one (it&apos;s open source) and use a build with
+                          NEXT_PUBLIC_CAPTURIA_ORIGIN set to that public URL.
+                        </>
+                      )}
                     </div>
                   </div>
                 )}

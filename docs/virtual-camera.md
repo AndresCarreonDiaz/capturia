@@ -89,12 +89,35 @@ of silence when it crashed. Known limitation: two open Control Room tabs both
 publish and the last writer wins on the camera page, so keep one Control Room
 per machine.
 
+### Packaged builds
+
+`npm run pack:mac` ships the whole native camera stack inside Capturia.app:
+the capturia-frames addon and the capturia-speech helper land in
+`Contents/Resources`, and the CMIO camera extension is embedded at
+`Contents/Library/SystemExtensions`. Signing is driven entirely by the
+environment so nothing identity-like lives in the repo:
+
+```
+CSC_NAME="Your Name" CAPTURIA_TEAM_ID=XXXXXXXXXX npm run pack:mac
+```
+
+`CSC_NAME` is the keychain identity WITHOUT its certificate-type prefix
+(electron-builder resolves Developer ID Application certificates first);
+`CAPTURIA_TEAM_ID` lets the pack build and verify the embedded extension via
+`native/CapturiaCamera/build-signed.sh`. With neither set you get the
+explicit ad-hoc fallback: an unsigned but runnable app, no extension build,
+no keychain surprises (CI-safe). `node scripts/smoke-packaged-app.mjs` boots
+the packaged app headlessly and, when the extension is enabled on the
+machine, asserts the camera feed connects and pumps.
+
+Until notarization credentials exist, `spctl --assess` rejects the signed
+app; that only gates downloads from the internet, not local runs.
+
 Current limitations:
-- Packaged builds (`npm run pack:mac`) do not ship the capturia-frames addon
-  yet (see the deferred-work notes in electron-builder.yml), so the native
-  camera works from a source checkout (`npm run electron`) only; the packaged
-  app reports "Native camera module not built" and degrades to the OBS
-  bridge.
+- The packaged app does not yet ACTIVATE its embedded extension (that
+  approval flow is the next slice); today the extension gets activated once
+  via the dev host app (`native/CapturiaCamera/build-signed.sh`, then
+  `CapturiaCameraHost activate`), and any Capturia build then feeds it.
 - One sink client at a time: the extension keeps a single sink client, so do
   not run `electron/spike-frames.js` with `CAPTURIA_SINK=1` while the app is
   feeding the camera. If another client does steal the sink, the app detects

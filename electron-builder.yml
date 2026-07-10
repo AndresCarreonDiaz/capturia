@@ -1,9 +1,20 @@
-# Packaging for the desktop shell. Produces an unsigned Capturia.app until the
-# Apple Developer membership activates (tracked in the M7b issue); every
-# signing-related key below is inert without an identity but makes signing a
-# config flip, not a rework. Build with:  npm run pack:mac
-# (runs build:electron first: electron/gen libs + the out/ static export).
+# Packaging for the desktop shell. Build with:  npm run pack:mac
+# (scripts/pack-mac.mjs: builds the static UI, the speech helper, and the
+# camera addon, stages whisper, then runs electron-builder). Signing is
+# env-driven through that script (CSC_NAME + CAPTURIA_TEAM_ID); with no env it
+# explicitly falls back to the unsigned/ad-hoc pack so CI and contributor
+# machines keep working. No identity string or team id is ever committed to
+# this public file.
 
+# Bundle id decision: the app keeps com.capturia.desktop (what the loopback
+# runtime, keychain entries, and macOS permission grants are already keyed
+# on). The embedded CMIO extension keeps its own id,
+# com.capturia.camera.extension, unchanged from the dev host app so an
+# extension already activated on a dev machine keeps matching. When the in-app
+# activation flow lands (M8 slice 2) the packaged app itself will need the
+# restricted system-extension.install entitlement plus a provisioning profile
+# minted for com.capturia.desktop; until then activation still happens via the
+# dev host app (native/CapturiaCamera).
 appId: com.capturia.desktop
 productName: Capturia
 
@@ -55,10 +66,19 @@ files:
 # node_modules the staged copy depends on. Ship it provisioned
 # (npx nodejs-whisper download before packing) or transcription surfaces its
 # provisioning error at runtime; pack:mac prints a warning either way.
+#
+# The same hook ships the rest of the native camera stack: the capturia-speech
+# helper and the capturia-frames addon into Contents/Resources (a .node cannot
+# load from inside the asar; electron/camera-feed.js requires it from
+# process.resourcesPath when packaged), and the CMIO camera extension into
+# Contents/Library/SystemExtensions. afterPack runs BEFORE signing, so
+# everything it places is sealed and (except the extension, see signIgnore)
+# signed by electron-builder.
 afterPack: scripts/after-pack.mjs
 
-# Nothing here is a Node native addon (nodejs-whisper spawns a prebuilt
-# binary), so skip the electron-rebuild pass.
+# capturia-frames is pure N-API (ABI-stable across Node/Electron) and ships
+# via the afterPack hook, and nodejs-whisper spawns a prebuilt binary, so the
+# electron-rebuild pass stays off.
 npmRebuild: false
 
 mac:
@@ -67,27 +87,30 @@ mac:
   target:
     - target: dir
       arch: arm64
-  # No signing identity yet: membership activation pending. When it lands:
-  # delete the identity line (electron-builder then picks up the keychain
-  # identity or CSC_NAME), set notarize: true, AND export APPLE_ID /
-  # APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID in the packing environment;
-  # without those credentials electron-builder skips notarization silently
-  # rather than failing. The signed build must also ship whisper fully
-  # provisioned: a post-install download would write into the bundle and
-  # break its signature.
-  identity: null
+  # Identity comes from the ENVIRONMENT only (CSC_NAME, resolved against the
+  # keychain by electron-builder; see scripts/pack-mac.mjs for the whole
+  # contract). There is deliberately no identity key here: null would disable
+  # signing even with CSC_NAME set, and a literal name cannot live in a public
+  # file. Without CSC_NAME, pack-mac.mjs disables identity auto-discovery, so
+  # the fallback is the same unsigned/ad-hoc app as before signing existed.
+  #
+  # Notarization stays off until credentials exist. When they do: set
+  # notarize: true AND export APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD /
+  # APPLE_TEAM_ID in the packing environment; without those credentials
+  # electron-builder skips notarization silently rather than failing. A
+  # notarized build must also ship whisper fully provisioned: a post-install
+  # download would write into the bundle and break its signature.
   hardenedRuntime: true
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
   notarize: false
-  # The CMIO camera extension (native/CapturiaCamera) is NOT embedded yet; it
-  # needs its own provisioning profile + strict signing before it can ship
-  # inside the app. That lands with the M7b issue via an afterPack hook.
-  # Same deferral for the capturia-frames N-API addon (native/capturia-frames/
-  # build/Release/capturia_frames.node): it is not in `files` above, and a
-  # .node cannot load from inside the asar anyway, so it must ship unpacked
-  # (asarUnpack or extraResources) alongside the embedded extension. Until
-  # then packaged builds have no native camera: electron/camera-feed.js
-  # reports "Native camera module not built" and the shell degrades cleanly
-  # (documented in docs/virtual-camera.md). The addon is pure N-API, so the
-  # npmRebuild: false above stays correct when it ships.
+  # The embedded CMIO camera extension (placed by scripts/after-pack.mjs at
+  # Contents/Library/SystemExtensions) arrives already signed by
+  # native/CapturiaCamera/build-signed.sh with its own entitlements (sandbox +
+  # team app group) and provisioning profile. electron-builder's per-file
+  # signing walk force-signs every Mach-O it finds with the inherit
+  # entitlements above, which would strip the extension's own; keep it out of
+  # the walk. The outer app signature still SEALS the extension as nested
+  # code, so codesign --verify --deep --strict covers it.
+  signIgnore:
+    - "Library/SystemExtensions"
