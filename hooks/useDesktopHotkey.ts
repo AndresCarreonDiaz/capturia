@@ -24,6 +24,24 @@ export interface DesktopStateReport {
   listening: boolean;
   voiceSupported: boolean;
 }
+// Virtual-camera feed state main reports (the Capturia CMIO extension fed by
+// the offscreen Program Output window; electron/camera-feed.js).
+export interface DesktopCameraState {
+  available: boolean;
+  running: boolean;
+  // Wanted but not delivering yet: page load (with retries) or sink-connect
+  // backoff. A stop request while connecting cancels the pending start.
+  connecting: boolean;
+  // Running, but the page has stopped painting (viewers see a frozen frame).
+  frozen: boolean;
+  fps: number;
+  // Offscreen page paints in the last full second, and when the last one was.
+  paintFps: number;
+  lastPaintAt: number | null;
+  pumped: number;
+  droppedQueueFull: number;
+  error: string | null;
+}
 interface CapturiaBridge {
   isDesktop: boolean;
   onHotkey: (handler: (payload: HotkeyPayload) => void) => () => void;
@@ -43,6 +61,15 @@ interface CapturiaBridge {
   // Optional: a stale packaged preload may predate this method; callers must
   // treat it as possibly missing (useDesktopStateReport already does).
   reportState?: (state: DesktopStateReport) => Promise<void>;
+  // Virtual camera (M7b): the Capturia CMIO extension feed owned by main;
+  // optional for the same stale-preload reason. The invokes resolve null when
+  // main has no camera module (electron/gen not built).
+  camera?: {
+    state: () => Promise<DesktopCameraState | null>;
+    start: () => Promise<DesktopCameraState | null>;
+    stop: () => Promise<DesktopCameraState | null>;
+    onState: (handler: (state: DesktopCameraState) => void) => () => void;
+  };
   // On-device streaming speech (macOS 26+ helper); optional for the same
   // stale-preload reason. Events: ready | downloading-model | interim |
   // final | error | done.
@@ -94,4 +121,29 @@ export function useDesktopStateReport({ listening, voiceSupported }: DesktopStat
   useEffect(() => {
     window.capturia?.reportState?.({ listening, voiceSupported })?.catch(() => {});
   }, [listening, voiceSupported]);
+}
+
+// Live virtual-camera state: an initial snapshot plus the lifecycle
+// transitions main pushes (connect, stop, crash recovery). null on web, on a
+// stale preload, and while main has no camera module, so callers can simply
+// hide any camera status when it is null.
+export function useDesktopCameraState(): DesktopCameraState | null {
+  const [state, setState] = useState<DesktopCameraState | null>(null);
+  useEffect(() => {
+    const camera = window.capturia?.camera;
+    if (!camera) return;
+    let cancelled = false;
+    camera
+      .state()
+      .then((s) => {
+        if (!cancelled && s) setState(s);
+      })
+      .catch(() => {});
+    const unsubscribe = camera.onState((s) => setState(s));
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
+  return state;
 }

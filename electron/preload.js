@@ -66,6 +66,33 @@ contextBridge.exposeInMainWorld("capturia", {
   reportState(state) {
     return ipcRenderer.invoke("state:report", state);
   },
+  // Virtual camera (M7b): the Capturia CMIO extension feed owned by main.
+  // state/start/stop resolve to the current CameraFeedState snapshot (null
+  // when the camera module is unavailable); onState subscribes to the
+  // lifecycle transitions main pushes on the "camera" channel.
+  camera: {
+    state() {
+      return ipcRenderer.invoke("camera:state");
+    },
+    start() {
+      return ipcRenderer.invoke("camera:start");
+    },
+    stop() {
+      return ipcRenderer.invoke("camera:stop");
+    },
+    onState(handler) {
+      const listener = (_event, payload) => {
+        if (!payload || typeof payload !== "object") return;
+        try {
+          handler(payload);
+        } catch (err) {
+          console.error("capturia.camera.onState handler threw:", err);
+        }
+      };
+      ipcRenderer.on("camera", listener);
+      return () => ipcRenderer.off("camera", listener);
+    },
+  },
   // On-device streaming speech (macOS 26+): start/stop the mic helper and
   // subscribe to its events (ready/interim/final/error/done).
   speech: {

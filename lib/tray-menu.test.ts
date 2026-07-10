@@ -93,4 +93,63 @@ describe("buildTrayMenu", () => {
       expect(item.label).toBeTruthy();
     }
   });
+
+  it("shows no camera item when the shell reports no camera state", () => {
+    const items = buildTrayMenu(state()).filter((i) => i.action === "toggle-camera");
+    expect(items).toHaveLength(0);
+  });
+
+  it("labels the camera toggle by its running state", () => {
+    const off = buildTrayMenu(state({ cameraAvailable: true, cameraRunning: false })).find(
+      (i) => i.action === "toggle-camera"
+    );
+    const on = buildTrayMenu(state({ cameraAvailable: true, cameraRunning: true })).find(
+      (i) => i.action === "toggle-camera"
+    );
+    expect(off?.label).toBe("Camera: Off");
+    expect(on?.label).toBe("Camera: On");
+  });
+
+  it("keeps the camera toggle enabled even when the extension is missing", () => {
+    // Clicking while unavailable retries discovery (someone may have just
+    // approved the extension in System Settings), so it must stay clickable.
+    const item = buildTrayMenu(
+      state({ cameraAvailable: false, cameraRunning: false })
+    ).find((i) => i.action === "toggle-camera");
+    expect(item?.enabled).toBe(true);
+    expect(item?.label).toBe("Camera: Off");
+  });
+
+  it("labels a pending connect as Connecting, beating every other state", () => {
+    // The click while connecting CANCELS the pending start, so the label must
+    // say the feed is in flight, not a settled On/Off.
+    const item = buildTrayMenu(
+      state({
+        cameraAvailable: true,
+        cameraRunning: false,
+        cameraConnecting: true,
+        cameraHasError: true,
+      })
+    ).find((i) => i.action === "toggle-camera");
+    expect(item?.label).toBe("Camera: Connecting…");
+    expect(item?.enabled).toBe(true);
+  });
+
+  it("labels a running feed with no paints as Frozen, never a healthy On", () => {
+    const frozen = buildTrayMenu(
+      state({ cameraAvailable: true, cameraRunning: true, cameraFrozen: true })
+    ).find((i) => i.action === "toggle-camera");
+    const healthy = buildTrayMenu(
+      state({ cameraAvailable: true, cameraRunning: true, cameraFrozen: false })
+    ).find((i) => i.action === "toggle-camera");
+    expect(frozen?.label).toBe("Camera: Frozen");
+    expect(healthy?.label).toBe("Camera: On");
+  });
+
+  it("labels a stopped feed with an error as Error, not a plain Off", () => {
+    const item = buildTrayMenu(
+      state({ cameraAvailable: true, cameraRunning: false, cameraHasError: true })
+    ).find((i) => i.action === "toggle-camera");
+    expect(item?.label).toBe("Camera: Error");
+  });
 });

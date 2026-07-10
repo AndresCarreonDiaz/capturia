@@ -344,11 +344,54 @@ Napi::Value ListDevices(const Napi::CallbackInfo& info) {
   return out;
 }
 
+// listStreams(deviceNameOrUid) -> [{ id, name, direction }]. Debug/diagnostic
+// view of a device's streams, so sink selection is verifiable from JS.
+Napi::Value ListStreams(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1 || !info[0].IsString()) {
+    Napi::TypeError::New(env, "listStreams(deviceNameOrUid)").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  const std::string wanted = info[0].As<Napi::String>().Utf8Value();
+  Napi::Array out = Napi::Array::New(env);
+  for (CMIODeviceID device : CopyDeviceIDs()) {
+    const std::string name = GetObjectString(device, kCMIOObjectPropertyName);
+    const std::string uid = GetObjectString(device, kCMIODevicePropertyDeviceUID);
+    if (name != wanted && uid != wanted) continue;
+    uint32_t i = 0;
+    for (CMIOStreamID stream : CopyStreamIDs(device)) {
+      Napi::Object o = Napi::Object::New(env);
+      o.Set("id", Napi::Number::New(env, stream));
+      o.Set("name",
+            Napi::String::New(env, GetObjectString(stream, kCMIOObjectPropertyName)));
+      CMIOObjectPropertyAddress dirAddr = PropAddr(kCMIOStreamPropertyDirection);
+      UInt32 direction = 0;
+      UInt32 used = 0;
+      if (CMIOObjectGetPropertyData(stream, &dirAddr, 0, nullptr, sizeof(direction),
+                                    &used, &direction) == kCMIOHardwareNoError) {
+        o.Set("direction", Napi::Number::New(env, direction));
+      } else {
+        o.Set("direction", Napi::Number::New(env, -1));
+      }
+      out.Set(i++, o);
+    }
+    break;
+  }
+  return out;
+}
+
 void QueueAlteredNoop(CMIOStreamID, void*, void*) {}
 
 // connectSink(deviceNameOrUid) -> bool. Finds the Capturia device, picks its
-// SINK stream (direction 1; OBS falls back to "the second stream"), copies the
-// buffer queue, and starts the stream.
+// SINK stream, copies the buffer queue, and starts the stream.
+//
+// DAL direction semantics (verified live against the Capturia extension, and
+// the root cause of an early pumped=0 bug): kCMIOStreamPropertyDirection is 1
+// for INPUT streams (device -> host, the normal camera source) and 0 for
+// OUTPUT streams (host -> device, the sink we feed). Selecting direction 1
+// grabs the SOURCE stream: its queue fills with the extension's own splash
+// frames and every enqueue drops as "queue full" while viewers keep seeing
+// the splash. OBS's "second stream" convention stays as the fallback.
 Napi::Value ConnectSink(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   if (info.Length() < 1 || !info[0].IsString()) {
@@ -356,6 +399,12 @@ Napi::Value ConnectSink(const Napi::CallbackInfo& info) {
     return env.Undefined();
   }
   const std::string wanted = info[0].As<Napi::String>().Utf8Value();
+
+  // Idempotent: a second in-process connect would copy a fresh buffer queue,
+  // orphan the one the pump holds, and register another client with the
+  // extension (which keeps only ONE sink client). Callers wanting a true
+  // reconnect must disconnectSink() first.
+  if (g_sinkQueue) return Napi::Boolean::New(env, true);
 
   for (CMIODeviceID device : CopyDeviceIDs()) {
     const std::string name = GetObjectString(device, kCMIOObjectPropertyName);
@@ -368,11 +417,11 @@ Napi::Value ConnectSink(const Napi::CallbackInfo& info) {
     CMIOStreamID sink = 0;
     for (CMIOStreamID stream : streams) {
       CMIOObjectPropertyAddress dirAddr = PropAddr(kCMIOStreamPropertyDirection);
-      UInt32 direction = 0;
+      UInt32 direction = 1;
       UInt32 used = 0;
       if (CMIOObjectGetPropertyData(stream, &dirAddr, 0, nullptr, sizeof(direction),
                                     &used, &direction) == kCMIOHardwareNoError &&
-          direction == 1) {
+          direction == 0) {  // 0 = output (host -> device): the sink
         sink = stream;
         break;
       }
@@ -468,6 +517,12 @@ Napi::Value SinkStats(const Napi::CallbackInfo& info) {
   out.Set("connected", Napi::Boolean::New(env, g_sinkQueue != nullptr));
   out.Set("pumped", Napi::Number::New(env, static_cast<double>(g_pumped)));
   out.Set("droppedQueueFull", Napi::Number::New(env, static_cast<double>(g_droppedFull)));
+  // Live queue introspection: a queue that reads permanently full means the
+  // extension is not consuming (or the wrong stream was selected).
+  out.Set("queueCount",
+          Napi::Number::New(env, g_sinkQueue ? CMSimpleQueueGetCount(g_sinkQueue) : 0));
+  out.Set("queueCapacity",
+          Napi::Number::New(env, g_sinkQueue ? CMSimpleQueueGetCapacity(g_sinkQueue) : 0));
   return out;
 }
 
@@ -477,6 +532,7 @@ Napi::Object InitModule(Napi::Env env, Napi::Object exports) {
   exports.Set("snapshot", Napi::Function::New(env, Snapshot));
   exports.Set("stats", Napi::Function::New(env, Stats));
   exports.Set("listDevices", Napi::Function::New(env, ListDevices));
+  exports.Set("listStreams", Napi::Function::New(env, ListStreams));
   exports.Set("connectSink", Napi::Function::New(env, ConnectSink));
   exports.Set("pumpFrame", Napi::Function::New(env, PumpFrame));
   exports.Set("disconnectSink", Napi::Function::New(env, DisconnectSink));

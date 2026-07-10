@@ -52,6 +52,10 @@ let mainWindow = null;
 // Set once the loopback CopilotKit runtime is up; null means it failed and
 // the renderer falls back to /api/copilotkit (works in dev via Next).
 let runtimeServer = null;
+// The virtual-camera feed (electron/camera-feed.js): the offscreen Program
+// Output window pumping frames into the Capturia CMIO extension's sink. null
+// when the module could not load (electron/gen not built).
+let cameraFeed = null;
 // Menu-bar tray; created in whenReady, rebuilt whenever renderer state lands.
 let tray = null;
 // Closing the Control Room hides it to the tray; only a real quit (Cmd+Q,
@@ -156,6 +160,13 @@ function registerIpc() {
       if (typeof id === "number") speechHelper.stopSpeechSession(id);
     })
   );
+
+  // Virtual camera: feed state for the renderer, plus start/stop. No payloads
+  // to validate (the calls carry none); guarded() gates the callers. null when
+  // the camera module is unavailable, which callers must treat as "no camera".
+  ipcMain.handle("camera:state", guarded(() => (cameraFeed ? cameraFeed.getState() : null)));
+  ipcMain.handle("camera:start", guarded(() => (cameraFeed ? cameraFeed.start() : null)));
+  ipcMain.handle("camera:stop", guarded(() => (cameraFeed ? cameraFeed.stop() : null)));
 
   // Renderer -> main: voice state for the tray (listening on/off, whether the
   // speech engine exists). Fire-and-forget from the renderer's point of view.
@@ -376,6 +387,31 @@ if (!gotTheLock) {
       console.error("Capturia: runtime server failed to start:", err);
     }
 
+    // Virtual camera feed: the offscreen Program Output window pumping into
+    // the Capturia CMIO extension (started below, after the tray exists, so
+    // its transitions land on a live menu). Same degrade-not-crash posture as
+    // the tray: the require needs electron/gen.
+    try {
+      const { createCameraFeed } = require("./camera-feed");
+      cameraFeed = createCameraFeed({
+        studioUrl: STUDIO_URL,
+        isAllowedNavigation: (url) => isAllowedUrl(url, trustOpts),
+        onStateChange: (state) => {
+          tray?.update();
+          // Fires on lifecycle transitions only (not per frame), so this is a
+          // cheap push; the renderer's camera bridge subscribes to it.
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send("camera", state);
+          }
+        },
+      });
+    } catch (err) {
+      console.error(
+        "Capturia: camera feed unavailable (is electron/gen built? run `npm run electron` or `node scripts/build-electron-libs.mjs`):",
+        err
+      );
+    }
+
     registerIpc();
     createWindow();
 
@@ -386,11 +422,27 @@ if (!gotTheLock) {
     // degrades to a plain windowed app instead of crashing the shell.
     try {
       tray = createTray({
-        getState: () => rendererState,
+        // Camera fields only when the camera module loaded; the tray model
+        // omits the Camera item entirely when they are absent.
+        getState: () => {
+          if (!cameraFeed) return rendererState;
+          const camera = cameraFeed.getState();
+          return {
+            ...rendererState,
+            cameraAvailable: camera.available,
+            cameraRunning: camera.running,
+            cameraConnecting: camera.connecting,
+            cameraFrozen: camera.frozen,
+            cameraHasError: Boolean(camera.error),
+          };
+        },
         toggleHotkey: HOTKEY_TOGGLE_VOICE,
         actions: {
           "toggle-listening": () =>
             mainWindow?.webContents.send("hotkey", { action: "toggle-voice" }),
+          // Intent-routed inside the feed: stops while connecting OR running
+          // (a pending auto-connect must be cancellable), starts otherwise.
+          "toggle-camera": () => cameraFeed?.toggle(),
           "open-control-room": showControlRoom,
           "open-settings": () => {
             showControlRoom();
@@ -405,6 +457,12 @@ if (!gotTheLock) {
         err
       );
     }
+
+    // Feed the Capturia camera for the app's whole lifetime. Smoke mode skips
+    // it: media is denied there, unattended runs must stay deterministic on
+    // machines without the extension, and app.exit() would skip the clean
+    // sink disconnect anyway.
+    if (!isSmoke && cameraFeed) cameraFeed.start();
 
     // Global push-to-talk hotkey. Works even when Capturia isn't focused,
     // so users can toggle voice mid-Zoom-call without alt-tabbing.
@@ -430,10 +488,15 @@ app.on("before-quit", () => {
   isQuitting = true;
 });
 
-// Clean up the global shortcut and tray so they don't linger past app exit.
+// Clean up the global shortcut, camera feed, and tray so they don't linger
+// past app exit. The camera goes first (its teardown disconnects the CMIO
+// sink stream, handing the extension back to its splash) and before the tray
+// so its final state change updates a live menu.
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
   speechHelper.stopAllSpeechSessions();
+  cameraFeed?.dispose();
+  cameraFeed = null;
   tray?.destroy();
   tray = null;
 });

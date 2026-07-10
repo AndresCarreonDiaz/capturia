@@ -32,16 +32,49 @@ plugin, no developer account.
 Tip: load your pitch deck before going into Output mode so your cue cards and
 deck numbers are ready, then switch to Output for the clean feed.
 
-## Coming later (the real product): a native "Capturia" camera
+## The native path (desktop app): the "Capturia" camera
 
-The goal is for **Capturia** to appear directly in every call app's camera list,
-no OBS in between. On macOS that is a Core Media I/O **Camera Extension**, which
-requires:
+With the Capturia camera extension installed and approved (see
+`native/CapturiaCamera/`, built and signed via its `build-signed.sh`; it needs
+a Developer ID certificate and the system-extension entitlement), **Capturia**
+appears directly in every call app's camera list. No OBS in between.
 
-- A paid **Apple Developer account** ($99/year).
-- A Developer ID certificate, the `com.apple.developer.system-extension.install`
-  entitlement, and notarization of the signed app.
+How it works while the desktop app (`npm run electron`) runs:
 
-The extension will capture the same **Program Output** feed this OBS bridge
-captures, so nothing about how you use Capturia changes, the "OBS Virtual Camera"
-entry just becomes "Capturia". This ships once Apple Developer enrollment is done.
+1. Electron main opens a hidden **offscreen window** on the studio's Program
+   Output view (`?out=1`, the same chrome-free page the OBS bridge captures),
+   rendered at 1920x1080 in GPU shared-texture mode.
+2. Every painted frame's IOSurface is copied into a native ring buffer
+   (`native/capturia-frames`), and a fixed 30fps pump delivers the freshest
+   frame into the camera extension's sink stream (repeat-last-frame, so the
+   camera never freezes to black when nothing repaints).
+3. The tray menu's **Camera: On/Off** item mirrors and toggles the feed; it is
+   on by default for the app's whole lifetime and disconnects cleanly on quit
+   (the extension then shows its animated splash again).
+
+If the extension is not installed, the app degrades gracefully: the feed
+reports "extension not found" (the tray shows Camera: Error and a click
+retries discovery) and everything else keeps working; use the OBS bridge
+above instead. While the page is still loading or the sink is connecting the
+tray reads "Camera: Connecting…" and a click cancels; a page that stops
+painting flips the label to "Camera: Frozen" so a stuck feed never
+masquerades as healthy. `CAPTURIA_CAMERA_LOG=1` makes main log pump stats
+every 5s.
+
+Current limitations:
+
+- The offscreen Program Output page is its own studio instance, so overlays
+  driven in the Control Room window do not yet appear on the native camera
+  feed (they do on the OBS bridge, which captures the visible window).
+  Mirroring the live overlay state into the camera page is the next
+  milestone; until then the native camera publishes the webcam layer.
+- Packaged builds (`npm run pack:mac`) do not ship the capturia-frames addon
+  yet (see the deferred-work notes in electron-builder.yml), so the native
+  camera works from a source checkout (`npm run electron`) only; the packaged
+  app reports "Native camera module not built" and degrades to the OBS
+  bridge.
+- One sink client at a time: the extension keeps a single sink client, so do
+  not run `electron/spike-frames.js` with `CAPTURIA_SINK=1` while the app is
+  feeding the camera. If another client does steal the sink, the app detects
+  the stall (queue pinned full, nothing consumed for a few seconds) and
+  reconnects automatically.

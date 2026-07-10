@@ -79,6 +79,21 @@ or human judgment; run them before a release-worthy merge.
    the second cue to fire it. On chunked whisper (macOS <= 15) the same
    sentence fires the card only after the pause; that is expected.
 
+## Native Capturia camera (M7b, requires the installed extension)
+
+1. With the Capturia camera extension installed and approved (see
+   `native/CapturiaCamera/`), `npm run electron-dev`. The tray menu shows
+   **Camera: On** within a few seconds of launch (`CAPTURIA_CAMERA_LOG=1`
+   prints pump stats every 5s if you want proof in the terminal).
+2. Open Photo Booth (or Zoom's camera picker) and select **Capturia** while
+   the app runs. Expect the live Program Output (webcam feed at 1080p30), not
+   the extension's dark scanline splash.
+3. Tray > Camera: Off. The picker's Capturia feed drops back to the splash
+   within a second; Camera: On resumes the live feed.
+4. Quit the app. The splash returns (clean sink disconnect, no frozen last
+   frame), and a relaunch resumes feeding without a reboot or extension
+   restart.
+
 ## Desktop static bundle + loopback runtime (M8)
 
 Automated pieces first: `npm run smoke:runtime` (runtime server auth/protocol
