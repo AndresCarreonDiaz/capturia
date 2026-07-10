@@ -37,11 +37,31 @@
 // refused outright: submitting it could never work and the profile being set
 // means someone expected a notarized artifact, so degrading silently is the
 // one forbidden outcome.
+//
+// Two more pre-submission gates, both cheap and local:
+//
+//   - Coherence: this script (standalone especially) submits "the .dmg in
+//     dist-app" while triaging and stapling "the app in dist-app", and the
+//     two CAN diverge (pack:mac rebuilds the app without sweeping images).
+//     The DMG is mounted and the embedded app's CDHash must equal the
+//     dist-app app's, or the run refuses: notarizing one build while
+//     stapling and blessing another would ship a ticket-less app.
+//   - The NESTED camera extension: the outer app being Developer ID signed
+//     says nothing about Contents/Library/SystemExtensions, and the notary
+//     rejects Apple Development signatures on ANY nested executable. Unlike
+//     the outer-app warning above there is no "let Apple decide" value in
+//     uploading a build whose extension is the Xcode automatic/DEVELOPMENT
+//     flavor (its device-limited development profile could not activate on
+//     customer machines even if notarization somehow passed), so that build
+//     is refused locally before the upload. Extension dist-signing is a
+//     pending slice; docs/release.md ("The embedded camera extension") has
+//     the story.
 
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { cdhash, withMountedDmg } from "./dmg-util.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const appPath = join(root, "dist-app", "mac-arm64", "Capturia.app");
@@ -81,6 +101,53 @@ if (!report.includes("Developer ID Application")) {
     "[notarize] WARNING: the app signature is not Developer ID; Apple will reject this " +
       "submission. Submitting anyway so the rejection (and its log) is authoritative."
   );
+}
+
+// Coherence: the DMG about to be submitted must contain THIS dist-app app
+// (CDHash equality), or the staple + spctl tail of this script would bless a
+// different build than the one Apple notarized.
+try {
+  await withMountedDmg(dmgPath, (mountPoint) => {
+    const mountedApp = join(mountPoint, "Capturia.app");
+    if (!existsSync(mountedApp)) throw new Error(`${dmgName} contains no Capturia.app`);
+    const packed = cdhash(appPath);
+    const shipped = cdhash(mountedApp);
+    if (packed !== shipped) {
+      throw new Error(
+        `${dmgName} holds a DIFFERENT build (CDHash=${shipped}) than dist-app's app ` +
+          `(CDHash=${packed}); a stale image cannot be notarized against the current app. ` +
+          "Re-run npm run dist:mac."
+      );
+    }
+  });
+} catch (error) {
+  fail(error.message);
+}
+
+// The nested camera extension, when embedded, must itself be Developer ID
+// signed; the dev-flavor extension (Apple Development certificate) is refused
+// locally, see the header.
+const embeddedExt = join(
+  appPath,
+  "Contents",
+  "Library",
+  "SystemExtensions",
+  "com.capturia.camera.extension.systemextension"
+);
+if (existsSync(embeddedExt)) {
+  const extDetail = spawnSync("codesign", ["-dvv", embeddedExt], { encoding: "utf8" });
+  const extReport = `${extDetail.stderr || ""}${extDetail.stdout || ""}`;
+  if (extDetail.status !== 0 || !extReport.includes("Developer ID Application")) {
+    fail(
+      "the embedded camera extension is not Developer ID signed (build-signed.sh " +
+        "produces the Xcode automatic/DEVELOPMENT flavor: Apple Development certificate " +
+        "+ device-limited profile). The notary service rejects Apple Development " +
+        "signatures on any nested executable, and that profile could not activate on " +
+        "customer machines anyway, so submitting is refused locally. Extension " +
+        "dist-signing is a pending slice; docs/release.md ('The embedded camera " +
+        "extension') has the story."
+    );
+  }
 }
 
 // Submit and wait. Output is streamed (a wait can take minutes) AND captured,
@@ -148,12 +215,21 @@ for (const [what, target] of [["app", appPath], ["dmg", dmgPath]]) {
   console.log(`[notarize] stapled the ${what}`);
 }
 
-// The assertion notarization exists to flip: Gatekeeper's own verdict.
+// The assertion notarization exists to flip: Gatekeeper's own verdict. The
+// assertion reads the FULL output, but only the verdict/source lines are
+// printed: spctl -vv's origin= line spells out the signing identity (legal
+// name + team id), which never belongs in logs that get pasted into public
+// issues.
 const assess = spawnSync("spctl", ["--assess", "--type", "exec", "-vv", appPath], {
   encoding: "utf8",
 });
 const verdict = `${assess.stderr || ""}${assess.stdout || ""}`.trim();
-console.log(verdict);
+console.log(
+  verdict
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("origin="))
+    .join("\n")
+);
 if (assess.status !== 0 || !/:\s*accepted/.test(verdict)) {
   fail("spctl --assess still rejects the notarized app");
 }

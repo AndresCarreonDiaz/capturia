@@ -13,8 +13,13 @@ keychain. Keep it that way in issues and PRs too.
 ## The commands
 
 ```
-# dev loop (unchanged): directory build only, no DMG
+# dev loop (unchanged): directory build only, no DMG, whisper check warns only
 npm run pack:mac
+
+# one-time before releases: provision whisper. dist:mac FAILS without it
+# (check-whisper-assets --strict): a post-install model download would write
+# into the sealed bundle and break its signature.
+npx nodejs-whisper download
 
 # release artifact: pack:mac + DMG + (when credentials exist) notarization
 CSC_NAME="Your Name" CAPTURIA_TEAM_ID=XXXXXXXXXX \
@@ -26,12 +31,16 @@ npm run dist:mac
 CAPTURIA_NOTARY_PROFILE=capturia-notary npm run notarize:mac
 ```
 
-`dist:mac` (scripts/dist-mac.mjs) runs the whole existing `pack:mac`
-pipeline first, assertions included, then wraps that exact app in a DMG via
+`dist:mac` (scripts/dist-mac.mjs) gates on provisioned whisper
+(`check-whisper-assets --strict`), runs the whole existing `pack:mac`
+pipeline (assertions included), then wraps that exact app in a DMG via
 `electron-builder --prepackaged` (no rebuild, no re-sign; the script asserts
 CDHash equality between the packed app and the copy inside the mounted
 image, plus the drag-to-Applications layout), then hands off to
-`scripts/notarize-mac.mjs`.
+`scripts/notarize-mac.mjs`. Before submitting, that script re-checks
+coherence (the DMG must contain the current dist-app app, CDHash-equal) and
+refuses locally when the embedded camera extension is not Developer ID
+signed (see "The embedded camera extension" below).
 
 Environment summary (the first two are the pack:mac contract, see
 `scripts/pack-mac.mjs`):
@@ -54,7 +63,10 @@ Developer ID certificates only by the **Account Holder** role.
 
 Steps on [developer.apple.com/account](https://developer.apple.com/account),
 under **Certificates, Identifiers & Profiles** (verified against Apple's
-current docs, 2026-07; citations at the end):
+current docs, 2026-07; citations at the end). **Do them in this order**: a
+capability edit on an App ID INVALIDATES every existing profile for that App
+ID (Apple's own warning), so all capability edits happen first, all profile
+(re)generation last, one round of breakage total.
 
 1. **Certificate** (skip if the Developer ID Application certificate already
    exists): **Certificates** -> **+** -> under "Software" select **Developer
@@ -66,38 +78,88 @@ current docs, 2026-07; citations at the end):
    are also cloud-managed Developer ID certificates for admins granted that
    access role; the classic flow above is what this repo's env-driven signing
    expects.)
-2. **App ID capability**: **Identifiers** -> select the explicit App ID
-   `com.capturia.desktop` (register it as type "App" with that explicit
-   bundle ID if it does not exist) -> **Edit/Capabilities** -> enable the
-   checkbox named **System Extension** -> **Save**. This capability is
-   self-serve on macOS App IDs for all program types INCLUDING Developer ID
-   (no request form; DriverKit is the one that historically required a
-   request). Beware Apple's own warning: editing an App ID's capabilities
-   invalidates the profiles that contain it, so regenerate any existing
-   profiles afterwards.
-3. **Profile**: **Profiles** -> **+** -> under **Distribution** choose the
-   **Developer ID** option -> Continue -> select the `com.capturia.desktop`
-   App ID -> select the Developer ID Application certificate -> name it (for
-   example `Capturia Desktop Developer ID`) -> **Generate** -> **Download**.
-   Requires Account Holder or Admin. There is no dedicated help page for the
-   Developer ID flavor; the flow is the same as Apple's documented App Store
-   distribution profile, with the "Developer ID" radio button instead. The
-   downloaded file is a macOS `.provisionprofile` (the macOS-specific
-   extension, per TN3125), and Developer ID profiles are long-lived (18-year
-   validity).
-4. **Where it goes**: anywhere OUTSIDE the repo (it embeds the team id and
-   certificate). The build consumes it only via the environment:
-   `CAPTURIA_PROVISIONING_PROFILE=/path/to/that.provisionprofile`; pack:mac
-   embeds it at `Contents/embedded.provisionprofile`, the documented macOS
-   location. The gitignored `native/CapturiaCamera/dist-profile/` directory
-   used by the development mint (`mint-desktop-profile.sh`) is a reasonable
-   local spot. `pack:mac` refuses profiles that do not authorize
-   `com.apple.developer.system-extension.install`, so a mis-created profile
-   fails the build instead of producing an app AMFI would kill.
+2. **App ID capabilities, BOTH App IDs, before any profile work**:
+   **Identifiers** -> select the explicit App ID (register missing ones as
+   type "App" with the explicit bundle ID; the Xcode automatic-signing dev
+   flows have usually registered both already):
+   - `com.capturia.desktop`: enable **System Extension** -> **Save**. This
+     capability is self-serve on macOS App IDs for all program types
+     INCLUDING Developer ID (no request form; DriverKit is the one that
+     historically required a request).
+   - `com.capturia.camera.extension`: confirm **App Groups** is enabled (the
+     extension claims the app sandbox + the team app group, nothing else;
+     Xcode's automatic signing enabled the capability during development
+     builds). The System Extension capability is the HOST app's, not the
+     extension's.
+   Skip the Save on any App ID whose capabilities are already right: saving a
+   capability edit is what invalidates that App ID's existing profiles. If
+   you did have to edit, every existing profile for that App ID (including
+   the DEVELOPMENT profile minted by `mint-desktop-profile.sh`) is now
+   invalid; step 4 regenerates them.
+3. **Profiles** (after all capability edits): **Profiles** -> **+** -> under
+   **Distribution** choose the **Developer ID** option -> Continue -> select
+   the App ID -> select the Developer ID Application certificate -> name it
+   -> **Generate** -> **Download**. Requires Account Holder or Admin. Do it
+   once per App ID:
+   - `com.capturia.desktop` (for example `Capturia Desktop Developer ID`):
+     consumed by the pack as `CAPTURIA_PROVISIONING_PROFILE`.
+   - `com.capturia.camera.extension` (for example `Capturia Camera Extension
+     Developer ID`): needed by the pending extension dist-signing step (next
+     section); minting it in the same portal session costs nothing extra.
+   There is no dedicated help page for the Developer ID flavor; the flow is
+   the same as Apple's documented App Store distribution profile, with the
+   "Developer ID" radio button instead. The downloaded file is a macOS
+   `.provisionprofile` (the macOS-specific extension, per TN3125), and
+   Developer ID profiles are long-lived (18-year validity).
+4. **Re-mint the development profile** if step 2 edited
+   `com.capturia.desktop`: re-run `bash
+   native/CapturiaCamera/mint-desktop-profile.sh` (Xcode automatic signing
+   fetches a fresh valid dev profile) so the development pack flow keeps
+   working alongside the release one.
+5. **Where the files go**: anywhere OUTSIDE the repo (they embed the team id
+   and certificate). The build consumes the desktop profile only via the
+   environment: `CAPTURIA_PROVISIONING_PROFILE=/path/to/that.provisionprofile`;
+   pack:mac embeds it at `Contents/embedded.provisionprofile`, the documented
+   macOS location. The gitignored `native/CapturiaCamera/dist-profile/`
+   directory used by the development mint is a reasonable local spot for both.
+   `pack:mac` refuses profiles that do not authorize
+   `com.apple.developer.system-extension.install`, so a mis-created desktop
+   profile fails the build instead of producing an app AMFI would kill.
 
-The same System Extension capability must stay enabled on the extension's own
-App ID (`com.capturia.camera.extension`), which the Xcode automatic-signing
-build (`build-signed.sh`) manages for development.
+## The embedded camera extension: what ships today vs what release needs
+
+**What exists today**: `pack:mac` embeds the CMIO camera extension built by
+`native/CapturiaCamera/build-signed.sh`, which uses Xcode AUTOMATIC signing.
+That flavor is signed with an **Apple Development** certificate and a
+device-limited **development** provisioning profile. It is exactly right for
+the dev loop (it activates on the machines in the team's device list) and
+exactly wrong for distribution:
+
+- Apple's notary service only accepts Developer ID signatures; an Apple
+  Development signature on ANY nested executable gets the whole submission
+  rejected ("Don't use a Mac Distribution, ad hoc, Apple Developer, or local
+  development certificate", Apple's notarization doc).
+- Even if it somehow passed, a development profile cannot activate on
+  customer machines (they are not in the team's device list).
+
+`scripts/notarize-mac.mjs` therefore refuses to submit a build whose embedded
+extension is not Developer ID signed, with a message pointing here; the
+refusal is local and loud instead of a guaranteed-rejected upload.
+
+**What release needs (pending slice, NOT yet implemented)**: a distribution
+signing step for the extension, producing a Developer-ID-signed
+`com.capturia.camera.extension.systemextension` that the afterPack hook
+embeds instead of the dev flavor. Concretely: sign the extension bundle with
+the Developer ID Application certificate, its own entitlements (app sandbox +
+the team app group), and the portal-minted Developer ID profile for
+`com.capturia.camera.extension` from step 3 above (via `xcodebuild` manual
+signing/`-exportArchive` with a `developer-id` export method, or a direct
+`codesign` re-sign that embeds the profile). The portal prerequisites are
+already covered by the runbook above so the account holder can do them in one
+session; the build-side wiring is tracked on the PR/issue checklist. Until
+that lands, notarization-bound builds must pack WITHOUT the embedded
+extension (no `CAPTURIA_TEAM_ID`, no `native/CapturiaCamera/dist-signed`
+present), which notarizes fine but cannot install its own camera.
 
 ## One-time notary setup: app-specific password + store-credentials
 

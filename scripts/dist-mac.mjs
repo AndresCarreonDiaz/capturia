@@ -7,6 +7,14 @@
 //
 // Steps:
 //
+//   0. check-whisper-assets --strict
+//                                  a release artifact must ship whisper fully
+//                                  provisioned: a post-install model download
+//                                  would write into the sealed bundle and
+//                                  break its signature. pack:mac keeps the
+//                                  warn-only check for the dev loop; here the
+//                                  same gap fails the build, and it fails
+//                                  BEFORE the pack spends minutes building.
 //   1. scripts/pack-mac.mjs        the full existing pipeline, including every
 //                                  signing assertion (see that file's header).
 //   2. electron-builder --prepackaged <the packed .app> --mac dmg
@@ -25,11 +33,16 @@
 //                                  app is THE SAME build (CDHash equality with
 //                                  the dist-app original), and, when signing
 //                                  was requested, codesign --verify --deep
-//                                  --strict on the embedded app. Unmount.
+//                                  --strict on the embedded app. The mounted
+//                                  section only ever THROWS (scripts/
+//                                  dmg-util.mjs); process.exit would skip the
+//                                  finally that detaches the image and leave a
+//                                  live mount for the next run's artifact
+//                                  sweep to pull the file out from under.
 //   4. scripts/notarize-mac.mjs    gated on CAPTURIA_NOTARY_PROFILE; prints a
 //                                  clear skip line without it. Standalone too:
 //                                  when credentials arrive after a build, run
-//                                  node scripts/notarize-mac.mjs directly.
+//                                  npm run notarize:mac directly.
 //
 // Why electron-builder's dmg target and not create-dmg: it is already a dep,
 // it reuses the same appId/productName/icon the app was packed with (volume
@@ -39,10 +52,10 @@
 // dependency to do strictly less.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdtempSync, readdirSync, readlinkSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, lstatSync, readdirSync, readlinkSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { cdhash, withMountedDmg } from "./dmg-util.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const appPath = join(root, "dist-app", "mac-arm64", "Capturia.app");
@@ -57,15 +70,8 @@ function run(cmd, args, env = process.env) {
   if ((result.status ?? 1) !== 0) process.exit(result.status ?? 1);
 }
 
-// codesign -dvvv reports on stderr; the CDHash line identifies a build
-// exactly (same seal, same content), signed or ad-hoc alike.
-function cdhash(bundle) {
-  const detail = spawnSync("codesign", ["-dvvv", bundle], { encoding: "utf8" });
-  if (detail.status !== 0) fail(`codesign could not read ${bundle}`);
-  const hash = /CDHash=([0-9a-f]+)/.exec(`${detail.stderr || ""}${detail.stdout || ""}`)?.[1];
-  if (!hash) fail(`no CDHash reported for ${bundle}`);
-  return hash;
-}
+// 0. Release gate: whisper must be provisioned before anything gets built.
+run(process.execPath, [join(root, "scripts", "check-whisper-assets.mjs"), "--strict"]);
 
 // 1. The existing pack pipeline, assertions included. Signing (or the
 // explicit ad-hoc fallback) is decided there from the environment.
@@ -92,59 +98,57 @@ const dmgName = readdirSync(distDir).find((name) => name.endsWith(".dmg"));
 if (!dmgName) fail("electron-builder reported success but dist-app contains no .dmg");
 const dmgPath = join(distDir, dmgName);
 
-// 3. Verify the image actually delivers what a user drags out of it.
-const mountPoint = mkdtempSync(join(tmpdir(), "capturia-dmg-"));
-const attach = spawnSync(
-  "hdiutil",
-  ["attach", dmgPath, "-readonly", "-nobrowse", "-noautoopen", "-mountpoint", mountPoint],
-  { encoding: "utf8" }
-);
-if (attach.status !== 0) fail(`hdiutil attach failed:\n${attach.stderr}`);
+// 3. Verify the image actually delivers what a user drags out of it. Every
+// assertion in here throws; withMountedDmg detaches in its finally and the
+// catch below turns the error into the loud exit.
 try {
-  const mountedApp = join(mountPoint, "Capturia.app");
-  if (!existsSync(mountedApp)) fail("mounted DMG has no Capturia.app");
-  const applicationsLink = join(mountPoint, "Applications");
-  let linkTarget;
-  try {
-    if (!lstatSync(applicationsLink).isSymbolicLink()) fail("mounted DMG's Applications entry is not a symlink");
-    linkTarget = readlinkSync(applicationsLink);
-  } catch {
-    fail("mounted DMG has no Applications symlink (drag-to-Applications layout missing)");
-  }
-  if (linkTarget !== "/Applications") fail(`Applications symlink points at ${linkTarget}, not /Applications`);
-
-  // The build-once guarantee, asserted: the app in the image IS the app the
-  // pack assertions verified, not a rebuild or a re-sign.
-  const packed = cdhash(appPath);
-  const shipped = cdhash(mountedApp);
-  if (packed !== shipped) {
-    fail(`the app inside the DMG (CDHash=${shipped}) is not the packed app (CDHash=${packed})`);
-  }
-
-  if (signingRequested) {
-    // Deep-verify the embedded copy itself: a signature that survived the
-    // trip into the image and back out of a read-only mount.
-    const verify = spawnSync("codesign", ["--verify", "--deep", "--strict", mountedApp], {
-      encoding: "utf8",
-    });
-    if (verify.status !== 0) {
-      fail(`codesign --verify --deep --strict failed on the app inside the DMG:\n${verify.stderr}`);
+  await withMountedDmg(dmgPath, (mountPoint) => {
+    const mountedApp = join(mountPoint, "Capturia.app");
+    if (!existsSync(mountedApp)) throw new Error("mounted DMG has no Capturia.app");
+    const applicationsLink = join(mountPoint, "Applications");
+    let linkStat;
+    try {
+      linkStat = lstatSync(applicationsLink);
+    } catch {
+      throw new Error("mounted DMG has no Applications symlink (drag-to-Applications layout missing)");
     }
-    console.log("[dist-mac] embedded app signature verified (deep, strict)");
-  } else {
-    // The explicit ad-hoc fallback has no resource seal to deep-verify; the
-    // CDHash equality above is the whole integrity story for that flavor.
-    console.log("[dist-mac] ad-hoc pack: layout + CDHash verified, no signature to deep-verify");
-  }
-  console.log(`[dist-mac] DMG verified: ${dmgName} (app + Applications symlink)`);
-} finally {
-  const detach = spawnSync("hdiutil", ["detach", mountPoint], { encoding: "utf8" });
-  if (detach.status !== 0) {
-    // One retry after a beat; Spotlight sometimes holds fresh mounts briefly.
-    spawnSync("sleep", ["2"]);
-    const again = spawnSync("hdiutil", ["detach", mountPoint, "-force"], { encoding: "utf8" });
-    if (again.status !== 0) console.error(`[dist-mac] WARN: could not detach ${mountPoint}`);
-  }
+    if (!linkStat.isSymbolicLink()) throw new Error("mounted DMG's Applications entry is not a symlink");
+    const linkTarget = readlinkSync(applicationsLink);
+    if (linkTarget !== "/Applications") {
+      throw new Error(`Applications symlink points at ${linkTarget}, not /Applications`);
+    }
+
+    // The build-once guarantee, asserted: the app in the image IS the app the
+    // pack assertions verified, not a rebuild or a re-sign.
+    const packed = cdhash(appPath);
+    const shipped = cdhash(mountedApp);
+    if (packed !== shipped) {
+      throw new Error(`the app inside the DMG (CDHash=${shipped}) is not the packed app (CDHash=${packed})`);
+    }
+
+    if (signingRequested) {
+      // Deep-verify the embedded copy itself: a signature that survived the
+      // trip into the image and back out of a read-only mount.
+      const verify = spawnSync("codesign", ["--verify", "--deep", "--strict", mountedApp], {
+        encoding: "utf8",
+      });
+      if (verify.status !== 0) {
+        throw new Error(
+          `codesign --verify --deep --strict failed on the app inside the DMG:\n${verify.stderr}`
+        );
+      }
+      console.log("[dist-mac] embedded app signature verified (deep, strict)");
+    } else {
+      // The explicit ad-hoc fallback has no resource seal to deep-verify; the
+      // CDHash equality above is the whole integrity story for that flavor.
+      console.log("[dist-mac] ad-hoc pack: layout + CDHash verified, no signature to deep-verify");
+    }
+    console.log(`[dist-mac] DMG verified: ${dmgName} (app + Applications symlink)`);
+  });
+} catch (error) {
+  // The image is already detached (withMountedDmg's finally ran before the
+  // throw reached here); now the failure can be loud.
+  fail(error.message);
 }
 
 // 4. Notarization + stapling, or its clear skip line (see that script).
