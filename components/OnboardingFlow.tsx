@@ -35,9 +35,13 @@ const readCompleted = () => {
 export default function OnboardingFlow({
   ctx,
   onOpenSettings,
+  onInstallCamera,
 }: {
   ctx: OnboardingContext;
   onOpenSettings: () => void;
+  // Fires the camera-extension activation request in main (desktop only; the
+  // camera step is filtered out wherever this could dead-end).
+  onInstallCamera?: () => void;
 }) {
   const initiallyCompleted = useSyncExternalStore(subscribeNoop, readCompleted, () => true);
   const [finished, setFinished] = useState(false);
@@ -67,11 +71,15 @@ export default function OnboardingFlow({
 
   // Steps are fixed for the life of the flow; satisfaction drives
   // advancement, never membership (the keys step must not vanish mid-flow
-  // the moment a key lands).
+  // the moment a key lands). The camera dependency is presence-shaped for
+  // the same reason: the step joins once the bridge reports a usable status
+  // and never drops out as that status moves through install/approval.
+  const cameraStepShown =
+    ctx.cameraExtension !== undefined && ctx.cameraExtension !== "unsupported";
   const steps = useMemo(
     () => onboardingSteps(ctx),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [ctx.isDesktop, ctx.voiceSupported]
+    [ctx.isDesktop, ctx.voiceSupported, cameraStepShown]
   );
 
   const step = steps[Math.min(stepIndex, steps.length - 1)];
@@ -105,9 +113,17 @@ export default function OnboardingFlow({
 
   const primaryAction = () => {
     if (step.id === "keys") onOpenSettings();
+    else if (step.id === "camera") onInstallCamera?.();
     else if (stepIndex >= steps.length - 1) finish();
     else setStepIndex((i) => i + 1);
   };
+
+  // Live copy that replaces the static body (extension installing, approval
+  // pending, install FAILED with its mapped OS reason). The button only hides
+  // while the step is waiting on the world (step.waiting): a failure keeps
+  // the button so the user can read why and click to retry.
+  const liveBody = !satisfied && step.dynamicBody ? step.dynamicBody(ctx) : null;
+  const waiting = !satisfied && Boolean(step.waiting?.(ctx));
 
   return (
     // bottom-28 clears the full-width CommandBar (bottom-0) and the caption
@@ -138,9 +154,11 @@ export default function OnboardingFlow({
           <p className="text-white/60 text-xs leading-relaxed">
             {satisfied && step.id === "voice"
               ? "That is the whole loop: you talk, your feed answers."
+              : satisfied && step.id === "camera"
+              ? "Camera installed. Pick “Capturia” in any call app."
               : satisfied
               ? "Key saved. You are live on your own model."
-              : step.body}
+              : liveBody ?? step.body}
           </p>
         </div>
 
@@ -151,7 +169,7 @@ export default function OnboardingFlow({
           >
             Skip tour
           </button>
-          {!satisfied && (
+          {!satisfied && !waiting && (
             <button
               onClick={primaryAction}
               className="px-4 py-1.5 rounded-lg bg-cyan-400/15 border border-cyan-400/40 text-cyan-200 hover:bg-cyan-400/25 text-xs font-medium transition-all"

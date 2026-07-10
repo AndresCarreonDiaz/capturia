@@ -107,17 +107,85 @@ CSC_NAME="Your Name" CAPTURIA_TEAM_ID=XXXXXXXXXX npm run pack:mac
 `native/CapturiaCamera/build-signed.sh`. With neither set you get the
 explicit ad-hoc fallback: an unsigned but runnable app, no extension build,
 no keychain surprises (CI-safe). `node scripts/smoke-packaged-app.mjs` boots
-the packaged app headlessly and, when the extension is enabled on the
-machine, asserts the camera feed connects and pumps.
+the packaged app headlessly, asserts the extension-activation status mapping,
+and, when the extension is enabled on the machine, asserts the camera feed
+connects and pumps.
 
 Until notarization credentials exist, `spctl --assess` rejects the signed
 app; that only gates downloads from the internet, not local runs.
 
+### In-app extension activation (M8 slice 2)
+
+The packaged app can install its own embedded extension: a first-run
+onboarding step and the tray's "Install camera" item submit an
+`OSSystemExtensionRequest` from Electron main through the
+`native/capturia-sysext` addon, walk the System Settings approval with the
+user, and report "Camera installed" once `systemextensionsctl` says
+activated+enabled (at which point the feed auto-connects). macOS only
+accepts that request from an app running in `/Applications`
+(`OSSystemExtensionErrorDomain` code 3 otherwise; the app offers the move
+instead of firing into that wall) that embeds the extension under
+`Contents/Library/SystemExtensions` and claims the
+`com.apple.developer.system-extension.install` entitlement.
+
+**The signing contract, and why (verified 2026-07):**
+
+- `com.apple.developer.system-extension.install` is a RESTRICTED entitlement:
+  it must be authorized by a provisioning profile for every signing flavor.
+  There is no bare-Developer-ID shortcut: a Developer ID signed binary
+  claiming it without an embedded profile is SIGKILLed by AMFI before
+  `main()` (empirically reproduced on macOS 26; Apple's TN3125 and DTS
+  confirm the rule). This is exactly why the dev host app is built by Xcode
+  automatic signing (`build-signed.sh`), which mints and embeds the profile.
+- OBS Studio, the production precedent, ships the same way: OBS.app carries
+  the entitlement in its signature (their
+  `entitlements-extension.plist`) plus the Xcode-style
+  `com.apple.application-identifier`/`team-identifier` claims, and embeds a
+  Developer ID provisioning profile (`Contents/embedded.provisionprofile`,
+  `ProvisionsAllDevices=true`) that authorizes the entitlement; without a
+  profile their build system disables the camera extension feature entirely.
+- Development signing (this machine's flow): a development profile for the
+  DESKTOP bundle id (`com.capturia.desktop`) carrying the entitlement is
+  minted by `native/CapturiaCamera/mint-desktop-profile.sh`, which builds the
+  `CapturiaDesktopShim` Xcode target (that target exists only to carry the
+  bundle id + entitlement) with `-allowProvisioningUpdates` and extracts the
+  embedded profile. Wildcard team profiles never carry restricted
+  entitlements, so the per-bundle-id mint is unavoidable.
+- Developer ID distribution: create a "Developer ID Application" provisioning
+  profile with the System Extension capability in the developer portal; the
+  pack contract below is identical.
+
+```
+bash native/CapturiaCamera/mint-desktop-profile.sh   # needs CAPTURIA_TEAM_ID
+CAPTURIA_PROVISIONING_PROFILE=native/CapturiaCamera/dist-profile/com.capturia.desktop.dev.provisionprofile \
+CSC_NAME="Your Name" CAPTURIA_TEAM_ID=XXXXXXXXXX npm run pack:mac
+```
+
+With `CAPTURIA_PROVISIONING_PROFILE` set, `pack:mac` signs the app with a
+GENERATED entitlements file (the committed base plus the entitlement and the
+application-identifier claims; the committed plist deliberately omits the
+entitlement so profile-less signed packs keep launching) and embeds the
+profile via electron-builder's `mac.provisioningProfile`. Without it,
+everything signs as before and the install UI reports itself unavailable;
+already-activated extensions keep working either way.
+
+Activation semantics worth knowing: an activation request for an extension
+that is already active with the SAME version completes quietly (no approval,
+no re-stage); a DIFFERENT version triggers the replacement flow (the app
+answers "replace", and a same-team replacement of an already-approved
+extension does not re-prompt). Upgrades ride exactly that: at launch, a
+capable build compares the version embedded in the bundle against the
+enabled one from `systemextensionsctl list` and, when they differ,
+auto-submits the activation request once per run (the OBS launch pattern),
+so shipping a new extension version inside a new app build is all an upgrade
+takes. Matching versions never fire a request, and an unreadable version
+never triggers a surprise replacement. The unpackaged dev shell
+(`npm run electron`) can never request activation (unsigned, no embedded
+extension), hides the install UI, and keeps using the dev host app flow
+(`native/CapturiaCamera`, `build-signed.sh` then `CapturiaCameraHost
+activate`).
+
 Current limitations:
-- The packaged app does not yet ACTIVATE its embedded extension (that
-  approval flow is the next slice); today the extension gets activated once
-  via the dev host app (`native/CapturiaCamera/build-signed.sh`, then
-  `CapturiaCameraHost activate`), and any Capturia build then feeds it.
 - One sink client at a time: the extension keeps a single sink client, so do
   not run `electron/spike-frames.js` with `CAPTURIA_SINK=1` while the app is
   feeding the camera. If another client does steal the sink, the app detects

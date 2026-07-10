@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import type { SysextStateReport } from "@/lib/sysext";
 
 type HotkeyPayload = { action: string };
 
@@ -70,6 +71,15 @@ interface CapturiaBridge {
     stop: () => Promise<DesktopCameraState | null>;
     onState: (handler: (state: DesktopCameraState) => void) => () => void;
   };
+  // In-app camera-extension activation (M8 slice 2); optional for the same
+  // stale-preload reason. state/install resolve the current status snapshot
+  // (null when main has no sysext module); onState subscribes to the status
+  // transitions main pushes on the "sysext" channel.
+  cameraExtension?: {
+    state: () => Promise<SysextStateReport | null>;
+    install: () => Promise<SysextStateReport | null>;
+    onState: (handler: (state: SysextStateReport) => void) => () => void;
+  };
   // On-device streaming speech (macOS 26+ helper); optional for the same
   // stale-preload reason. Events: ready | downloading-model | interim |
   // final | error | done.
@@ -121,6 +131,44 @@ export function useDesktopStateReport({ listening, voiceSupported }: DesktopStat
   useEffect(() => {
     window.capturia?.reportState?.({ listening, voiceSupported })?.catch(() => {});
   }, [listening, voiceSupported]);
+}
+
+// Camera-extension activation state plus the install trigger. state is null
+// on web, on a stale preload, and while main has no sysext module; callers
+// then hide every install affordance (the onboarding camera step and any
+// install UI key off state being present and not "unsupported"). install is
+// fire-and-forget: outcomes arrive as pushed state transitions, and a
+// rejected invoke must never break the studio.
+export function useCameraExtension(): {
+  state: SysextStateReport | null;
+  install: () => void;
+} {
+  const [state, setState] = useState<SysextStateReport | null>(null);
+  useEffect(() => {
+    const bridge = window.capturia?.cameraExtension;
+    if (!bridge) return;
+    let cancelled = false;
+    bridge
+      .state()
+      .then((s) => {
+        if (!cancelled && s) setState(s);
+      })
+      .catch(() => {});
+    const unsubscribe = bridge.onState((s) => setState(s));
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
+  const install = () => {
+    window.capturia?.cameraExtension
+      ?.install()
+      .then((s) => {
+        if (s) setState(s);
+      })
+      .catch(() => {});
+  };
+  return { state, install };
 }
 
 // Live virtual-camera state: an initial snapshot plus the lifecycle

@@ -71,4 +71,7 @@ next-env.d.ts
 # camera extension signed builds (Xcode) and local Xcode state
 native/CapturiaCamera/dist-signed/
 native/CapturiaCamera/DerivedData/
+# minted provisioning profiles (mint-desktop-profile.sh output): they embed
+# the team id and certificates, so they never enter the public repo
+native/CapturiaCamera/dist-profile/
 xcuserdata/

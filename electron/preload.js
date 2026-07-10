@@ -93,6 +93,29 @@ contextBridge.exposeInMainWorld("capturia", {
       return () => ipcRenderer.off("camera", listener);
     },
   },
+  // In-app camera-extension activation (M8 slice 2): status snapshot, the
+  // install trigger, and the status transitions main pushes on "sysext".
+  // state/install resolve null when main has no sysext module.
+  cameraExtension: {
+    state() {
+      return ipcRenderer.invoke("sysext:state");
+    },
+    install() {
+      return ipcRenderer.invoke("sysext:install");
+    },
+    onState(handler) {
+      const listener = (_event, payload) => {
+        if (!payload || typeof payload.status !== "string") return;
+        try {
+          handler(payload);
+        } catch (err) {
+          console.error("capturia.cameraExtension.onState handler threw:", err);
+        }
+      };
+      ipcRenderer.on("sysext", listener);
+      return () => ipcRenderer.off("sysext", listener);
+    },
+  },
   // On-device streaming speech (macOS 26+): start/stop the mic helper and
   // subscribe to its events (ready/interim/final/error/done).
   speech: {

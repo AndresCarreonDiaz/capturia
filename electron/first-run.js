@@ -31,17 +31,14 @@ function writeFlags(patch) {
   }
 }
 
-// Call at the END of whenReady, once the window and tray exist: the dialog
-// then floats over a working app instead of being the only UI. No-ops
-// everywhere except a packaged, non-smoke, macOS launch from outside
-// /Applications that has not been asked before. On acceptance,
-// moveToApplicationsFolder quits and relaunches from the new location.
-async function maybeOfferMoveToApplications({ isSmoke, parentWindow }) {
-  if (!app.isPackaged || isSmoke) return;
-  if (process.platform !== "darwin") return;
+// The dialog + move itself, with no once-guard: reused by the first-run nudge
+// below and by the camera-extension install path (macOS refuses to activate a
+// system extension for an app outside /Applications, so the "Install camera"
+// click from the wrong place routes here instead of into a guaranteed OS
+// error). `detail` lets each caller explain its own reason.
+async function offerMoveToApplications({ parentWindow, detail }) {
+  if (!app.isPackaged || process.platform !== "darwin") return;
   if (app.isInApplicationsFolder()) return;
-  if (readFlags().moveOffered) return;
-  writeFlags({ moveOffered: true });
 
   const options = {
     type: "question",
@@ -50,11 +47,13 @@ async function maybeOfferMoveToApplications({ isSmoke, parentWindow }) {
     cancelId: 1,
     message: "Move Capturia to your Applications folder?",
     detail:
+      detail ||
       "Capturia works best from Applications: macOS remembers its camera and microphone permissions there, and updates stay tidy.",
   };
-  const { response } = parentWindow
-    ? await dialog.showMessageBox(parentWindow, options)
-    : await dialog.showMessageBox(options);
+  const { response } =
+    parentWindow && !parentWindow.isDestroyed()
+      ? await dialog.showMessageBox(parentWindow, options)
+      : await dialog.showMessageBox(options);
   if (response !== 0) return;
 
   try {
@@ -67,4 +66,19 @@ async function maybeOfferMoveToApplications({ isSmoke, parentWindow }) {
   }
 }
 
-module.exports = { maybeOfferMoveToApplications };
+// Call at the END of whenReady, once the window and tray exist: the dialog
+// then floats over a working app instead of being the only UI. No-ops
+// everywhere except a packaged, non-smoke, macOS launch from outside
+// /Applications that has not been asked before. On acceptance,
+// moveToApplicationsFolder quits and relaunches from the new location.
+async function maybeOfferMoveToApplications({ isSmoke, parentWindow }) {
+  if (!app.isPackaged || isSmoke) return;
+  if (process.platform !== "darwin") return;
+  if (app.isInApplicationsFolder()) return;
+  if (readFlags().moveOffered) return;
+  writeFlags({ moveOffered: true });
+
+  await offerMoveToApplications({ parentWindow });
+}
+
+module.exports = { maybeOfferMoveToApplications, offerMoveToApplications };

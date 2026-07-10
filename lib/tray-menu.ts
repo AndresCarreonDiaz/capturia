@@ -3,6 +3,8 @@
 // Menu objects; keeping the decisions here makes them unit-testable and shared
 // through the electron/gen build like the other main-process libs.
 
+import type { SysextUiStatus } from "./sysext";
+
 export interface TrayState {
   // False until the studio renderer sends its first state:report this launch;
   // before that the shell cannot know whether voice is even supported.
@@ -21,11 +23,17 @@ export interface TrayState {
   cameraFrozen?: boolean;
   // The feed reports an error (load failure, extension missing, crash loop).
   cameraHasError?: boolean;
+  // In-app camera-extension activation (M8 slice 2). Omit when the shell has
+  // no sysext module; "unsupported" (dev shell, unsigned build) also hides
+  // the item, because that build can never submit an activation request (the
+  // dev host app in native/CapturiaCamera owns that workflow).
+  sysextStatus?: SysextUiStatus;
 }
 
 export type TrayAction =
   | "toggle-listening"
   | "toggle-camera"
+  | "install-camera"
   | "open-control-room"
   | "open-settings"
   | "quit";
@@ -52,6 +60,39 @@ export function cameraToggleLabel(state: TrayState): string {
   if (state.cameraConnecting) return "Camera: Connecting…";
   if (state.cameraRunning) return state.cameraFrozen ? "Camera: Frozen" : "Camera: On";
   return state.cameraHasError ? "Camera: Error" : "Camera: Off";
+}
+
+// Label + enablement for the extension-install item. Only three states are
+// clickable: install, retry after an error, and the pre-install move nudge
+// (the click routes to the move offer in main). Approval lives in System
+// Settings, so that state is a signpost, not a button; "installed" stays
+// visible as a disabled confirmation (the Krisp "everything is fine" line).
+export function sysextItem(status: SysextUiStatus): TrayItem | null {
+  switch (status) {
+    case "unsupported":
+      return null;
+    case "installed":
+      return { type: "item", label: "Camera installed", enabled: false };
+    case "awaiting-approval":
+      return {
+        type: "item",
+        label: "Approve camera in System Settings",
+        enabled: false,
+      };
+    case "installing":
+      return { type: "item", label: "Installing camera…", enabled: false };
+    case "error":
+      return { type: "item", label: "Retry camera install", enabled: true, action: "install-camera" };
+    case "needs-move":
+      return {
+        type: "item",
+        label: "Install camera (moves app to Applications)",
+        enabled: true,
+        action: "install-camera",
+      };
+    case "not-installed":
+      return { type: "item", label: "Install camera", enabled: true, action: "install-camera" };
+  }
 }
 
 export function buildTrayMenu(state: TrayState, toggleHotkey?: string): TrayItem[] {
@@ -83,11 +124,18 @@ export function buildTrayMenu(state: TrayState, toggleHotkey?: string): TrayItem
           },
         ];
 
+  // The activation item sits under the feed toggle: install first, then the
+  // toggle above it starts meaning something. Absent entirely when the shell
+  // has no sysext module or the build cannot request activation.
+  const install =
+    state.sysextStatus === undefined ? null : sysextItem(state.sysextStatus);
+
   return [
     { type: "item", label: trayStatusLabel(state), enabled: false },
     { type: "separator" },
     toggle,
     ...camera,
+    ...(install ? [install] : []),
     { type: "item", label: "Open Control Room", enabled: true, action: "open-control-room" },
     { type: "item", label: "Settings…", enabled: true, action: "open-settings" },
     { type: "separator" },
