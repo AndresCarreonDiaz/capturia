@@ -111,8 +111,13 @@ the packaged app headlessly, asserts the extension-activation status mapping,
 and, when the extension is enabled on the machine, asserts the camera feed
 connects and pumps.
 
-Until notarization credentials exist, `spctl --assess` rejects the signed
-app; that only gates downloads from the internet, not local runs.
+Distribution is a separate, opt-in step so this dev loop stays
+directory-only: `npm run dist:mac` wraps the exact app this pack verified in
+a drag-to-Applications DMG and, when `CAPTURIA_NOTARY_PROFILE` is set,
+notarizes and staples it (docs/release.md has the whole release runbook,
+including the manual Apple portal steps). Until a build is notarized,
+`spctl --assess` rejects the signed app; that only gates downloads from the
+internet, not local runs.
 
 ### In-app extension activation (M8 slice 2)
 
@@ -151,9 +156,10 @@ instead of firing into that wall) that embeds the extension under
   bundle id + entitlement) with `-allowProvisioningUpdates` and extracts the
   embedded profile. Wildcard team profiles never carry restricted
   entitlements, so the per-bundle-id mint is unavoidable.
-- Developer ID distribution: create a "Developer ID Application" provisioning
-  profile with the System Extension capability in the developer portal; the
-  pack contract below is identical.
+- Developer ID distribution: create a Developer ID provisioning profile for
+  `com.capturia.desktop` (System Extension capability enabled on the App ID
+  first) in the developer portal; docs/release.md walks the exact portal
+  steps. The pack contract below is identical.
 
 ```
 bash native/CapturiaCamera/mint-desktop-profile.sh   # needs CAPTURIA_TEAM_ID

@@ -20,6 +20,8 @@
     "electron": "electron .",
     "electron-dev": "concurrently -k -n NEXT,ELECTRON -c blue,magenta \"npm run dev\" \"wait-on http://localhost:3000 && npm run electron\"",
     "pack:mac": "node scripts/pack-mac.mjs",
+    "dist:mac": "node scripts/dist-mac.mjs",
+    "notarize:mac": "node scripts/notarize-mac.mjs",
     "smoke:packaged": "node scripts/smoke-packaged-app.mjs",
     "build:speech": "node scripts/build-speech-helper.mjs",
     "build:frames": "node scripts/build-frames-addon.mjs",
