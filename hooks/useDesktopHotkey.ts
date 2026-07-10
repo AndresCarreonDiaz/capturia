@@ -2,7 +2,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { SysextStateReport } from "@/lib/sysext";
 
-type HotkeyPayload = { action: string };
+// Actions main pushes on the "hotkey" channel. index rides along on the
+// "fire-cue" action (deck rail position, 0-based); consumers must validate
+// it since only `action` is shape-checked at the bridge.
+type HotkeyPayload = { action: string; index?: number };
 
 // The full surface exposed by electron/preload.js via contextBridge. All
 // desktop hooks (hotkey, voice capture, key vault) reference this single
@@ -19,11 +22,13 @@ export interface DesktopRuntimeInfo {
   url: string;
   token: string;
 }
-// Voice state the renderer reports up to main; drives the tray menu status
-// and its Start/Stop Listening item.
+// State the renderer reports up to main; drives the tray menu status, its
+// Start/Stop Listening item, and (via cueCount, the loaded deck size) the
+// registration of the global cue-card hotkeys.
 export interface DesktopStateReport {
   listening: boolean;
   voiceSupported: boolean;
+  cueCount: number;
 }
 // Virtual-camera feed state main reports (the Capturia CMIO extension fed by
 // the offscreen Program Output window; electron/camera-feed.js).
@@ -99,8 +104,9 @@ declare global {
 
 // Subscribe to a global hotkey action emitted by the Electron main process.
 // Safe to call from web (web has no window.capturia, so it's a no-op).
-// Handler is stored in a ref so subscription stays stable across renders.
-export function useDesktopHotkey(action: string, handler: () => void) {
+// Handler is stored in a ref so subscription stays stable across renders;
+// it receives the payload for actions that carry data (fire-cue's index).
+export function useDesktopHotkey(action: string, handler: (payload: HotkeyPayload) => void) {
   const handlerRef = useRef(handler);
   handlerRef.current = handler;
 
@@ -108,7 +114,7 @@ export function useDesktopHotkey(action: string, handler: () => void) {
     const bridge = window.capturia;
     if (!bridge?.onHotkey) return;
     return bridge.onHotkey((payload) => {
-      if (payload?.action === action) handlerRef.current();
+      if (payload?.action === action) handlerRef.current(payload);
     });
   }, [action]);
 }
@@ -123,14 +129,17 @@ export function useIsDesktop(): boolean {
   return isDesktop;
 }
 
-// Mirror voice state up to the Electron main process whenever it changes, so
-// the tray menu shows Listening/Idle and enables its toggle. No-op on web
-// (no bridge) and against an older preload (reportState missing). The report
-// is fire-and-forget; a rejected invoke must never break the studio.
-export function useDesktopStateReport({ listening, voiceSupported }: DesktopStateReport) {
+// Mirror renderer state up to the Electron main process whenever it changes,
+// so the tray menu shows Listening/Idle and enables its toggle, and main can
+// bind/release the global cue hotkeys with the deck. No-op on web (no
+// bridge) and against an older preload (reportState missing); an older MAIN
+// simply ignores cueCount (its report assertion rebuilds the object from the
+// two booleans). The report is fire-and-forget; a rejected invoke must never
+// break the studio.
+export function useDesktopStateReport({ listening, voiceSupported, cueCount }: DesktopStateReport) {
   useEffect(() => {
-    window.capturia?.reportState?.({ listening, voiceSupported })?.catch(() => {});
-  }, [listening, voiceSupported]);
+    window.capturia?.reportState?.({ listening, voiceSupported, cueCount })?.catch(() => {});
+  }, [listening, voiceSupported, cueCount]);
 }
 
 // Camera-extension activation state plus the install trigger. state is null

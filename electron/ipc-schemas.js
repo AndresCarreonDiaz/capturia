@@ -55,8 +55,9 @@ function assertBytes(value, label) {
   throw new Error(`${label} must be ArrayBuffer/TypedArray bytes.`);
 }
 
-// The renderer's state report that drives the tray menu. Rebuilt as a fresh
-// object so extra properties on the payload never reach main state.
+// The renderer's state report that drives the tray menu and the cue-hotkey
+// registration. Rebuilt as a fresh object so extra properties on the payload
+// never reach main state.
 function assertStateReport(value) {
   if (
     !value ||
@@ -66,7 +67,14 @@ function assertStateReport(value) {
   ) {
     throw new Error("State report needs boolean listening and voiceSupported.");
   }
-  return { listening: value.listening, voiceSupported: value.voiceSupported };
+  // Loaded deck size, driving the silent cue hotkeys. Optional so a stale
+  // packaged UI that predates it keeps reporting; anything that is not a
+  // sane count reads as "no deck" (shortcuts stay unregistered).
+  const cueCount =
+    typeof value.cueCount === "number" && Number.isInteger(value.cueCount) && value.cueCount > 0
+      ? value.cueCount
+      : 0;
+  return { listening: value.listening, voiceSupported: value.voiceSupported, cueCount };
 }
 
 module.exports = {

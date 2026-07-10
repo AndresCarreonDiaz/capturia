@@ -37,8 +37,31 @@ const {
 // Chosen to avoid Spotlight (Cmd+Space) and the macOS character viewer.
 const HOTKEY_TOGGLE_VOICE = "CmdOrCtrl+Alt+Space";
 
+// Silent cue-card hotkeys: Cmd/Ctrl+Alt+<digit> fires the deck rail card at
+// that position, Cmd/Ctrl+Alt+Right fires the renderer's next-unfired card.
+// Global on purpose (the presenter is focused on Zoom, not Capturia), but
+// registered ONLY while the renderer reports a loaded deck (state:report
+// carries cueCount) and only up to the deck's size, so an empty studio never
+// squats on nine system-wide combos. Cmd+Alt avoids everything the app
+// already binds (Cmd+Alt+Space above, in-page Cmd+Shift+O / Cmd+Shift+A /
+// Cmd+,) and the OS-default Cmd+1..9 tab switching, which is Cmd-only.
+const CUE_HOTKEY_MAX = 9;
+const CUE_NEXT_HOTKEY = "CmdOrCtrl+Alt+Right";
+const cueHotkey = (index) => `CmdOrCtrl+Alt+${index + 1}`;
+// How many digit shortcuts are currently registered; 0 means the next-card
+// shortcut is unbound too.
+let cueHotkeysBound = 0;
+
 const isDev = !app.isPackaged;
 const isSmoke = process.env.CAPTURIA_SMOKE === "1";
+// Dev-only: test harnesses (scripts/e2e-desktop-hotkeys.mjs) point userData
+// at a throwaway directory so a headed run never contends with a real
+// install's single-instance lock (the lock is scoped to userData, which the
+// unpackaged shell otherwise SHARES with an installed Capturia.app) and
+// never touches its profile. Must run before the lock request below.
+if (isDev && process.env.CAPTURIA_USER_DATA) {
+  app.setPath("userData", process.env.CAPTURIA_USER_DATA);
+}
 // Smoke runs must never block on a macOS keychain consent: Chromium's network
 // service opens the "<app> Safe Storage" keychain item at startup, and when a
 // DIFFERENTLY SIGNED build of the same app touched it first (dev shell vs
@@ -74,9 +97,10 @@ let tray = null;
 // Closing the Control Room hides it to the tray; only a real quit (Cmd+Q,
 // tray Quit, app menu) tears the window down. before-quit flips this.
 let isQuitting = false;
-// Last state the studio renderer reported (drives the tray status + toggle).
-// reported=false until the first state:report of this launch.
-let rendererState = { reported: false, listening: false, voiceSupported: false };
+// Last state the studio renderer reported (drives the tray status + toggle
+// plus the cue-hotkey registration). reported=false until the first
+// state:report of this launch.
+let rendererState = { reported: false, listening: false, voiceSupported: false, cueCount: 0 };
 // A tray action aimed at a renderer that hasn't mounted its listeners yet
 // (e.g. Settings clicked during startup) would be a silently dropped message;
 // it parks here and flushes on the next state:report, which can only come
@@ -196,12 +220,14 @@ function registerIpc() {
   ipcMain.handle("sysext:install", guarded(() => (sysext ? sysext.install() : null)));
 
   // Renderer -> main: voice state for the tray (listening on/off, whether the
-  // speech engine exists). Fire-and-forget from the renderer's point of view.
+  // speech engine exists) plus the loaded deck size for the cue hotkeys.
+  // Fire-and-forget from the renderer's point of view.
   ipcMain.handle(
     "state:report",
     guarded((_event, payload) => {
       rendererState = { reported: true, ...assertStateReport(payload) };
       tray?.update();
+      syncCueHotkeys(rendererState.cueCount);
       // The reporting page is mounted and listening on the hotkey channel,
       // so a parked tray action can be delivered now.
       if (pendingRendererAction) {
@@ -211,6 +237,33 @@ function registerIpc() {
       }
     })
   );
+}
+
+// Reconcile the registered cue shortcuts with the deck the renderer reports:
+// digits 1..min(cueCount, 9) plus the next-card arrow while any digit is
+// bound. Idempotent per count, so every state:report can call it. A combo
+// another app owns fails register() and just logs; the renderer's in-page
+// fallback still covers the focused-window case.
+function syncCueHotkeys(cueCount) {
+  const target = Math.max(0, Math.min(CUE_HOTKEY_MAX, Number.isInteger(cueCount) ? cueCount : 0));
+  if (target === cueHotkeysBound) return;
+  for (let i = target; i < cueHotkeysBound; i++) globalShortcut.unregister(cueHotkey(i));
+  for (let i = cueHotkeysBound; i < target; i++) {
+    const index = i;
+    const ok = globalShortcut.register(cueHotkey(index), () => {
+      mainWindow?.webContents.send("hotkey", { action: "fire-cue", index });
+    });
+    if (!ok) console.warn(`Failed to register cue hotkey ${cueHotkey(index)} (in use?)`);
+  }
+  if (cueHotkeysBound === 0 && target > 0) {
+    const ok = globalShortcut.register(CUE_NEXT_HOTKEY, () => {
+      mainWindow?.webContents.send("hotkey", { action: "fire-cue-next" });
+    });
+    if (!ok) console.warn(`Failed to register cue hotkey ${CUE_NEXT_HOTKEY} (in use?)`);
+  } else if (target === 0) {
+    globalShortcut.unregister(CUE_NEXT_HOTKEY);
+  }
+  cueHotkeysBound = target;
 }
 
 // Deliver a UI action to the renderer, or park it until the page proves it is
@@ -281,8 +334,10 @@ function createWindow() {
   // fresh page reports, instead of advertising a mic loop that is gone.
   // did-navigate covers main-frame loads only, including reloads.
   const resetRendererState = () => {
-    rendererState = { reported: false, listening: false, voiceSupported: false };
+    rendererState = { reported: false, listening: false, voiceSupported: false, cueCount: 0 };
     tray?.update();
+    // The deck that justified the cue shortcuts is gone with the page.
+    syncCueHotkeys(0);
     // The page that owned the mic session is gone; without this a reload
     // mid-session leaves the helper capturing with nothing able to stop it.
     speechHelper.stopAllSpeechSessions();

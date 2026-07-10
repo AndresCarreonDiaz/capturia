@@ -79,6 +79,15 @@ or human judgment; run them before a release-worthy merge.
    the second cue to fire it. On chunked whisper (macOS <= 15) the same
    sentence fires the card only after the pause; that is expected.
 
+4b. Silent cue hotkeys: with the deck from step 4 loaded, focus Zoom (or any
+   other app) and press `Cmd+Alt+1`: the first rail card lands on the feed
+   WITHOUT Capturia focused. `Cmd+Alt+Right` walks the remaining cards in
+   rail order and goes quiet after the last one (no wrap). Clear the deck
+   and confirm both combos stop doing anything system-wide (nothing stays
+   registered). `node scripts/e2e-desktop-hotkeys.mjs` automates the
+   register/fire/release lifecycle; only the real OS-level keypress from
+   another app needs this manual pass.
+
 ## Native Capturia camera (M7b, requires the installed extension)
 
 1. With the Capturia camera extension installed and approved (see
