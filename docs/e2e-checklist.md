@@ -74,8 +74,10 @@ or human judgment; run them before a release-worthy merge.
    Quarter Plan" slide, saying "the next quarter plan is simple" must fire
    ONLY the quarter-plan card: not the steps card first while the
    hypothesis grows, and not the steps card after the sentence final
-   lands either. On chunked whisper (macOS <= 15) the same sentence fires
-   the card only after the pause; that is expected.
+   lands either. One cue fires per breath BY DESIGN: naming two cards in
+   one uninterrupted sentence shows only the first; pause briefly and say
+   the second cue to fire it. On chunked whisper (macOS <= 15) the same
+   sentence fires the card only after the pause; that is expected.
 
 ## Desktop static bundle + loopback runtime (M8)
 

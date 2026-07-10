@@ -55,16 +55,16 @@ import { sanitizeSurfaceTree } from "@/lib/a2ui-validate";
 import { coerceArrayArg, coerceRecordArg, toolArgText } from "@/lib/extract-json";
 import { oversizedToolArg } from "@/lib/limits";
 import { isPlaceableOverlayType } from "@/lib/catalog";
-import { matchCue, matchInterimCue, type FiredCue, type InterimCueState } from "@/lib/deck/cues";
+import { matchCue, matchInterimCue, type InterimCueState } from "@/lib/deck/cues";
 import type { CueCard, DeckFacts } from "@/lib/deck/types";
 import type { OverlaySpec, OverlayPosition } from "@/lib/types";
 
-// How long fired cues parked at a stop stay eligible for the trailing final.
-// Apple-speech flushes ~100ms after a stop and Web Speech well under a
-// second, while a human cannot finish speaking a NEW command that fast: the
-// TTL is what keeps a quick-restarted session's first sentence (whose
-// engine never delivers the old trailing final) from consuming stale state
-// and getting silently swallowed.
+// How long the fired-segment marker parked at a stop stays eligible for the
+// trailing final. Apple-speech flushes ~100ms after a stop and Web Speech
+// well under a second, while a human cannot finish speaking a NEW command
+// that fast: the TTL is what keeps a quick-restarted session's first
+// sentence (whose engine never delivers the old trailing final) from being
+// swallowed by a stale marker.
 const PARKED_CUE_TTL_MS = 800;
 
 export default function Studio() {
@@ -304,12 +304,12 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
   // onSegmentEnd; a ref because it lives inside speech event callbacks.
   const interimCueRef = useRef<InterimCueState | null>(null);
 
-  // Fired cues parked at a stop transition. Both engines deliver a trailing
-  // final AFTER a stop by design, and a quick restart resets the live ref
-  // before that final lands; the parked copy lets it still see what already
-  // fired (else it would re-answer the sentence through the agent). Any
-  // new-session interim activity, a segment end, or the TTL discards it.
-  const parkedCueRef = useRef<{ fired: FiredCue[]; at: number } | null>(null);
+  // Fired-segment marker parked at a stop transition. Both engines deliver
+  // a trailing final AFTER a stop by design, and a quick restart resets the
+  // live ref before that final lands; the parked marker lets it still know
+  // the segment was answered (else it would re-answer the sentence through
+  // the agent). A segment end or the TTL discards it.
+  const parkedCueRef = useRef<{ at: number } | null>(null);
 
   // Listening state visible to the speech callbacks without waiting on a
   // re-render (they need to tell a live session's interim from a dying
@@ -327,38 +327,28 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
   const { isListening, interimTranscript, speechStatus, lastError, lastResultAt, isSupported, startListening, stopListening } =
     useStudioVoice(
       (text) => {
-        // Capture before closing the segment: cues the interim path already
-        // fired were answered deterministically mid-sentence. A quick
-        // stop/start wipes the live ref before the old session's trailing
-        // final lands, so fall back to the state parked at the stop.
+        // Capture before closing the segment: a fired segment was already
+        // answered deterministically mid-sentence, so its final is swallowed
+        // outright (one utterance, one response; a rescored final could
+        // otherwise re-answer through the agent). A quick stop/start wipes
+        // the live ref before the trailing final lands, so the stop
+        // transition parks a TTL'd marker as the fallback signal.
         const parked = parkedCueRef.current;
         parkedCueRef.current = null;
-        const live = interimCueRef.current?.fired ?? [];
-        // Prefer live state only when it actually fired something: a dying
-        // session's trailing interim can reseed an EMPTY live state after
-        // the stop already parked the real fired list.
-        const fired = live.length
-          ? live
-          : parked && performance.now() - parked.at < PARKED_CUE_TTL_MS
-            ? parked.fired
-            : [];
+        const firedMidSentence =
+          Boolean(interimCueRef.current?.firedId) ||
+          (parked !== null && performance.now() - parked.at < PARKED_CUE_TTL_MS);
         interimCueRef.current = null;
         if (text.split(/\s+/).length < 2) return;
         setLastSent(text);
+        if (firedMidSentence) return;
         // Deterministic, offline cue match first: "show my revenue slide" fires a
         // pre-built card without a model call. Falls through to the agent on miss.
-        // Already-fired cards are excluded and the evidence they consumed
-        // cannot be replayed, so only a genuinely second cue fires here.
-        const card = matchCue(cuesRef.current, text, fired);
+        const card = matchCue(cuesRef.current, text);
         if (card) {
           applyCue(card);
           return;
         }
-        // A final the engine rescored ("roadmap" -> "road map") can miss an
-        // alias its own interims matched moments ago; sending it to the
-        // agent would author a second, competing response for the same
-        // sentence. One utterance, one response.
-        if (fired.length > 0) return;
         sendMessage(`[VOICE] ${text}`)
           .then((sent) => {
             if (!sent) pendingVoiceRef.current = text;
@@ -368,11 +358,11 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
       (interim) => {
         // A volatile hypothesis has no business firing UI after the mic was
         // toggled off, and a dying session's trailing interim must not
-        // destroy the parked fired state its own final is about to need.
+        // reseed state its own trailing final is about to consume. The
+        // parked marker is deliberately NOT cleared here: after a quick
+        // restart an old session's interim is indistinguishable from a new
+        // one, and the short TTL already bounds the marker's life.
         if (!isListeningRef.current) return;
-        // Live interim activity means any parked pre-stop state is moot: its
-        // trailing final either arrived already or lost to a new sentence.
-        parkedCueRef.current = null;
         // Mid-sentence: fire a primed cue card once the volatile hypothesis
         // confirms one of its aliases (two consecutive wins; see
         // matchInterimCue). This is the M9 payoff: PDF-primed UI lands while
@@ -396,20 +386,19 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
 
   // Listening transitions are segment boundaries with one nuance: both
   // engines deliver a trailing final AFTER a stop by design, and that final
-  // must still see the segment's fired cues or a rescored sentence would
-  // double-respond through the agent. So a STOP parks the fired list (TTL'd,
-  // consumed by the trailing final, discarded by live interim activity or a
-  // segment end) while a START clears the live state outright: a quick
-  // stop/start on the apple-speech engine can drop the aborted segment's
-  // closing events entirely, and stale live state would swallow the new
-  // session's first command. The parked copy deliberately survives a START
-  // (a web trailing final can land after a quick restart); the short TTL is
-  // what keeps it from ever swallowing a new session's first sentence.
+  // must still know the segment already fired or a rescored sentence would
+  // double-respond through the agent. So a STOP parks a TTL'd marker
+  // (consumed by the trailing final, discarded by a segment end) while a
+  // START clears the live state outright: a quick stop/start on the
+  // apple-speech engine can drop the aborted segment's closing events
+  // entirely, and stale live state would swallow the new session's first
+  // command. The parked marker deliberately survives a START (a web
+  // trailing final can land after a quick restart); the short TTL is what
+  // keeps it from ever swallowing a new session's first sentence.
   useEffect(() => {
     isListeningRef.current = isListening;
-    if (!isListening) {
-      const fired = interimCueRef.current?.fired;
-      if (fired?.length) parkedCueRef.current = { fired, at: performance.now() };
+    if (!isListening && interimCueRef.current?.firedId) {
+      parkedCueRef.current = { at: performance.now() };
     }
     interimCueRef.current = null;
   }, [isListening]);
