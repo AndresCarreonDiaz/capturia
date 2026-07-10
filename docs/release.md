@@ -24,6 +24,7 @@ npx nodejs-whisper download
 # release artifact: pack:mac + DMG + (when credentials exist) notarization
 CSC_NAME="Your Name" CAPTURIA_TEAM_ID=XXXXXXXXXX \
 CAPTURIA_PROVISIONING_PROFILE=path/to/com.capturia.desktop.provisionprofile \
+CAPTURIA_EXT_PROVISIONING_PROFILE=path/to/com.capturia.camera.extension.provisionprofile \
 CAPTURIA_NOTARY_PROFILE=capturia-notary \
 npm run dist:mac
 
@@ -50,6 +51,7 @@ Environment summary (the first two are the pack:mac contract, see
 | `CSC_NAME` | Keychain signing identity, no certificate-type prefix. Release builds need the Developer ID Application identity to resolve (electron-builder prefers it automatically). |
 | `CAPTURIA_TEAM_ID` | Apple Team ID; builds/verifies the embedded camera extension and pins the signature assertions. |
 | `CAPTURIA_PROVISIONING_PROFILE` | Path to a `.provisionprofile` for `com.capturia.desktop` authorizing the system-extension entitlement (below). Without it the app still signs, but in-app camera install reports itself unavailable. |
+| `CAPTURIA_EXT_PROVISIONING_PROFILE` | Path to the portal-minted **Developer ID** `.provisionprofile` for `com.capturia.camera.extension` (below). Set: the afterPack hook re-signs the embedded camera extension into the Developer ID distribution flavor (see "The embedded camera extension"). Unset: the extension ships as the dev flavor and `notarize:mac` refuses to submit a build that embeds it. |
 | `CAPTURIA_NOTARY_PROFILE` | Name of a `notarytool store-credentials` keychain profile (below). Unset: notarization is skipped with a clear log line. Set: the DMG is submitted with `--wait`, rejection fails the build loudly (the developer log is printed), then app and DMG are stapled and `spctl --assess` must accept the app. |
 
 ## One-time portal setup: the Developer ID provisioning profile
@@ -104,8 +106,9 @@ ID (Apple's own warning), so all capability edits happen first, all profile
    - `com.capturia.desktop` (for example `Capturia Desktop Developer ID`):
      consumed by the pack as `CAPTURIA_PROVISIONING_PROFILE`.
    - `com.capturia.camera.extension` (for example `Capturia Camera Extension
-     Developer ID`): needed by the pending extension dist-signing step (next
-     section); minting it in the same portal session costs nothing extra.
+     Developer ID`): consumed by the pack as
+     `CAPTURIA_EXT_PROVISIONING_PROFILE` for the extension dist-signing step
+     (next section); mint it in the same portal session.
    There is no dedicated help page for the Developer ID flavor; the flow is
    the same as Apple's documented App Store distribution profile, with the
    "Developer ID" radio button instead. The downloaded file is a macOS
@@ -117,14 +120,20 @@ ID (Apple's own warning), so all capability edits happen first, all profile
    fetches a fresh valid dev profile) so the development pack flow keeps
    working alongside the release one.
 5. **Where the files go**: anywhere OUTSIDE the repo (they embed the team id
-   and certificate). The build consumes the desktop profile only via the
-   environment: `CAPTURIA_PROVISIONING_PROFILE=/path/to/that.provisionprofile`;
-   pack:mac embeds it at `Contents/embedded.provisionprofile`, the documented
-   macOS location. The gitignored `native/CapturiaCamera/dist-profile/`
-   directory used by the development mint is a reasonable local spot for both.
-   `pack:mac` refuses profiles that do not authorize
-   `com.apple.developer.system-extension.install`, so a mis-created desktop
-   profile fails the build instead of producing an app AMFI would kill.
+   and certificate). The build consumes both profiles only via the
+   environment: `CAPTURIA_PROVISIONING_PROFILE=/path/to/desktop.provisionprofile`
+   (pack:mac embeds it at the app's `Contents/embedded.provisionprofile`, the
+   documented macOS location) and
+   `CAPTURIA_EXT_PROVISIONING_PROFILE=/path/to/extension.provisionprofile`
+   (afterPack embeds it at the embedded extension's own
+   `Contents/embedded.provisionprofile` during the dist re-sign, next
+   section). The gitignored `native/CapturiaCamera/dist-profile/` directory
+   used by the development mint is a reasonable local spot for all of them.
+   `pack:mac` refuses desktop profiles that do not authorize
+   `com.apple.developer.system-extension.install`, and extension profiles
+   that are not the Developer ID flavor for the extension's App ID, so a
+   mis-created profile fails the build instead of producing an app AMFI would
+   kill (or a notarization rejection).
 
 ## The embedded camera extension: what ships today vs what release needs
 
@@ -143,23 +152,38 @@ exactly wrong for distribution:
   customer machines (they are not in the team's device list).
 
 `scripts/notarize-mac.mjs` therefore refuses to submit a build whose embedded
-extension is not Developer ID signed, with a message pointing here; the
-refusal is local and loud instead of a guaranteed-rejected upload.
+extension is not Developer ID signed, with a message pointing at the release
+flow below; the refusal is local and loud instead of a guaranteed-rejected
+upload.
 
-**What release needs (pending slice, NOT yet implemented)**: a distribution
-signing step for the extension, producing a Developer-ID-signed
-`com.capturia.camera.extension.systemextension` that the afterPack hook
-embeds instead of the dev flavor. Concretely: sign the extension bundle with
-the Developer ID Application certificate, its own entitlements (app sandbox +
-the team app group), and the portal-minted Developer ID profile for
-`com.capturia.camera.extension` from step 3 above (via `xcodebuild` manual
-signing/`-exportArchive` with a `developer-id` export method, or a direct
-`codesign` re-sign that embeds the profile). The portal prerequisites are
-already covered by the runbook above so the account holder can do them in one
-session; the build-side wiring is tracked on the PR/issue checklist. Until
-that lands, notarization-bound builds must pack WITHOUT the embedded
-extension (no `CAPTURIA_TEAM_ID`, no `native/CapturiaCamera/dist-signed`
-present), which notarizes fine but cannot install its own camera.
+**What release runs (the dist re-sign)**: with
+`CAPTURIA_EXT_PROVISIONING_PROFILE` pointing at the portal-minted Developer ID
+profile for `com.capturia.camera.extension` (step 3 of the portal runbook
+above), the afterPack hook re-signs the embedded COPY of the extension into
+the distribution flavor via `scripts/ext-dist-sign.mjs`, leaving the dev build
+in `native/CapturiaCamera/dist-signed` untouched. Concretely, the re-sign:
+
+- embeds that profile as the extension's `Contents/embedded.provisionprofile`
+  (replacing the development one),
+- signs with the **Developer ID Application** identity from the keychain
+  (resolved for the profile's team; `CSC_NAME`, when set, must match it), and
+- regenerates the extension's entitlements: app sandbox, the team-prefixed
+  app group, and the Xcode-style identity claims, dropping the
+  development-only `get-task-allow` the dev flavor carries (an instant
+  notarization rejection), with hardened runtime and a secure timestamp.
+
+The step is asserted in the same fail-loudly style as the rest of the pack:
+the profile must be the Developer ID flavor (all-devices, no device list) FOR
+the extension's App ID and team, and after the re-sign the bundle must verify
+deep-strict with a Developer ID signature, matching team, hardened runtime,
+secure timestamp, the entitlement set above, and the exact profile embedded.
+`pack:mac` validates the whole contract before spending minutes building.
+Without the env var nothing changes: the dev flavor ships as-is (the dev loop
+stays byte-identical) and `notarize:mac` keeps refusing to submit a build
+that embeds it. Notarization-bound builds can also still pack WITHOUT the
+embedded extension (no `CAPTURIA_TEAM_ID`, no
+`native/CapturiaCamera/dist-signed` present), which notarizes fine but cannot
+install its own camera.
 
 ## One-time notary setup: app-specific password + store-credentials
 

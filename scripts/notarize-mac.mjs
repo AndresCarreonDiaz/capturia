@@ -53,9 +53,10 @@
 //     uploading a build whose extension is the Xcode automatic/DEVELOPMENT
 //     flavor (its device-limited development profile could not activate on
 //     customer machines even if notarization somehow passed), so that build
-//     is refused locally before the upload. Extension dist-signing is a
-//     pending slice; docs/release.md ("The embedded camera extension") has
-//     the story.
+//     is refused locally before the upload, pointing at the fix: re-pack
+//     with CAPTURIA_EXT_PROVISIONING_PROFILE so the afterPack hook
+//     distribution-signs the embedded extension (scripts/ext-dist-sign.mjs;
+//     docs/release.md, "The embedded camera extension").
 
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
@@ -143,9 +144,10 @@ if (existsSync(embeddedExt)) {
         "produces the Xcode automatic/DEVELOPMENT flavor: Apple Development certificate " +
         "+ device-limited profile). The notary service rejects Apple Development " +
         "signatures on any nested executable, and that profile could not activate on " +
-        "customer machines anyway, so submitting is refused locally. Extension " +
-        "dist-signing is a pending slice; docs/release.md ('The embedded camera " +
-        "extension') has the story."
+        "customer machines anyway, so submitting is refused locally. Re-run the pack " +
+        "with CAPTURIA_EXT_PROVISIONING_PROFILE pointing at the portal-minted Developer " +
+        "ID profile for the extension so afterPack distribution-signs the embedded copy " +
+        "(docs/release.md, 'The embedded camera extension')."
     );
   }
 }

@@ -62,6 +62,7 @@ import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
+import { resolveDeveloperIdIdentity, validateExtDistSignEnv } from "./ext-dist-sign.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -73,6 +74,32 @@ function run(cmd, args, env = process.env) {
 function fail(message) {
   console.error(`[pack-mac] FAIL: ${message}`);
   process.exit(1);
+}
+
+// Extension distribution signing (release builds): with
+// CAPTURIA_EXT_PROVISIONING_PROFILE set, the afterPack hook re-signs the
+// embedded camera extension into the Developer ID flavor (scripts/
+// ext-dist-sign.mjs has the whole contract). The contract is validated HERE
+// first because it is pure environment + keychain inspection: a broken
+// profile or a missing Developer ID identity fails in milliseconds instead
+// of after minutes of building. afterPack re-validates (it also serves
+// direct electron-builder invocations) and performs the actual re-sign.
+if (process.env.CAPTURIA_EXT_PROVISIONING_PROFILE) {
+  if (!(process.env.CSC_NAME || process.env.CSC_LINK)) {
+    fail(
+      "CAPTURIA_EXT_PROVISIONING_PROFILE is set but no CSC_NAME/CSC_LINK; a " +
+        "distribution-signed extension inside an unsigned app cannot ship."
+    );
+  }
+  try {
+    const distSign = validateExtDistSignEnv(process.env, root);
+    resolveDeveloperIdIdentity(process.env, distSign.team);
+  } catch (error) {
+    fail(error.message);
+  }
+  console.log(
+    "[pack-mac] extension distribution signing enabled (CAPTURIA_EXT_PROVISIONING_PROFILE + Developer ID identity verified)"
+  );
 }
 
 run(process.execPath, [join(root, "scripts", "build-electron-export.mjs")]);
