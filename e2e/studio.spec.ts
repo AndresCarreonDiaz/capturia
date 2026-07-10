@@ -48,7 +48,9 @@ test("program output (?out=1) is chrome-free: webcam only, no operator UI", asyn
 // The mirror channel: the visible studio (primary) publishes its overlay
 // state over a BroadcastChannel and a ?out=1 page in the same browser adopts
 // it. This is what feeds the native Capturia camera (the offscreen Electron
-// window loads ?out=1) and OBS browser-source tabs on web.
+// window loads ?out=1) and, on web, a second same-browser tab that OBS
+// captures via window/tab capture (an OBS Browser Source is its own isolated
+// browser and receives no mirror).
 test("an out page mirrors the control room's overlays, live and on removal", async ({
   page,
   context,
@@ -109,7 +111,7 @@ test("mirroring is one-directional: an out page's local state never renders or l
   await outPage.close();
 });
 
-test("the out page shows the PRIMARY's vote QR, not a room of its own", async ({
+test("the out page shows the PRIMARY's vote QR and never touches the vote API itself", async ({
   page,
   context,
 }) => {
@@ -137,14 +139,66 @@ test("the out page shows the PRIMARY's vote QR, not a room of its own", async ({
     .first()
     .innerText();
 
+  // The out page ALSO carries ?vote=1 (the desktop offscreen URL inherits the
+  // Control Room's query string), which is exactly the case the receiver
+  // vote-room guard exists for: without it, this page would open an SSE watch
+  // on (and could publish to) a second tab-scoped room nobody's phones are in.
   const outPage = await context.newPage();
-  await outPage.goto("/studio?out=1");
+  const voteApiCalls: string[] = [];
+  outPage.on("request", (req) => {
+    if (req.url().includes("/api/vote/")) voteApiCalls.push(`${req.method()} ${req.url()}`);
+  });
+  await outPage.goto("/studio?out=1&vote=1");
   await expect(outPage.getByText("Which demo next?")).toBeVisible();
   // Same room slug as the primary: the receiver mirrors the URL verbatim
   // instead of minting its own tab-scoped room.
   await expect(outPage.locator("span", { hasText: /\/vote\// }).first()).toHaveText(
     primaryUrlText
   );
+  // Past the poll mirror + the publisher's 300ms debounce: still zero
+  // requests. Deleting the receiver guard on useVoteRoom fails this.
+  await outPage.waitForTimeout(800);
+  expect(voteApiCalls).toEqual([]);
+  await outPage.close();
+});
+
+test("exiting Program Output on an out page navigates to a real Control Room", async ({
+  context,
+}) => {
+  // A receiver's local state is inert (the feed renders the adopted
+  // snapshot), so revealing operator chrome IN PLACE would be a zombie
+  // Control Room: commands would burn agent turns yet render nothing. The
+  // exit affordances must therefore NAVIGATE, re-running role detection.
+  const outPage = await context.newPage();
+  await outPage.goto("/studio?out=1&fx=0");
+  await expect(outPage.getByPlaceholder(/Add a lower third/)).toHaveCount(0);
+
+  await outPage.keyboard.press("Control+Shift+KeyO");
+  // The reload drops ?out=1 but keeps the other params.
+  await outPage.waitForURL((url) => {
+    return url.pathname === "/studio" && url.searchParams.get("out") === null;
+  });
+  expect(new URL(outPage.url()).searchParams.get("fx")).toBe("0");
+  // Now a genuine primary: operator chrome is live.
+  await expect(outPage.getByPlaceholder(/Add a lower third/)).toBeVisible();
+  await outPage.close();
+});
+
+test("closing the Control Room clears the mirrored feed (bye handshake)", async ({
+  page,
+  context,
+}) => {
+  await page.goto("/studio");
+  const outPage = await context.newPage();
+  await outPage.goto("/studio?out=1");
+
+  await driveOverlays(page, LOWER_THIRD);
+  await expect(outPage.getByText("Mirror Check")).toBeVisible();
+
+  // pagehide on the primary posts a bye; the receiver blanks immediately
+  // (well under the 12s staleness fallback that covers silent crashes).
+  await page.close();
+  await expect(outPage.getByText("Mirror Check")).toHaveCount(0, { timeout: 5_000 });
   await outPage.close();
 });
 

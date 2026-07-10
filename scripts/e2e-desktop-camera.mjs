@@ -77,11 +77,15 @@ for (const stream of [app.process().stdout, app.process().stderr]) {
 const sawLog = (needle) => logLines.some((l) => l.includes(needle));
 
 // Gate 1: the sink connects (page loaded AND painted, then the extension
-// accepted the connect). If the environment can't do it, skip loudly.
+// accepted the connect). If the environment can't do it, skip loudly. The
+// needles match what main actually LOGS: loadAddon's console.error when the
+// addon require fails ("capturia-frames addon not built"), and the feed's
+// give-up warn when discovery never finds the device ("camera extension not
+// found"); getState().error strings never reach stdout.
 await waitFor(
   "sink connect",
   async () => {
-    if (sawLog("camera extension not found") || sawLog("Native camera module not built")) {
+    if (sawLog("camera extension not found") || sawLog("capturia-frames addon not built")) {
       await app.close().catch(() => {});
       fail("camera extension or native addon unavailable on this machine", 2);
     }
@@ -140,14 +144,21 @@ await waitFor(
 console.log("[desktop-e2e] overlay visible in the offscreen camera window");
 
 // Gate 4: the pump keeps delivering ~30fps AFTER the mirror landed
-// (CAPTURIA_CAMERA_LOG prints stats every 5s).
+// (CAPTURIA_CAMERA_LOG prints stats every 5s). fps alone would pass on a
+// frozen feed (the pump repeats the last ring frame by design), so the gate
+// also requires live PAINTS on the same stats line and fails outright if the
+// feed ever reported itself frozen.
 const statsBefore = logLines.length;
 const fpsLine = await waitFor(
-  "a healthy pump stats line",
+  "a healthy pump stats line (fps >= 25, paints >= 20)",
   () => {
-    const line = logLines
-      .slice(statsBefore)
-      .find((l) => /\[camera\] fps=(\d+)/.test(l) && Number(l.match(/fps=(\d+)/)[1]) >= 25);
+    if (sawLog("feed frozen (no paints)")) {
+      fail("the feed reported itself frozen; the camera is repeating a stale frame");
+    }
+    const line = logLines.slice(statsBefore).find((l) => {
+      const m = l.match(/\[camera\] fps=(\d+) paints=(\d+)/);
+      return m && Number(m[1]) >= 25 && Number(m[2]) >= 20;
+    });
     return line || null;
   },
   20_000

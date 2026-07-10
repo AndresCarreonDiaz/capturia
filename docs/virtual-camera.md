@@ -12,13 +12,21 @@ plugin, no developer account.
 1. **Install OBS Studio** (free): https://obsproject.com. Version 26.1 or newer
    has the virtual camera built in. On first launch, grant it Screen Recording
    and Camera permission in System Settings, Privacy and Security.
-2. **Open Capturia's Program Output.** In the studio (`npm run electron-dev`, or
-   the web app at `/studio`), click **Output** in the top-right, or press
-   **Cmd+Shift+O**, or open `/studio?out=1`. This hides every control and shows
-   only your camera and the overlays, the clean feed.
+2. **Open Capturia's Program Output.** Two ways:
+   - In the studio (`npm run electron-dev`, or the web app at `/studio`), click
+     **Output** in the top-right or press **Cmd+Shift+O**. This hides every
+     control and shows only your camera and the overlays, the clean feed.
+   - Or keep your studio tab as-is and open `/studio?out=1` in a **second tab
+     of the same browser**: it mirrors the studio tab's overlays live over a
+     BroadcastChannel, so you can keep driving from the first tab while OBS
+     captures the second. (Exiting Program Output on such a tab reloads it as
+     a regular Control Room.)
 3. **Capture it in OBS.** In OBS, under Sources, click **+** and add a
    **Window Capture** (or **macOS Screen Capture**) and pick the Capturia
-   window. Resize it to fill the canvas.
+   window or the `?out=1` browser tab's window. Resize it to fill the canvas.
+   Do **not** use an OBS **Browser Source** pointed at `/studio?out=1`: OBS's
+   Browser Source is its own embedded browser, not a tab of yours, so it
+   cannot receive the mirror and would only ever show the bare webcam.
 4. **Start the virtual camera.** In OBS, click **Start Virtual Camera**
    (bottom-right Controls panel).
 5. **Pick it in your call.** In Zoom: Settings, Video, Camera, choose
@@ -66,14 +74,20 @@ Output page is its own studio instance, so the visible window mirrors its
 live state to it over a same-origin BroadcastChannel (`lib/mirror.ts`). The
 Control Room (any studio page NOT loaded with `?out=1`) publishes the overlay
 state, the Surface Mode flag, the FX switch, the speaking-energy heartbeat,
-and the vote-room URL on every change; every `?out=1` page adopts it, and a
-late-joining output page requests a snapshot on load. This also works on the
-web: an OBS browser-source tab on `/studio?out=1` mirrors the studio tab in
-the same browser profile. Mirroring is strictly one-directional; output pages
-never publish, never run speech, never open agent runs, and never claim a
-vote room (they show the Control Room's QR verbatim). Known limitation: two
-open Control Room tabs both publish and the last writer wins on the camera
-page, so keep one Control Room per machine.
+and the vote-room URL on every change, plus a low-rate keepalive; every
+`?out=1` page adopts it, and a late-joining output page requests a snapshot
+on load. The same mechanism covers a second tab of the same browser on
+`/studio?out=1` (the OBS bridge flow above); the channel does NOT reach other
+browsers or OBS's embedded Browser Source. Mirroring is strictly
+one-directional; output pages never publish, never run speech, never open
+agent runs, and never claim a vote room (they show the Control Room's QR
+verbatim). The exit-output control on a `?out=1` page navigates it back to a
+plain `/studio` Control Room rather than revealing dead chrome in place. If
+the Control Room goes away, output pages clear the mirrored overlays:
+immediately on a clean close (a goodbye message on pagehide), or within ~12s
+of silence when it crashed. Known limitation: two open Control Room tabs both
+publish and the last writer wins on the camera page, so keep one Control Room
+per machine.
 
 Current limitations:
 - Packaged builds (`npm run pack:mac`) do not ship the capturia-frames addon

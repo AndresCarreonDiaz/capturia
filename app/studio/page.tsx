@@ -39,7 +39,7 @@ const A2uiOverlayLayer = dynamic(() => import("@/components/A2uiOverlayLayer"), 
 import { useStudioVoice } from "@/hooks/useStudioVoice";
 import { useSpeechEnergy } from "@/hooks/useSpeechEnergy";
 import { useStudioMirror } from "@/hooks/useStudioMirror";
-import { detectMirrorRole, type MirrorSnapshot } from "@/lib/mirror";
+import { controlRoomSearch, detectMirrorRole, type MirrorSnapshot } from "@/lib/mirror";
 import { useVoteRoom } from "@/hooks/useVoteRoom";
 import VoteQRBadge from "@/components/VoteQRBadge";
 import { derivePollFromOverlays } from "@/lib/derive-poll";
@@ -163,12 +163,13 @@ interface CapturiaProps {
 function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUrl }: CapturiaProps) {
   // Mirror role, fixed by how the page was LOADED (not by the outputMode
   // toggle below): a ?out=1 page is a dedicated output surface (the desktop
-  // app's offscreen camera window, an OBS browser-source tab) and RECEIVES
+  // app's offscreen camera window, a second same-browser tab) and RECEIVES
   // the visible Control Room's state over the mirror channel instead of
   // owning its own show. Everything a receiver must not do (publish state,
   // run the keycheck probe, publish a vote room, open agent runs from surface
-  // taps) is gated on this. Lazy init is hydration-safe: the role never
-  // changes the first-paint DOM, only effects and post-adoption renders.
+  // taps, reveal operator chrome in place) is gated on this. Lazy init is
+  // hydration-safe: the role never changes the first-paint DOM, only effects
+  // and post-adoption renders.
   const [mirrorRole] = useState(() =>
     detectMirrorRole(typeof window === "undefined" ? "" : window.location.search)
   );
@@ -244,7 +245,7 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
   // Audio-reactive FX: default-on (the breathing IS part of the broadcast
   // look), but the cyan accent can clash with a stream's branding and some
   // talks want a static frame, so the operator can switch it off (FX pill) and
-  // an OBS browser-source scene can pin it with ?fx=0. Off = the energy hook
+  // a captured output tab can pin it with ?fx=0. Off = the energy hook
   // never runs, so the vignette, BigCounter scale, and LiveBadge glow all stay
   // inert, not just the vignette layer.
   const [fxOn, setFxOn] = useState(true);
@@ -262,6 +263,21 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
     if (params.get("vote") === "1") setVoteOn(true);
   }, []);
 
+  // Leaving Program Output on a RECEIVER is a NAVIGATION, never a state flip:
+  // a receiver's local state is inert by design (the feed renders the adopted
+  // snapshot), so flipping outputMode off in place would reveal operator
+  // chrome whose commands run the real agent but can never render, a zombie
+  // Control Room burning quota invisibly. Reloading without ?out=1 re-runs
+  // role detection and boots this page as a genuine primary.
+  const exitProgramOutput = useCallback(() => {
+    if (isMirrorReceiver) {
+      window.location.href =
+        window.location.pathname + controlRoomSearch(window.location.search);
+      return;
+    }
+    setOutputMode(false);
+  }, [isMirrorReceiver]);
+
   // Cmd+, settings; Cmd/Ctrl+Shift+O clean Program Output; Cmd/Ctrl+Shift+A A2UI Surface Mode.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -271,7 +287,10 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
       }
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "o") {
         e.preventDefault();
-        setOutputMode((v) => !v);
+        // A receiver is ALWAYS in output mode, so the toggle can only mean
+        // "leave", which for a receiver is the navigation above.
+        if (isMirrorReceiver) exitProgramOutput();
+        else setOutputMode((v) => !v);
       }
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "a") {
         e.preventDefault();
@@ -280,7 +299,7 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [isMirrorReceiver, exitProgramOutput]);
 
   // First-run: if desktop and no BYOK keys saved yet, open Settings once.
   // The onboarding tour owns this moment on a truly fresh install (its keys
@@ -513,8 +532,8 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
   });
 
   // Mirror channel: the Control Room (primary) publishes its live broadcast
-  // state; a ?out=1 page (the desktop app's offscreen camera window, an OBS
-  // browser-source tab) adopts it. Full protocol rationale in lib/mirror.ts.
+  // state; a ?out=1 page (the desktop app's offscreen camera window, a second
+  // same-browser tab) adopts it. Full protocol rationale in lib/mirror.ts.
   // The snapshot is memoized so the hook's republish effect fires on real
   // state changes, not render churn.
   const mirrorSnapshot = useMemo<MirrorSnapshot>(
@@ -1265,12 +1284,18 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
       )}
 
       {/* Program Output: a single hover-revealed control to exit, so the
-          captured feed stays clean but the operator can leave the mode. */}
+          captured feed stays clean but the operator can leave the mode. On a
+          mirror receiver this NAVIGATES to the Control Room URL instead of
+          flipping state (see exitProgramOutput). */}
       {outputMode && (
         <button
-          onClick={() => setOutputMode(false)}
+          onClick={exitProgramOutput}
           className="absolute top-3 right-3 z-30 text-[10px] font-mono uppercase tracking-widest px-2.5 py-1 rounded-full bg-black/50 text-white/40 border border-white/10 opacity-0 hover:opacity-100 transition-opacity"
-          title="Exit Program Output (Cmd+Shift+O)"
+          title={
+            isMirrorReceiver
+              ? "Open this page as a Control Room (reloads without ?out=1)"
+              : "Exit Program Output (Cmd+Shift+O)"
+          }
         >
           Exit output
         </button>

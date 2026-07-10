@@ -3,17 +3,27 @@ import type { OverlaySpec } from "@/lib/types";
 // Pure model for studio state mirroring: the visible Control Room (the
 // PRIMARY studio instance) broadcasts its live state over a BroadcastChannel,
 // and every Program Output page loaded with ?out=1 (a RECEIVER: the desktop
-// app's offscreen camera window, or an OBS browser-source tab on web) adopts
+// app's offscreen camera window, or a second tab of the SAME browser) adopts
 // it. That is what puts the operator's overlays on the published camera feed:
 // the offscreen window is a separate studio instance with its own React
 // state, and it deliberately has no preload (a security decision, see
 // electron/camera-feed.js), so a plain same-origin web channel is the bridge.
+// The channel's reach is one browser profile (or one Electron session): a
+// second tab of your browser mirrors, but an OBS Browser Source is OBS's own
+// embedded browser and will NOT receive the mirror; capture the ?out=1 tab
+// with a window/tab capture instead (docs/virtual-camera.md).
 //
 // One direction only: primaries publish, receivers adopt, and a receiver
 // never posts anything except the initial "hello" that requests a snapshot
 // (late-join: an out page opened after state exists must not wait for the
 // next change). Receivers also never run speech, never publish a vote room,
 // and never open agent runs; the studio page gates those on the role.
+//
+// Liveness: a primary reannounces its snapshot every MIRROR_KEEPALIVE_MS and
+// posts a "bye" on pagehide, so a receiver never renders a dead Control
+// Room's overlays (and vote QR) forever: it blanks on the bye, or after
+// MIRROR_STALE_AFTER_MS without any message from its adopted sender when the
+// primary died without one (crash, killed tab).
 //
 // Two primaries (say, a second /studio tab on web) is handled by the simplest
 // correct rule: EVERY non-out instance publishes, and receivers adopt the
@@ -36,6 +46,21 @@ export const MIRROR_CHANNEL_NAME = "capturia:studio-mirror";
 // never flood the channel. Must stay comfortably under SPEAK_WINDOW_MS
 // (lib/energy.ts) or the receiver's envelope would decay between pings.
 export const SPEAK_PING_MIN_INTERVAL_MS = 150;
+
+// Primary keepalive cadence: the full snapshot is small (bounded upstream by
+// lib/limits.ts) and reannouncing it doubles as self-healing for any missed
+// message, so a plain low-rate republish beats a separate ping type.
+export const MIRROR_KEEPALIVE_MS = 5_000;
+
+// A receiver considers its adopted sender dead after this long without ANY
+// message from it. More than two keepalive periods, so one delayed or
+// dropped keepalive (a busy main thread mid-agent-turn) never blanks a
+// healthy feed.
+export const MIRROR_STALE_AFTER_MS = 12_000;
+
+// How often a receiver checks the staleness bound. Coarse on purpose: the
+// exact blanking moment does not matter, only that it is bounded.
+export const MIRROR_STALE_CHECK_MS = 1_000;
 
 export type MirrorRole = "primary" | "receiver";
 
@@ -62,14 +87,18 @@ export interface MirrorSnapshot {
 export type MirrorMessage =
   // Receiver -> primaries: "I just loaded, publish your current snapshot."
   | { kind: "hello" }
-  // Primary -> receivers: the full current state. Sent on every state change
-  // and in reply to hello; `from` identifies the sender for adoption.
+  // Primary -> receivers: the full current state. Sent on every state change,
+  // on the keepalive cadence, and in reply to hello; `from` identifies the
+  // sender for adoption.
   | { kind: "state"; from: string; snapshot: MirrorSnapshot }
   // Primary -> receivers: a speech result just landed (energy heartbeat).
-  | { kind: "speak"; from: string };
+  | { kind: "speak"; from: string }
+  // Primary -> receivers: this sender is going away (pagehide). Receivers
+  // adopted to it blank immediately instead of waiting out the stale bound.
+  | { kind: "bye"; from: string };
 
 // The mirror role is fixed by how the page was LOADED: ?out=1 marks the
-// dedicated output surfaces (offscreen camera window, OBS browser source).
+// dedicated output surfaces (the offscreen camera window, a captured tab).
 // Deliberately not tied to the outputMode React state: the operator toggling
 // Program Output inside the Control Room (Cmd+Shift+O) is still the primary,
 // just chrome-free, and must keep publishing.
@@ -77,9 +106,28 @@ export function detectMirrorRole(search: string): MirrorRole {
   return new URLSearchParams(search).get("out") === "1" ? "receiver" : "primary";
 }
 
+// The same URL minus the ?out flag: where a receiver page navigates when the
+// operator asks it to become a Control Room. A receiver must NEVER just flip
+// outputMode off in place: its local state is inert by design (the feed
+// renders the adopted snapshot), so revealing the operator chrome without a
+// reload would present controls whose effects can never render, and voice or
+// typed commands would burn real agent turns invisibly. A full navigation
+// re-runs role detection and boots a genuine primary.
+export function controlRoomSearch(search: string): string {
+  const params = new URLSearchParams(search);
+  params.delete("out");
+  const rest = params.toString();
+  return rest ? `?${rest}` : "";
+}
+
 // Throttle gate for speak pings (see SPEAK_PING_MIN_INTERVAL_MS).
 export function speakPingDue(lastSentAt: number, now: number): boolean {
   return now - lastSentAt >= SPEAK_PING_MIN_INTERVAL_MS;
+}
+
+// Staleness bound for an adopted sender (see MIRROR_STALE_AFTER_MS).
+export function adoptionStale(lastHeardAt: number, now: number): boolean {
+  return now - lastHeardAt > MIRROR_STALE_AFTER_MS;
 }
 
 // Minimal structural check so one malformed overlay cannot crash the render
@@ -119,8 +167,8 @@ export function parseMirrorMessage(data: unknown): MirrorMessage | null {
   if (!data || typeof data !== "object") return null;
   const m = data as Record<string, unknown>;
   if (m.kind === "hello") return { kind: "hello" };
-  if (m.kind === "speak") {
-    return typeof m.from === "string" && m.from !== "" ? { kind: "speak", from: m.from } : null;
+  if (m.kind === "speak" || m.kind === "bye") {
+    return typeof m.from === "string" && m.from !== "" ? { kind: m.kind, from: m.from } : null;
   }
   if (m.kind === "state") {
     if (typeof m.from !== "string" || m.from === "") return null;

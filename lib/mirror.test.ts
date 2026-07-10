@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  MIRROR_KEEPALIVE_MS,
+  MIRROR_STALE_AFTER_MS,
   SPEAK_PING_MIN_INTERVAL_MS,
+  adoptionStale,
+  controlRoomSearch,
   detectMirrorRole,
   isMirrorableOverlay,
   parseMirrorMessage,
@@ -42,6 +46,19 @@ describe("detectMirrorRole", () => {
   });
 });
 
+describe("controlRoomSearch", () => {
+  it("strips the out flag, keeping everything else", () => {
+    expect(controlRoomSearch("?out=1")).toBe("");
+    expect(controlRoomSearch("?out=1&fx=0")).toBe("?fx=0");
+    expect(controlRoomSearch("?vote=1&out=1&surface=1")).toBe("?vote=1&surface=1");
+  });
+
+  it("is a no-op shape for a query without out", () => {
+    expect(controlRoomSearch("")).toBe("");
+    expect(controlRoomSearch("?fx=0")).toBe("?fx=0");
+  });
+});
+
 describe("speakPingDue", () => {
   it("allows the first ping and pings past the throttle window", () => {
     expect(speakPingDue(0, SPEAK_PING_MIN_INTERVAL_MS)).toBe(true);
@@ -50,6 +67,20 @@ describe("speakPingDue", () => {
 
   it("suppresses pings inside the throttle window", () => {
     expect(speakPingDue(1000, 1000 + SPEAK_PING_MIN_INTERVAL_MS - 1)).toBe(false);
+  });
+});
+
+describe("adoptionStale", () => {
+  it("stays fresh through the whole stale window", () => {
+    expect(adoptionStale(1000, 1000 + MIRROR_STALE_AFTER_MS)).toBe(false);
+  });
+
+  it("goes stale past the bound", () => {
+    expect(adoptionStale(1000, 1000 + MIRROR_STALE_AFTER_MS + 1)).toBe(true);
+  });
+
+  it("outlives at least two keepalive periods, so one dropped keepalive never blanks", () => {
+    expect(MIRROR_STALE_AFTER_MS).toBeGreaterThan(2 * MIRROR_KEEPALIVE_MS);
   });
 });
 
@@ -73,17 +104,23 @@ describe("isMirrorableOverlay", () => {
 });
 
 describe("parseMirrorMessage", () => {
-  it("round-trips hello and speak", () => {
+  it("round-trips hello, speak, and bye", () => {
     expect(parseMirrorMessage({ kind: "hello" })).toEqual({ kind: "hello" });
     expect(parseMirrorMessage({ kind: "speak", from: "abc" })).toEqual({
       kind: "speak",
       from: "abc",
     });
+    expect(parseMirrorMessage({ kind: "bye", from: "abc" })).toEqual({
+      kind: "bye",
+      from: "abc",
+    });
   });
 
-  it("rejects a speak ping without a sender", () => {
+  it("rejects a speak ping or bye without a sender", () => {
     expect(parseMirrorMessage({ kind: "speak" })).toBeNull();
     expect(parseMirrorMessage({ kind: "speak", from: "" })).toBeNull();
+    expect(parseMirrorMessage({ kind: "bye" })).toBeNull();
+    expect(parseMirrorMessage({ kind: "bye", from: "" })).toBeNull();
   });
 
   it("round-trips a full state message", () => {
