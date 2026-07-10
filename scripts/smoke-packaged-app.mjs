@@ -38,12 +38,15 @@ if (!existsSync(binary)) {
 // Camera leg: forced by env, skippable by flag, otherwise auto-detected from
 // the installed-and-enabled extension (systemextensionsctl lists it without
 // privileges). Detection failure just means "skip", never a smoke failure.
+// systemextensionsctl prints ONE ROW PER VERSION of the extension: a stale
+// "[terminated waiting to uninstall]" row can precede the live one, so the
+// gate is "ANY row for the bundle id says activated enabled".
 function extensionEnabled() {
   const out = spawnSync("systemextensionsctl", ["list"], { encoding: "utf8" });
-  const line = (out.stdout || "")
+  return (out.stdout || "")
     .split("\n")
-    .find((l) => l.includes("com.capturia.camera.extension"));
-  return Boolean(line && line.includes("enabled"));
+    .filter((l) => l.includes("com.capturia.camera.extension"))
+    .some((l) => l.includes("activated enabled"));
 }
 let camera;
 if (process.argv.includes("--no-camera")) camera = false;
@@ -51,12 +54,15 @@ else if (process.env.CAPTURIA_SMOKE_CAMERA === "1") camera = true;
 else camera = extensionEnabled();
 console.log(`[smoke-packaged] camera leg: ${camera ? "ON" : "off"}`);
 
+// Build the child env explicitly: an inherited CAPTURIA_SMOKE_CAMERA=1 must
+// not ride through the spread when the leg is off (--no-camera has to mean
+// off, full stop).
+const childEnv = { ...process.env, CAPTURIA_SMOKE: "1" };
+if (camera) childEnv.CAPTURIA_SMOKE_CAMERA = "1";
+else delete childEnv.CAPTURIA_SMOKE_CAMERA;
+
 const child = spawn(binary, [], {
-  env: {
-    ...process.env,
-    CAPTURIA_SMOKE: "1",
-    ...(camera ? { CAPTURIA_SMOKE_CAMERA: "1" } : {}),
-  },
+  env: childEnv,
   stdio: ["ignore", "pipe", "pipe"],
 });
 

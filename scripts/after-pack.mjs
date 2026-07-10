@@ -85,6 +85,23 @@ function embedCameraExtension(resourcesSiblingContents) {
   console.log(`  • afterPack embedded ${EXT_ID}.systemextension (team verified)`);
 }
 
+// Every staged Mach-O must run in (or beside) the arm64 app. The reference
+// arch comes from the app's own main executable, so this stays correct if the
+// target arch ever changes; the classic failure it catches is an x86_64 Node
+// (Rosetta terminal) having built an x86_64 addon for an arm64 app, which
+// would ship a camera that cannot load.
+function assertMachOArch(appArchs, file, what) {
+  const archs = spawnSync("lipo", ["-archs", file], { encoding: "utf8" })
+    .stdout.trim()
+    .split(/\s+/);
+  if (!archs.some((a) => appArchs.includes(a))) {
+    throw new Error(
+      `afterPack: ${what} is [${archs.join(", ")}] but the app is [${appArchs.join(", ")}]; ` +
+        "rebuild it with a matching toolchain (a Rosetta/x86_64 Node builds x86_64 addons)."
+    );
+  }
+}
+
 export default async function afterPack(context) {
   const stage = join(root, ".whisper-stage", "nodejs-whisper");
   if (!existsSync(stage)) {
@@ -98,11 +115,20 @@ export default async function afterPack(context) {
     "Contents"
   );
   const resources = join(contents, "Resources");
+  const appArchs = spawnSync(
+    "lipo",
+    ["-archs", join(contents, "MacOS", context.packager.appInfo.productFilename)],
+    { encoding: "utf8" }
+  )
+    .stdout.trim()
+    .split(/\s+/);
   const dest = join(resources, "nodejs-whisper");
   rmSync(dest, { recursive: true, force: true });
   // verbatimSymlinks: keep the staged dylib symlink chain relative; the
   // default would rewrite it to absolute paths into the packer's checkout.
   cpSync(stage, dest, { recursive: true, verbatimSymlinks: true });
+  const whisperCli = join(dest, "cpp", "whisper.cpp", "build", "bin", "whisper-cli");
+  if (existsSync(whisperCli)) assertMachOArch(appArchs, whisperCli, "whisper-cli");
   console.log(`  • afterPack copied self-contained nodejs-whisper -> ${dest}`);
 
   // The on-device streaming speech helper (macOS 26+). Optional: a build
@@ -111,6 +137,7 @@ export default async function afterPack(context) {
   // entitlements, which carry the audio-input entitlement it needs).
   const speechHelper = join(root, "native", "capturia-speech", "capturia-speech");
   if (existsSync(speechHelper)) {
+    assertMachOArch(appArchs, speechHelper, "capturia-speech helper");
     cpSync(speechHelper, join(resources, "capturia-speech"));
     console.log("  • afterPack copied capturia-speech helper");
   } else {
@@ -125,6 +152,7 @@ export default async function afterPack(context) {
       "afterPack: capturia_frames.node not built; run node scripts/build-frames-addon.mjs (pack:mac does this)."
     );
   }
+  assertMachOArch(appArchs, addon, "capturia_frames.node");
   cpSync(addon, join(resources, "capturia_frames.node"));
   console.log("  • afterPack copied capturia_frames.node");
 
