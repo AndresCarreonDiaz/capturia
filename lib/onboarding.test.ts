@@ -77,3 +77,43 @@ describe("shouldShowOnboarding", () => {
     expect(shouldShowOnboarding(ctx(), true)).toBe(false);
   });
 });
+
+describe("the camera step", () => {
+  it("exists only when this build can install (or has installed) the extension", () => {
+    expect(onboardingSteps(ctx()).map((s) => s.id)).not.toContain("camera");
+    expect(
+      onboardingSteps(ctx({ cameraExtension: "unsupported" })).map((s) => s.id)
+    ).not.toContain("camera");
+    expect(
+      onboardingSteps(ctx({ cameraExtension: "not-installed" })).map((s) => s.id)
+    ).toEqual(["welcome", "keys", "voice", "camera", "golive"]);
+  });
+
+  it("stays in the flow once installed (so it can celebrate and advance)", () => {
+    expect(
+      onboardingSteps(ctx({ cameraExtension: "installed" })).map((s) => s.id)
+    ).toContain("camera");
+  });
+
+  it("is satisfied exactly when the extension is installed", () => {
+    const step = onboardingSteps(ctx({ cameraExtension: "not-installed" })).find(
+      (s) => s.id === "camera"
+    )!;
+    expect(step.isSatisfied(ctx({ cameraExtension: "not-installed" }))).toBe(false);
+    expect(step.isSatisfied(ctx({ cameraExtension: "awaiting-approval" }))).toBe(false);
+    expect(step.isSatisfied(ctx({ cameraExtension: "installed" }))).toBe(true);
+  });
+
+  it("swaps its copy while installing and while macOS waits for approval", () => {
+    const step = onboardingSteps(ctx({ cameraExtension: "not-installed" })).find(
+      (s) => s.id === "camera"
+    )!;
+    expect(step.dynamicBody?.(ctx({ cameraExtension: "not-installed" }))).toBeNull();
+    expect(step.dynamicBody?.(ctx({ cameraExtension: "installing" }))).toContain(
+      "Installing"
+    );
+    expect(step.dynamicBody?.(ctx({ cameraExtension: "awaiting-approval" }))).toContain(
+      "System Settings"
+    );
+  });
+});

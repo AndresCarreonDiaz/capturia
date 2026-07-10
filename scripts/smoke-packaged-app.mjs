@@ -61,6 +61,15 @@ const childEnv = { ...process.env, CAPTURIA_SMOKE: "1" };
 if (camera) childEnv.CAPTURIA_SMOKE_CAMERA = "1";
 else delete childEnv.CAPTURIA_SMOKE_CAMERA;
 
+// Extension-activation state leg (M8 slice 2): always on; it is read-only
+// (reports the status mapping, fires no request) and must hold on every
+// machine: "installed" where the extension is enabled, any other mapped
+// status elsewhere. CAPTURIA_SMOKE_SYSEXT_ACTIVATE=1 (opt-in via the caller's
+// environment, like the live packaged verify) additionally drives a real
+// activation request; it is never forced on here so unattended runs stay
+// deterministic and dialog-free.
+childEnv.CAPTURIA_SMOKE_SYSEXT = "1";
+
 const child = spawn(binary, [], {
   env: childEnv,
   stdio: ["ignore", "pipe", "pipe"],
@@ -87,6 +96,15 @@ child.on("close", (code) => {
   if (!output.includes("[smoke] PASS")) fail("exit 0 but no [smoke] PASS in output");
   if (camera && !/"camera":\{"ok":true/.test(output.replace(/\s/g, ""))) {
     fail("camera leg requested but no passing camera evidence in output");
+  }
+  const compact = output.replace(/\s/g, "");
+  if (!/"sysext":\{"ok":true/.test(compact)) {
+    fail("no passing sysext evidence in output");
+  }
+  // The machine detection above and the app's own status mapping must agree:
+  // an enabled extension read as anything but installed is a mapping bug.
+  if (camera && !compact.includes('"status":"installed"')) {
+    fail("extension is enabled on this machine but the app did not report status installed");
   }
   console.log("[smoke-packaged] PASS");
 });

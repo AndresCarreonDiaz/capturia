@@ -10,11 +10,19 @@
 # runtime, keychain entries, and macOS permission grants are already keyed
 # on). The embedded CMIO extension keeps its own id,
 # com.capturia.camera.extension, unchanged from the dev host app so an
-# extension already activated on a dev machine keeps matching. When the in-app
-# activation flow lands (M8 slice 2) the packaged app itself will need the
-# restricted system-extension.install entitlement plus a provisioning profile
-# minted for com.capturia.desktop; until then activation still happens via the
-# dev host app (native/CapturiaCamera).
+# extension already activated on a dev machine keeps matching.
+#
+# In-app activation (M8 slice 2): the packaged app can activate its own
+# embedded extension when it is signed with the restricted
+# com.apple.developer.system-extension.install entitlement AND embeds a
+# provisioning profile for com.capturia.desktop that authorizes it (AMFI
+# SIGKILLs the app otherwise, Developer ID included). Both ride the
+# CAPTURIA_PROVISIONING_PROFILE env through scripts/pack-mac.mjs, which
+# GENERATES the entitlements file (base plist + entitlement + Xcode-style
+# identity claims) and passes -c.mac.provisioningProfile / -c.mac.entitlements
+# on the CLI; nothing identity-like lives here, and the committed default
+# entitlements deliberately omit the entitlement so profile-less signed packs
+# keep launching. See docs/virtual-camera.md for the profile workflows.
 appId: com.capturia.desktop
 productName: Capturia
 
@@ -103,6 +111,12 @@ mac:
   hardenedRuntime: true
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
+  # The system-extension host contract also wants the usage string on the
+  # app's own Info.plist (the embedded extension bundle carries its own).
+  extendInfo:
+    NSSystemExtensionUsageDescription: >-
+      Capturia installs a virtual camera so your calls can show AI-composed
+      overlays.
   notarize: false
   # The embedded CMIO camera extension (placed by scripts/after-pack.mjs at
   # Contents/Library/SystemExtensions) arrives already signed by

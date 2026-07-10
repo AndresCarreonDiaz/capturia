@@ -4,24 +4,36 @@
 // without React. The audience for the copy is people who talk, not code:
 // every step is one action, no jargon.
 
+import type { SysextUiStatus } from "./sysext";
+
 export interface OnboardingContext {
   isDesktop: boolean;
   hasKeys: boolean;
   voiceSupported: boolean;
   overlayCount: number;
+  // In-app camera-extension activation state (lib/sysext.ts), undefined on
+  // web and on a stale preload. "unsupported" (dev shell, unsigned build)
+  // hides the camera step: that build cannot fire the install.
+  cameraExtension?: SysextUiStatus;
 }
 
-export type OnboardingStepId = "welcome" | "keys" | "voice" | "golive";
+export type OnboardingStepId = "welcome" | "keys" | "voice" | "camera" | "golive";
 
 export interface OnboardingStep {
   id: OnboardingStepId;
   title: string;
   body: string;
-  // Primary button label. "keys" opens Settings; everything else advances.
+  // Primary button label. "keys" opens Settings, "camera" fires the
+  // extension install; everything else advances.
   cta: string;
   // True once the world-state this step asks for exists, letting the
   // component celebrate and advance without a click.
   isSatisfied: (ctx: OnboardingContext) => boolean;
+  // Live copy override: when this returns a string it replaces `body` (and
+  // the primary button hides, because the world, not a click, moves the step
+  // forward). Lets the camera step walk the user through the System Settings
+  // approval without the flow growing sub-steps.
+  dynamicBody?: (ctx: OnboardingContext) => string | null;
 }
 
 const ALL_STEPS: OnboardingStep[] = [
@@ -54,11 +66,33 @@ const ALL_STEPS: OnboardingStep[] = [
     isSatisfied: (ctx) => ctx.overlayCount > 0,
   },
   {
+    id: "camera",
+    title: "Install the Capturia camera",
+    body:
+      "One-time install: Capturia becomes a real camera you can pick in Zoom, " +
+      "Meet, or Teams. macOS will ask you to approve it in System Settings.",
+    cta: "Install camera",
+    isSatisfied: (ctx) => ctx.cameraExtension === "installed",
+    dynamicBody: (ctx) => {
+      if (ctx.cameraExtension === "installing") {
+        return "Installing… macOS may pop an approval dialog in a moment.";
+      }
+      if (ctx.cameraExtension === "awaiting-approval") {
+        return (
+          "macOS wants your OK: open System Settings, General, " +
+          "Login Items & Extensions, Camera Extensions, and allow Capturia. " +
+          "This step finishes on its own once you do."
+        );
+      }
+      return null;
+    },
+  },
+  {
     id: "golive",
     title: "Use it in a call",
     body:
-      "In Zoom or Meet, share this window to broadcast the stage. " +
-      "The native Capturia camera (pick it like any webcam) is on the way.",
+      "In Zoom or Meet, pick “Capturia” as your camera, or share this " +
+      "window, to broadcast the stage.",
     cta: "Finish",
     isSatisfied: () => false,
   },
@@ -66,11 +100,17 @@ const ALL_STEPS: OnboardingStep[] = [
 
 // Steps applicable to this session. Key setup is skipped when a key already
 // exists; the voice step is skipped when no speech engine is available (the
-// CommandBar still works, but a voice-first tutorial would dead-end).
+// CommandBar still works, but a voice-first tutorial would dead-end). The
+// camera step only exists where the install can actually run or has already
+// run: never on web (no bridge) and never in a build that cannot request
+// activation (dev shell, unsigned pack), where it would dead-end too.
 export function onboardingSteps(ctx: OnboardingContext): OnboardingStep[] {
   return ALL_STEPS.filter((step) => {
     if (step.id === "keys") return !ctx.hasKeys;
     if (step.id === "voice") return ctx.voiceSupported;
+    if (step.id === "camera") {
+      return ctx.cameraExtension !== undefined && ctx.cameraExtension !== "unsupported";
+    }
     return true;
   });
 }

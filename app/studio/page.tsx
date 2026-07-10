@@ -46,7 +46,7 @@ import VoteQRBadge from "@/components/VoteQRBadge";
 import { derivePollFromOverlays } from "@/lib/derive-poll";
 import type { PollOption } from "@/lib/vote-store";
 import { useRecorder } from "@/hooks/useRecorder";
-import { useDesktopHotkey, useDesktopStateReport } from "@/hooks/useDesktopHotkey";
+import { useCameraExtension, useDesktopHotkey, useDesktopStateReport } from "@/hooks/useDesktopHotkey";
 import { useKeyVault } from "@/hooks/useKeyVault";
 import type { KeyProvider } from "@/hooks/useDesktopHotkey";
 import SettingsModal from "@/components/SettingsModal";
@@ -188,6 +188,10 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
   // sendMessage/busy as props so both input channels share one agent + thread.
   const { sendMessage, isRunning, runError } = useAgentRun();
   const { isRecording, startRecording, stopRecording } = useRecorder();
+  // In-app camera-extension activation (desktop only; null on web / stale
+  // preload / missing sysext module). Drives the onboarding camera step; the
+  // tray mirrors the same state straight from main.
+  const cameraExtension = useCameraExtension();
 
   // Surface the runtime's missing-key fail-fast in the operator UI. CopilotKit
   // swallows agent-run errors into the console, so without this probe a
@@ -1052,8 +1056,10 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
               hasKeys: vault.keys.some((k) => k.has),
               voiceSupported: isSupported,
               overlayCount: overlays.length,
+              cameraExtension: cameraExtension.state?.status,
             }}
             onOpenSettings={() => setSettingsOpen(true)}
+            onInstallCamera={cameraExtension.install}
           />
 
           {/* Layer 2: live voice captions */}

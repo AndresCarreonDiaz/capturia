@@ -21,7 +21,7 @@ const keychain = require("./keychain");
 const deckGen = require("./deck-generate");
 const { startRuntimeServer } = require("./runtime-server");
 const { createTray } = require("./tray");
-const { maybeOfferMoveToApplications } = require("./first-run");
+const { maybeOfferMoveToApplications, offerMoveToApplications } = require("./first-run");
 const speechHelper = require("./speech-helper");
 const {
   isTrustedSender,
@@ -63,6 +63,11 @@ let runtimeServer = null;
 // Output window pumping frames into the Capturia CMIO extension's sink. null
 // when the module could not load (electron/gen not built).
 let cameraFeed = null;
+// In-app camera-extension activation (electron/sysext.js): the packaged app
+// installing its own embedded CMIO extension. null when the module could not
+// load; it internally reports "unsupported" for builds that cannot request
+// activation (dev shell, unsigned pack), which hides the install UI.
+let sysext = null;
 // Menu-bar tray; created in whenReady, rebuilt whenever renderer state lands.
 let tray = null;
 // Closing the Control Room hides it to the tray; only a real quit (Cmd+Q,
@@ -174,6 +179,20 @@ function registerIpc() {
   ipcMain.handle("camera:state", guarded(() => (cameraFeed ? cameraFeed.getState() : null)));
   ipcMain.handle("camera:start", guarded(() => (cameraFeed ? cameraFeed.start() : null)));
   ipcMain.handle("camera:stop", guarded(() => (cameraFeed ? cameraFeed.stop() : null)));
+
+  // Camera-extension activation: status for the renderer plus the install
+  // trigger. Same shape as camera:* (no payloads, guarded callers, null when
+  // the module is unavailable). state kicks a background refresh so a stale
+  // systemextensionsctl read self-corrects on the next push.
+  ipcMain.handle(
+    "sysext:state",
+    guarded(() => {
+      if (!sysext) return null;
+      void sysext.refresh();
+      return sysext.getState();
+    })
+  );
+  ipcMain.handle("sysext:install", guarded(() => (sysext ? sysext.install() : null)));
 
   // Renderer -> main: voice state for the tray (listening on/off, whether the
   // speech engine exists). Fire-and-forget from the renderer's point of view.
@@ -342,11 +361,56 @@ function createWindow() {
           setTimeout(poll, 500);
         })();
       });
+    // The extension-activation leg of the smoke. Base mode is read-only: it
+    // reports the state mapping for this machine (a machine with the
+    // extension enabled must read "installed" without any request firing).
+    // CAPTURIA_SMOKE_SYSEXT_ACTIVATE=1 additionally drives a REAL activation
+    // request (force: the extension being enabled must not short-circuit the
+    // path under test) and reports the raw delegate outcome; a request that
+    // parks on the System Settings approval reports requiresApproval and
+    // stops there, per the OS contract that only the user can approve.
+    const smokeSysext = () =>
+      new Promise((resolve) => {
+        if (!sysext) return resolve({ ok: false, reason: "sysext module unavailable" });
+        // ready settles the async build-capability probe first, so the
+        // reported status is truthful, not a race with codesign.
+        void sysext.ready.then(() => sysext.refresh()).then((state) => {
+          if (process.env.CAPTURIA_SMOKE_SYSEXT_ACTIVATE !== "1") {
+            return resolve({ ok: typeof state.status === "string", ...state });
+          }
+          const events = [];
+          let settled = false;
+          const done = (extra) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            resolve({ statusBefore: state.status, events, ...extra });
+          };
+          const timer = setTimeout(() => done({ ok: false, reason: "activation timeout" }), 60000);
+          sysext.install({
+            force: true,
+            onEvent: (event) => {
+              events.push(event);
+              if (event.phase === "completed") {
+                void sysext.refresh().then((after) => done({ ok: true, ...after }));
+              } else if (event.phase === "needsApproval") {
+                done({ ok: true, requiresApproval: true });
+              } else if (event.phase === "failed" || event.phase === "not-started") {
+                done({ ok: false, ...event });
+              }
+            },
+          });
+        });
+      });
     mainWindow.webContents.once("did-finish-load", async () => {
       try {
         const result = await mainWindow.webContents.executeJavaScript(smokeJs);
         let pass =
           result.bundleRan && result.hasBridge && result.info && result.keycheck?.status === 200;
+        if (pass && process.env.CAPTURIA_SMOKE_SYSEXT === "1") {
+          result.sysext = await smokeSysext();
+          pass = result.sysext.ok;
+        }
         if (pass && process.env.CAPTURIA_SMOKE_CAMERA === "1") {
           result.camera = await smokeCamera();
           cameraFeed?.dispose();
@@ -451,6 +515,43 @@ if (!gotTheLock) {
       );
     }
 
+    // Camera-extension activation. Same degrade-not-crash posture; the module
+    // itself decides whether this build can install (packaged + embedded
+    // extension + entitlement) and reports "unsupported" otherwise.
+    try {
+      const { createSysext } = require("./sysext");
+      sysext = createSysext({
+        onStateChange: (state) => {
+          tray?.update();
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send("sysext", state);
+          }
+        },
+        // The install completed: the extension can enumerate now, so nudge
+        // the feed to (re)connect. Not in smoke mode, whose camera lifecycle
+        // must stay owned by the smoke gate.
+        onInstalled: () => {
+          if (!isSmoke) cameraFeed?.start();
+        },
+        // Never a dialog in smoke mode: unattended runs must stay unattended
+        // (the forced sysext smoke leg can hit the needs-move preempt when
+        // the packed app runs from dist-app).
+        offerMove: () => {
+          if (isSmoke) return;
+          void offerMoveToApplications({
+            parentWindow: mainWindow,
+            detail:
+              "macOS only installs the Capturia camera for apps in the Applications folder. After the move, click Install camera again.",
+          });
+        },
+      });
+    } catch (err) {
+      console.error(
+        "Capturia: extension activation unavailable (is electron/gen built? run `npm run electron` or `node scripts/build-electron-libs.mjs`):",
+        err
+      );
+    }
+
     registerIpc();
     createWindow();
 
@@ -464,7 +565,10 @@ if (!gotTheLock) {
         // Camera fields only when the camera module loaded; the tray model
         // omits the Camera item entirely when they are absent.
         getState: () => {
-          if (!cameraFeed) return rendererState;
+          // Extension-install status only when the sysext module loaded; the
+          // tray model hides the item for undefined AND for "unsupported".
+          const sysextFields = sysext ? { sysextStatus: sysext.getState().status } : {};
+          if (!cameraFeed) return { ...rendererState, ...sysextFields };
           const camera = cameraFeed.getState();
           return {
             ...rendererState,
@@ -473,6 +577,7 @@ if (!gotTheLock) {
             cameraConnecting: camera.connecting,
             cameraFrozen: camera.frozen,
             cameraHasError: Boolean(camera.error),
+            ...sysextFields,
           };
         },
         toggleHotkey: HOTKEY_TOGGLE_VOICE,
@@ -482,6 +587,10 @@ if (!gotTheLock) {
           // Intent-routed inside the feed: stops while connecting OR running
           // (a pending auto-connect must be cancellable), starts otherwise.
           "toggle-camera": () => cameraFeed?.toggle(),
+          // Fires the extension activation request (or the move offer when
+          // the app runs from the wrong place); outcomes come back as tray
+          // updates through the sysext onStateChange.
+          "install-camera": () => sysext?.install(),
           "open-control-room": showControlRoom,
           "open-settings": () => {
             showControlRoom();
@@ -536,6 +645,8 @@ app.on("will-quit", () => {
   speechHelper.stopAllSpeechSessions();
   cameraFeed?.dispose();
   cameraFeed = null;
+  sysext?.dispose();
+  sysext = null;
   tray?.destroy();
   tray = null;
 });

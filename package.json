@@ -23,6 +23,7 @@
     "smoke:packaged": "node scripts/smoke-packaged-app.mjs",
     "build:speech": "node scripts/build-speech-helper.mjs",
     "build:frames": "node scripts/build-frames-addon.mjs",
+    "build:sysext": "node scripts/build-sysext-addon.mjs",
     "smoke:speech": "node scripts/smoke-speech-helper.mjs"
   },
   "dependencies": {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTrayMenu, trayStatusLabel, type TrayState } from "./tray-menu";
+import { buildTrayMenu, sysextItem, trayStatusLabel, type TrayState } from "./tray-menu";
 
 const state = (over: Partial<TrayState> = {}): TrayState => ({
   reported: true,
@@ -151,5 +151,52 @@ describe("buildTrayMenu", () => {
       state({ cameraAvailable: true, cameraRunning: false, cameraHasError: true })
     ).find((i) => i.action === "toggle-camera");
     expect(item?.label).toBe("Camera: Error");
+  });
+});
+
+describe("sysextItem / install-camera menu entry", () => {
+  it("shows no install item when the shell has no sysext module", () => {
+    const items = buildTrayMenu(state()).filter((i) => i.action === "install-camera");
+    expect(items).toHaveLength(0);
+  });
+
+  it("hides the item on unsupported builds (dev shell, unsigned pack)", () => {
+    expect(sysextItem("unsupported")).toBeNull();
+    const items = buildTrayMenu(state({ sysextStatus: "unsupported" })).filter(
+      (i) => i.label?.toLowerCase().includes("camera install") || i.action === "install-camera"
+    );
+    expect(items).toHaveLength(0);
+  });
+
+  it("offers Install camera when the extension is missing", () => {
+    const item = buildTrayMenu(state({ sysextStatus: "not-installed" })).find(
+      (i) => i.action === "install-camera"
+    );
+    expect(item?.label).toBe("Install camera");
+    expect(item?.enabled).toBe(true);
+  });
+
+  it("confirms Camera installed as a disabled line", () => {
+    const item = sysextItem("installed");
+    expect(item?.label).toBe("Camera installed");
+    expect(item?.enabled).toBe(false);
+    expect(item?.action).toBeUndefined();
+  });
+
+  it("signposts the System Settings approval without a click target", () => {
+    const item = sysextItem("awaiting-approval");
+    expect(item?.label).toBe("Approve camera in System Settings");
+    expect(item?.enabled).toBe(false);
+  });
+
+  it("disables the item while a request is in flight", () => {
+    expect(sysextItem("installing")?.enabled).toBe(false);
+  });
+
+  it("keeps error and needs-move clickable (retry / move offer)", () => {
+    expect(sysextItem("error")?.action).toBe("install-camera");
+    expect(sysextItem("error")?.enabled).toBe(true);
+    expect(sysextItem("needs-move")?.action).toBe("install-camera");
+    expect(sysextItem("needs-move")?.enabled).toBe(true);
   });
 });

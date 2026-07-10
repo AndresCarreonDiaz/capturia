@@ -156,5 +156,26 @@ export default async function afterPack(context) {
   cpSync(addon, join(resources, "capturia_frames.node"));
   console.log("  • afterPack copied capturia_frames.node");
 
+  // The extension-activation addon (OSSystemExtensionRequest bridge). Also
+  // not optional: a packaged app that cannot even offer the camera install is
+  // the M8 gap this ships. Whether a given BUILD can actually activate is a
+  // runtime decision (electron/sysext.js checks the signed entitlement).
+  const sysextAddon = join(
+    root,
+    "native",
+    "capturia-sysext",
+    "build",
+    "Release",
+    "capturia_sysext.node"
+  );
+  if (!existsSync(sysextAddon)) {
+    throw new Error(
+      "afterPack: capturia_sysext.node not built; run node scripts/build-sysext-addon.mjs (pack:mac does this)."
+    );
+  }
+  assertMachOArch(appArchs, sysextAddon, "capturia_sysext.node");
+  cpSync(sysextAddon, join(resources, "capturia_sysext.node"));
+  console.log("  • afterPack copied capturia_sysext.node");
+
   embedCameraExtension(contents);
 }

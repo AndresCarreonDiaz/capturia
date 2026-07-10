@@ -10,6 +10,7 @@
 		CA9700000000000000000020 /* CapturiaCameraExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA9700000000000000000010 /* CapturiaCameraExtension.swift */; };
 		CA9700000000000000000021 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA9700000000000000000013 /* main.swift */; };
 		CA9700000000000000000022 /* com.capturia.camera.extension.systemextension in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = CA9700000000000000000016 /* com.capturia.camera.extension.systemextension */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		CA9700000000000000000023 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA9700000000000000000018 /* main.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -45,6 +46,10 @@
 		CA9700000000000000000015 /* CapturiaCameraHost.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CapturiaCameraHost.entitlements; sourceTree = "<group>"; };
 		CA9700000000000000000016 /* com.capturia.camera.extension.systemextension */ = {isa = PBXFileReference; explicitFileType = "wrapper.system-extension"; includeInIndex = 0; path = "com.capturia.camera.extension.systemextension"; sourceTree = BUILT_PRODUCTS_DIR; };
 		CA9700000000000000000017 /* CapturiaCameraHost.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CapturiaCameraHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		CA9700000000000000000018 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		CA9700000000000000000019 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		CA970000000000000000001A /* CapturiaDesktopShim.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CapturiaDesktopShim.entitlements; sourceTree = "<group>"; };
+		CA970000000000000000001B /* CapturiaDesktopShim.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CapturiaDesktopShim.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -62,6 +67,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CA9700000000000000000036 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -70,6 +82,7 @@
 			children = (
 				CA9700000000000000000004 /* Extension */,
 				CA9700000000000000000005 /* HostApp */,
+				CA9700000000000000000006 /* DesktopShim */,
 				CA9700000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -79,6 +92,7 @@
 			children = (
 				CA9700000000000000000016 /* com.capturia.camera.extension.systemextension */,
 				CA9700000000000000000017 /* CapturiaCameraHost.app */,
+				CA970000000000000000001B /* CapturiaDesktopShim.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -101,6 +115,16 @@
 				CA9700000000000000000015 /* CapturiaCameraHost.entitlements */,
 			);
 			path = HostApp;
+			sourceTree = "<group>";
+		};
+		CA9700000000000000000006 /* DesktopShim */ = {
+			isa = PBXGroup;
+			children = (
+				CA9700000000000000000018 /* main.swift */,
+				CA9700000000000000000019 /* Info.plist */,
+				CA970000000000000000001A /* CapturiaDesktopShim.entitlements */,
+			);
+			path = DesktopShim;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -140,6 +164,22 @@
 			productReference = CA9700000000000000000017 /* CapturiaCameraHost.app */;
 			productType = "com.apple.product-type.application";
 		};
+		CA9700000000000000000042 /* CapturiaDesktopShim */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CA9700000000000000000073 /* Build configuration list for PBXNativeTarget "CapturiaDesktopShim" */;
+			buildPhases = (
+				CA9700000000000000000035 /* Sources */,
+				CA9700000000000000000036 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CapturiaDesktopShim;
+			productName = CapturiaDesktopShim;
+			productReference = CA970000000000000000001B /* CapturiaDesktopShim.app */;
+			productType = "com.apple.product-type.application";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -172,6 +212,7 @@
 			targets = (
 				CA9700000000000000000041 /* CapturiaCameraHost */,
 				CA9700000000000000000040 /* CapturiaCameraExtension */,
+				CA9700000000000000000042 /* CapturiaDesktopShim */,
 			);
 		};
 /* End PBXProject section */
@@ -190,6 +231,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				CA9700000000000000000021 /* main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CA9700000000000000000035 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CA9700000000000000000023 /* main.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -279,6 +328,26 @@
 			};
 			name = Release;
 		};
+		CA9700000000000000000066 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = DesktopShim/CapturiaDesktopShim.entitlements;
+				INFOPLIST_FILE = DesktopShim/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = com.capturia.desktop;
+				PRODUCT_NAME = CapturiaDesktopShim;
+			};
+			name = Debug;
+		};
+		CA9700000000000000000067 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = DesktopShim/CapturiaDesktopShim.entitlements;
+				INFOPLIST_FILE = DesktopShim/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = com.capturia.desktop;
+				PRODUCT_NAME = CapturiaDesktopShim;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -305,6 +374,15 @@
 			buildConfigurations = (
 				CA9700000000000000000064 /* Debug */,
 				CA9700000000000000000065 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CA9700000000000000000073 /* Build configuration list for PBXNativeTarget "CapturiaDesktopShim" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CA9700000000000000000066 /* Debug */,
+				CA9700000000000000000067 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
