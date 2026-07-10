@@ -201,19 +201,83 @@ export function toDeckFacts(extract: DeckExtract): DeckFacts {
   };
 }
 
+interface CueMatch {
+  card: CueCard;
+  alias: string;
+  score: number;
+}
+
+function bestCueMatch(cards: CueCard[], p: string, minScore: number): CueMatch | null {
+  let best: CueMatch | null = null;
+  for (const card of cards) {
+    for (const alias of card.aliases) {
+      // Require a reasonably specific match so single short words don't
+      // hijack normal speech (>= 4 chars final, >= 6 interim).
+      if (alias.length < minScore) continue;
+      if (!p.includes(alias)) continue;
+      const score = alias.length; // longer alias = stronger
+      if (!best || score > best.score) best = { card, alias, score };
+    }
+  }
+  return best;
+}
+
 // Find the best cue for a spoken/typed phrase. Returns the card if a confident
 // alias match is found, else null (so the utterance falls through to the agent).
 export function matchCue(cards: CueCard[], phrase: string): CueCard | null {
-  const p = phrase.toLowerCase();
-  let best: { card: CueCard; score: number } | null = null;
-  for (const card of cards) {
-    for (const alias of card.aliases) {
-      let score = 0;
-      if (p.includes(alias)) score = alias.length; // longer alias = stronger
-      if (score > 0 && (!best || score > best.score)) best = { card, score };
-    }
+  return bestCueMatch(cards, phrase.toLowerCase(), 4)?.card ?? null;
+}
+
+// Cue matching on INTERIM (volatile) transcript text, so a primed card lands
+// while the sentence is still being spoken instead of waiting for the
+// sentence final. The state is per speech segment; the caller resets it at
+// segment boundaries (a final arrived, the segment closed with no final, a
+// listening session started, or the deck changed).
+//
+// The design is deliberately conservative; five adversarial review rounds
+// against real engine dynamics (Web Speech hypotheses grow word by word and
+// rescore earlier words; apple-speech snapshots revise whole phrases) proved
+// that anything fancier cannot be made sound:
+//
+// 1. Stronger aliases only (>= 6 chars). buildCues sprays 4-5 char single
+//    title words ("plan", "next", "steps") across cards; mid-hypothesis
+//    those routinely belong to a sentence heading somewhere else. They
+//    still fire via the final path once the sentence is complete.
+// 2. A card fires only after winning TWO CONSECUTIVE updates: growing
+//    hypotheses walk through other cards' aliases and 1s snapshot engines
+//    revise earlier words. Cost: about one word (Web Speech) or one
+//    snapshot (apple-speech) of latency.
+// 3. ONE fire per segment. After a card fires, interim matching stops for
+//    the rest of the segment, and the studio swallows the segment's sentence
+//    final outright (one utterance, one response). Deciding whether a later
+//    match in a REVISED hypothesis is the same mention or a fresh one is
+//    under-determined from text alone (shared aliases like "the numbers"
+//    span cards, engines rewrite words around fired evidence), and every
+//    attempt to infer it re-fired sibling cards on stale evidence or
+//    silently swallowed fresh commands. A second spoken cue belongs to the
+//    next breath: pausing closes the segment and re-arms the matcher.
+export interface InterimCueState {
+  firedId: string | null; // the segment's single fired card, if any
+  candidateId: string | null; // last update's winner, awaiting confirmation
+}
+
+const INTERIM_MIN_SCORE = 6;
+
+export function matchInterimCue(
+  cards: CueCard[],
+  interim: string,
+  state: InterimCueState | null
+): { fire: CueCard | null; state: InterimCueState } {
+  const prev = state ?? { firedId: null, candidateId: null };
+  if (prev.firedId) return { fire: null, state: prev };
+  const text = interim.trim();
+  // Same guard as the final path: one lone word is not a command yet. An
+  // empty or too-short update leaves the segment state untouched.
+  if (!text || text.split(/\s+/).length < 2) return { fire: null, state: prev };
+  const m = bestCueMatch(cards, text.toLowerCase(), INTERIM_MIN_SCORE);
+  if (!m) return { fire: null, state: { ...prev, candidateId: null } };
+  if (m.card.id !== prev.candidateId) {
+    return { fire: null, state: { ...prev, candidateId: m.card.id } };
   }
-  // Require a reasonably specific match (>= 4 chars) so single short words
-  // don't hijack normal speech.
-  return best && best.score >= 4 ? best.card : null;
+  return { fire: m.card, state: { firedId: m.card.id, candidateId: null } };
 }

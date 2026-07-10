@@ -55,9 +55,17 @@ import { sanitizeSurfaceTree } from "@/lib/a2ui-validate";
 import { coerceArrayArg, coerceRecordArg, toolArgText } from "@/lib/extract-json";
 import { oversizedToolArg } from "@/lib/limits";
 import { isPlaceableOverlayType } from "@/lib/catalog";
-import { matchCue } from "@/lib/deck/cues";
+import { matchCue, matchInterimCue, type InterimCueState } from "@/lib/deck/cues";
 import type { CueCard, DeckFacts } from "@/lib/deck/types";
 import type { OverlaySpec, OverlayPosition } from "@/lib/types";
+
+// How long the fired-segment marker parked at a stop stays eligible for the
+// trailing final. Apple-speech flushes ~100ms after a stop and Web Speech
+// well under a second, while a human cannot finish speaking a NEW command
+// that fast: the TTL is what keeps a quick-restarted session's first
+// sentence (whose engine never delivers the old trailing final) from being
+// swallowed by a stale marker.
+const PARKED_CUE_TTL_MS = 800;
 
 export default function Studio() {
   // Studio is fullscreen, so lock body scroll while mounted so the landing
@@ -291,23 +299,109 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
   // speaker most recently wanted; anything older is stale narration.
   const pendingVoiceRef = useRef<string | null>(null);
 
+  // Interim cue-matching state for the CURRENT speech segment (cards already
+  // fired, candidate awaiting confirmation). The engines close segments via
+  // onSegmentEnd; a ref because it lives inside speech event callbacks.
+  const interimCueRef = useRef<InterimCueState | null>(null);
+
+  // Fired-segment marker parked at a stop transition. Both engines deliver
+  // a trailing final AFTER a stop by design, and a quick restart resets the
+  // live ref before that final lands; the parked marker lets it still know
+  // the segment was answered (else it would re-answer the sentence through
+  // the agent). A segment end or the TTL discards it.
+  const parkedCueRef = useRef<{ at: number } | null>(null);
+
+  // Listening state visible to the speech callbacks without waiting on a
+  // re-render (they need to tell a live session's interim from a dying
+  // session's trailing one).
+  const isListeningRef = useRef(false);
+
+  // Cue ids are per-deck (cue-<slideIndex>), so a deck swap mid-segment would
+  // let a stale fired list poison the new deck's identical ids and silently
+  // swallow the sentence final. New deck, clean segment.
+  useEffect(() => {
+    interimCueRef.current = null;
+    parkedCueRef.current = null;
+  }, [cues]);
+
   const { isListening, interimTranscript, speechStatus, lastError, lastResultAt, isSupported, startListening, stopListening } =
-    useStudioVoice((text) => {
-      if (text.split(/\s+/).length < 2) return;
-      setLastSent(text);
-      // Deterministic, offline cue match first: "show my revenue slide" fires a
-      // pre-built card without a model call. Falls through to the agent on miss.
-      const card = matchCue(cuesRef.current, text);
-      if (card) {
-        applyCue(card);
-        return;
+    useStudioVoice(
+      (text) => {
+        // Capture before closing the segment: a fired segment was already
+        // answered deterministically mid-sentence, so its final is swallowed
+        // outright (one utterance, one response; a rescored final could
+        // otherwise re-answer through the agent). A quick stop/start wipes
+        // the live ref before the trailing final lands, so the stop
+        // transition parks a TTL'd marker as the fallback signal.
+        const parked = parkedCueRef.current;
+        parkedCueRef.current = null;
+        const firedMidSentence =
+          Boolean(interimCueRef.current?.firedId) ||
+          (parked !== null && performance.now() - parked.at < PARKED_CUE_TTL_MS);
+        interimCueRef.current = null;
+        if (text.split(/\s+/).length < 2) return;
+        setLastSent(text);
+        if (firedMidSentence) return;
+        // Deterministic, offline cue match first: "show my revenue slide" fires a
+        // pre-built card without a model call. Falls through to the agent on miss.
+        const card = matchCue(cuesRef.current, text);
+        if (card) {
+          applyCue(card);
+          return;
+        }
+        sendMessage(`[VOICE] ${text}`)
+          .then((sent) => {
+            if (!sent) pendingVoiceRef.current = text;
+          })
+          .catch(() => {});
+      },
+      (interim) => {
+        // A volatile hypothesis has no business firing UI after the mic was
+        // toggled off, and a dying session's trailing interim must not
+        // reseed state its own trailing final is about to consume. The
+        // parked marker is deliberately NOT cleared here: after a quick
+        // restart an old session's interim is indistinguishable from a new
+        // one, and the short TTL already bounds the marker's life.
+        if (!isListeningRef.current) return;
+        // Mid-sentence: fire a primed cue card once the volatile hypothesis
+        // confirms one of its aliases (two consecutive wins; see
+        // matchInterimCue). This is the M9 payoff: PDF-primed UI lands while
+        // the speaker is still talking, no model call, no waiting for the
+        // sentence final.
+        const { fire, state } = matchInterimCue(cuesRef.current, interim, interimCueRef.current);
+        interimCueRef.current = state;
+        if (fire) applyCue(fire);
+      },
+      () => {
+        // Segment boundary with no final attached (filtered hallucination,
+        // recognizer cycle restart, session error/done): drop the dedup
+        // state so the next sentence starts clean. Boundaries WITH a final
+        // were already reset above; this second write is a no-op then. The
+        // segment is truly closed, so no trailing final is owed the parked
+        // state either.
+        interimCueRef.current = null;
+        parkedCueRef.current = null;
       }
-      sendMessage(`[VOICE] ${text}`)
-        .then((sent) => {
-          if (!sent) pendingVoiceRef.current = text;
-        })
-        .catch(() => {});
-    });
+    );
+
+  // Listening transitions are segment boundaries with one nuance: both
+  // engines deliver a trailing final AFTER a stop by design, and that final
+  // must still know the segment already fired or a rescored sentence would
+  // double-respond through the agent. So a STOP parks a TTL'd marker
+  // (consumed by the trailing final, discarded by a segment end) while a
+  // START clears the live state outright: a quick stop/start on the
+  // apple-speech engine can drop the aborted segment's closing events
+  // entirely, and stale live state would swallow the new session's first
+  // command. The parked marker deliberately survives a START (a web
+  // trailing final can land after a quick restart); the short TTL is what
+  // keeps it from ever swallowing a new session's first sentence.
+  useEffect(() => {
+    isListeningRef.current = isListening;
+    if (!isListening && interimCueRef.current?.firedId) {
+      parkedCueRef.current = { at: performance.now() };
+    }
+    interimCueRef.current = null;
+  }, [isListening]);
 
   // Flush the parked voice command once the agent run settles.
   useEffect(() => {

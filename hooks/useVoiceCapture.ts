@@ -50,7 +50,9 @@ export interface VoiceCaptureState {
 }
 
 export function useVoiceCapture(
-  onFinalResult: (text: string) => void
+  onFinalResult: (text: string) => void,
+  onInterimResult?: (text: string) => void,
+  onSegmentEnd?: () => void
 ): VoiceCaptureState {
   const [isListening, setIsListening] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState("");
@@ -62,7 +64,13 @@ export function useVoiceCapture(
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const isListeningRef = useRef(false);
   const onFinalRef = useRef(onFinalResult);
-  onFinalRef.current = onFinalResult;
+  const onInterimRef = useRef(onInterimResult);
+  const onSegmentEndRef = useRef(onSegmentEnd);
+  useEffect(() => {
+    onFinalRef.current = onFinalResult;
+    onInterimRef.current = onInterimResult;
+    onSegmentEndRef.current = onSegmentEnd;
+  });
 
   useEffect(() => {
     const SR = getSR();
@@ -119,17 +127,25 @@ export function useVoiceCapture(
         if (result.isFinal) final += text;
         else interim += text;
       }
-      setSpeechStatus("recognizing…");
+      setSpeechStatus(final.trim() ? "sent ✓" : "recognizing…");
       setLastResultAt(performance.now());
+      // Finals precede interims positionally in event.results, and one event
+      // routinely carries utterance A's final plus utterance B's first
+      // hypothesis. Dispatch in that order: the final must close A's cue
+      // segment before B's interim seeds the next one, or A's stale
+      // candidate could be confirmed by B's unrelated first words.
+      if (final.trim()) onFinalRef.current(final.trim());
+      // Current-cycle hypothesis; deterministic cue matching fires primed
+      // cards from it mid-sentence (M9).
+      if (interim.trim()) onInterimRef.current?.(interim);
       setInterimTranscript(interim);
-      if (final.trim()) {
-        setInterimTranscript("");
-        setSpeechStatus("sent ✓");
-        onFinalRef.current(final.trim());
-      }
     };
 
     recognition.onend = () => {
+      // A recognizer cycle is a segment boundary whether or not it produced
+      // a final: interims never survive a restart, so consumers must not
+      // carry this cycle's cue-dedup state into the next one.
+      onSegmentEndRef.current?.();
       if (isListeningRef.current) {
         // 600ms pause before restarting. Stops the crazy rapid cycling and
         // gives the status text time to be readable between attempts
