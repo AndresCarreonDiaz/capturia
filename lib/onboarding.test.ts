@@ -116,4 +116,39 @@ describe("the camera step", () => {
       "System Settings"
     );
   });
+
+  it("surfaces the mapped OS failure and keeps the retry button", () => {
+    const step = onboardingSteps(ctx({ cameraExtension: "error" })).find(
+      (s) => s.id === "camera"
+    )!;
+    const errCtx = ctx({
+      cameraExtension: "error",
+      cameraExtensionError: "System policy blocks the camera extension (often an MDM restriction).",
+    });
+    expect(step.dynamicBody?.(errCtx)).toContain("MDM restriction");
+    // Failures are not waiting: the button must stay so the user can retry.
+    expect(step.waiting?.(errCtx)).toBe(false);
+    expect(
+      step.dynamicBody?.(ctx({ cameraExtension: "error", cameraExtensionError: null }))
+    ).toContain("failed");
+  });
+
+  it("explains the Applications move when the app runs from the wrong place", () => {
+    const step = onboardingSteps(ctx({ cameraExtension: "needs-move" })).find(
+      (s) => s.id === "camera"
+    )!;
+    expect(step.dynamicBody?.(ctx({ cameraExtension: "needs-move" }))).toContain(
+      "Applications folder"
+    );
+    expect(step.waiting?.(ctx({ cameraExtension: "needs-move" }))).toBe(false);
+  });
+
+  it("waits (button hidden) only while the world moves the step forward", () => {
+    const step = onboardingSteps(ctx({ cameraExtension: "not-installed" })).find(
+      (s) => s.id === "camera"
+    )!;
+    expect(step.waiting?.(ctx({ cameraExtension: "installing" }))).toBe(true);
+    expect(step.waiting?.(ctx({ cameraExtension: "awaiting-approval" }))).toBe(true);
+    expect(step.waiting?.(ctx({ cameraExtension: "not-installed" }))).toBe(false);
+  });
 });

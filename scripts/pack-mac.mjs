@@ -201,9 +201,29 @@ if (signingRequested) {
     if (!entReport.includes("com.apple.developer.system-extension.install")) {
       fail("the packed app's signature lacks com.apple.developer.system-extension.install.");
     }
-    if (!existsSync(join(appPath, "Contents", "embedded.provisionprofile"))) {
+    const embedded = join(appPath, "Contents", "embedded.provisionprofile");
+    if (!existsSync(embedded)) {
       fail("the packed app has no Contents/embedded.provisionprofile.");
     }
-    console.log("[pack-mac] system-extension entitlement + embedded profile verified");
+    // The profile must belong to the team that ACTUALLY signed the app (a
+    // two-team keychain can resolve CSC_NAME to one team while the profile
+    // was minted under another; AMFI would kill that app at launch, and no
+    // CAPTURIA_TEAM_ID needs to be set for the mismatch to happen).
+    const embeddedDecoded = spawnSync("security", ["cms", "-D", "-i", embedded], {
+      encoding: "utf8",
+    });
+    const profileTeam = /<key>TeamIdentifier<\/key>\s*<array>\s*<string>([^<]+)<\/string>/.exec(
+      embeddedDecoded.stdout || ""
+    )?.[1];
+    if (embeddedDecoded.status !== 0 || !profileTeam) {
+      fail("could not read the embedded profile's TeamIdentifier.");
+    }
+    if (profileTeam !== team) {
+      fail(
+        "the embedded provisioning profile belongs to a different team than the app's signature; " +
+          "the app would be killed at launch. Re-mint the profile under the signing team."
+      );
+    }
+    console.log("[pack-mac] system-extension entitlement + embedded profile verified (teams match)");
   }
 }

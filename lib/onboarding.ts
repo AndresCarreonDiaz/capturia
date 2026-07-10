@@ -15,6 +15,9 @@ export interface OnboardingContext {
   // web and on a stale preload. "unsupported" (dev shell, unsigned build)
   // hides the camera step: that build cannot fire the install.
   cameraExtension?: SysextUiStatus;
+  // The mapped failure message when cameraExtension is "error" (the
+  // describeSysextError copy: MDM policy, move to /Applications, etc.).
+  cameraExtensionError?: string | null;
 }
 
 export type OnboardingStepId = "welcome" | "keys" | "voice" | "camera" | "golive";
@@ -29,11 +32,15 @@ export interface OnboardingStep {
   // True once the world-state this step asks for exists, letting the
   // component celebrate and advance without a click.
   isSatisfied: (ctx: OnboardingContext) => boolean;
-  // Live copy override: when this returns a string it replaces `body` (and
-  // the primary button hides, because the world, not a click, moves the step
-  // forward). Lets the camera step walk the user through the System Settings
-  // approval without the flow growing sub-steps.
+  // Live copy override: when this returns a string it replaces `body`. Lets
+  // the camera step walk the user through the System Settings approval and
+  // surface install failures without the flow growing sub-steps.
   dynamicBody?: (ctx: OnboardingContext) => string | null;
+  // True while the world, not a click, moves the step forward (install in
+  // flight, OS approval pending): the component hides the primary button so
+  // the user cannot double-fire the request underneath the pending one.
+  // Failures are NOT waiting: the button stays and clicking it retries.
+  waiting?: (ctx: OnboardingContext) => boolean;
 }
 
 const ALL_STEPS: OnboardingStep[] = [
@@ -84,8 +91,21 @@ const ALL_STEPS: OnboardingStep[] = [
           "This step finishes on its own once you do."
         );
       }
+      if (ctx.cameraExtension === "error") {
+        // The mapped OS failure is the useful part (MDM policy, bad
+        // signature, ...); the retry path is the same button.
+        return `${ctx.cameraExtensionError || "The camera install failed."} You can try again.`;
+      }
+      if (ctx.cameraExtension === "needs-move") {
+        return (
+          "Capturia needs to live in your Applications folder before macOS " +
+          "will install its camera. The install button starts the move."
+        );
+      }
       return null;
     },
+    waiting: (ctx) =>
+      ctx.cameraExtension === "installing" || ctx.cameraExtension === "awaiting-approval",
   },
   {
     id: "golive",

@@ -172,10 +172,18 @@ already-activated extensions keep working either way.
 Activation semantics worth knowing: an activation request for an extension
 that is already active with the SAME version completes quietly (no approval,
 no re-stage); a DIFFERENT version triggers the replacement flow (the app
-answers "replace"). The unpackaged dev shell (`npm run electron`) can never
-request activation (unsigned, no embedded extension), hides the install UI,
-and keeps using the dev host app flow (`native/CapturiaCamera`,
-`build-signed.sh` then `CapturiaCameraHost activate`).
+answers "replace", and a same-team replacement of an already-approved
+extension does not re-prompt). Upgrades ride exactly that: at launch, a
+capable build compares the version embedded in the bundle against the
+enabled one from `systemextensionsctl list` and, when they differ,
+auto-submits the activation request once per run (the OBS launch pattern),
+so shipping a new extension version inside a new app build is all an upgrade
+takes. Matching versions never fire a request, and an unreadable version
+never triggers a surprise replacement. The unpackaged dev shell
+(`npm run electron`) can never request activation (unsigned, no embedded
+extension), hides the install UI, and keeps using the dev host app flow
+(`native/CapturiaCamera`, `build-signed.sh` then `CapturiaCameraHost
+activate`).
 
 Current limitations:
 - One sink client at a time: the extension keeps a single sink client, so do

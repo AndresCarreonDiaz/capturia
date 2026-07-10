@@ -10,6 +10,7 @@
 const {
   app,
   BrowserWindow,
+  dialog,
   session,
   globalShortcut,
   ipcMain,
@@ -384,7 +385,10 @@ function createWindow() {
             if (settled) return;
             settled = true;
             clearTimeout(timer);
-            resolve({ statusBefore: state.status, events, ...extra });
+            // ok stays the FIRST key (spread overwrites the value in place)
+            // so the runner's `"sysext":{"ok":true` evidence check holds in
+            // activate mode too.
+            resolve({ ok: false, statusBefore: state.status, events, ...extra });
           };
           const timer = setTimeout(() => done({ ok: false, reason: "activation timeout" }), 60000);
           sysext.install({
@@ -589,8 +593,33 @@ if (!gotTheLock) {
           "toggle-camera": () => cameraFeed?.toggle(),
           // Fires the extension activation request (or the move offer when
           // the app runs from the wrong place); outcomes come back as tray
-          // updates through the sysext onStateChange.
-          "install-camera": () => sysext?.install(),
+          // updates through the sysext onStateChange. A click on the retry
+          // item after a FAILURE first shows the mapped OS reason (the tray
+          // label alone cannot carry "blocked by MDM policy" etc.), then
+          // retries on confirm.
+          "install-camera": () => {
+            if (!sysext) return;
+            const state = sysext.getState();
+            if (state.status !== "error" || !state.error) {
+              sysext.install();
+              return;
+            }
+            const options = {
+              type: "warning",
+              buttons: ["Try Again", "Cancel"],
+              defaultId: 0,
+              cancelId: 1,
+              message: "Camera install failed",
+              detail: state.error,
+            };
+            const shown =
+              mainWindow && !mainWindow.isDestroyed()
+                ? dialog.showMessageBox(mainWindow, options)
+                : dialog.showMessageBox(options);
+            void shown.then(({ response }) => {
+              if (response === 0) sysext?.install();
+            });
+          },
           "open-control-room": showControlRoom,
           "open-settings": () => {
             showControlRoom();

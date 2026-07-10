@@ -25,6 +25,11 @@ export interface SysextListState {
   // No row is enabled but one reads "activated waiting for user": macOS is
   // holding the extension until the System Settings approval.
   awaitingApproval: boolean;
+  // The ENABLED row's version as systemextensionsctl prints it,
+  // "shortVersion/bundleVersion" (e.g. "0.1.0/1"); null when nothing is
+  // enabled or the row does not parse. Drives the upgrade check against the
+  // version embedded in this build.
+  enabledVersion: string | null;
 }
 
 export function parseSystemExtensionsList(
@@ -32,13 +37,48 @@ export function parseSystemExtensionsList(
   bundleId: string = SYSEXT_BUNDLE_ID
 ): SysextListState {
   const rows = output.split("\n").filter((line) => line.includes(bundleId));
-  const enabled = rows.some((line) => line.includes("activated enabled"));
+  const enabledRow = rows.find((line) => line.includes("activated enabled"));
+  const enabled = enabledRow !== undefined;
+  // Row shape: "...\tbundle.id (0.1.0/1)\tName\t[state]".
+  const version = enabledRow
+    ? new RegExp(`${bundleId.replace(/\./g, "\\.")}\\s*\\(([^)]+)\\)`).exec(enabledRow)?.[1] ??
+      null
+    : null;
   return {
     present: rows.length > 0,
     enabled,
     awaitingApproval:
       !enabled && rows.some((line) => line.includes("activated waiting for user")),
+    enabledVersion: version,
   };
+}
+
+// The version string of an extension bundle in systemextensionsctl's
+// "shortVersion/bundleVersion" format, composed from its Info.plist values.
+export function formatExtensionVersion(
+  shortVersion: string | null | undefined,
+  bundleVersion: string | null | undefined
+): string | null {
+  if (!shortVersion || !bundleVersion) return null;
+  return `${shortVersion}/${bundleVersion}`;
+}
+
+// Should a capable build request activation to REPLACE the already-enabled
+// extension? Only when both versions are known and differ: a same-version
+// request is a quiet no-op (verified live), but firing one on every launch
+// would be noise, and an unknown version must never trigger a surprise
+// replacement. This is the OBS pattern: the host app re-requests activation
+// when it ships a different extension version than the one running.
+export function sysextNeedsUpgrade(
+  embeddedVersion: string | null,
+  list: Pick<SysextListState, "enabled" | "enabledVersion">
+): boolean {
+  return (
+    list.enabled &&
+    embeddedVersion !== null &&
+    list.enabledVersion !== null &&
+    embeddedVersion !== list.enabledVersion
+  );
 }
 
 // Delegate outcomes of one OSSystemExtensionRequest, as forwarded by the

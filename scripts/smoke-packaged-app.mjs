@@ -54,6 +54,32 @@ else if (process.env.CAPTURIA_SMOKE_CAMERA === "1") camera = true;
 else camera = extensionEnabled();
 console.log(`[smoke-packaged] camera leg: ${camera ? "ON" : "off"}`);
 
+// Can THIS build request activation at all? Mirrors the app's own capability
+// probe (electron/sysext.js): embedded extension present + the
+// system-extension entitlement in the app signature. The sysext status
+// expectation below depends on it: a profile-less pack correctly reports
+// "unsupported" no matter what the machine has enabled, and demanding
+// "installed" from it would fail a perfectly good pack.
+function buildCanInstall() {
+  const appBundle = join(root, "dist-app", "mac-arm64", "Capturia.app");
+  const embedded = join(
+    appBundle,
+    "Contents",
+    "Library",
+    "SystemExtensions",
+    "com.capturia.camera.extension.systemextension"
+  );
+  if (!existsSync(embedded)) return false;
+  const out = spawnSync("codesign", ["-d", "--entitlements", "-", appBundle], {
+    encoding: "utf8",
+  });
+  return `${out.stdout || ""}${out.stderr || ""}`.includes(
+    "com.apple.developer.system-extension.install"
+  );
+}
+const capable = buildCanInstall();
+console.log(`[smoke-packaged] build can install the extension: ${capable ? "yes" : "no"}`);
+
 // Build the child env explicitly: an inherited CAPTURIA_SMOKE_CAMERA=1 must
 // not ride through the spread when the leg is off (--no-camera has to mean
 // off, full stop).
@@ -101,10 +127,15 @@ child.on("close", (code) => {
   if (!/"sysext":\{"ok":true/.test(compact)) {
     fail("no passing sysext evidence in output");
   }
-  // The machine detection above and the app's own status mapping must agree:
-  // an enabled extension read as anything but installed is a mapping bug.
-  if (camera && !compact.includes('"status":"installed"')) {
-    fail("extension is enabled on this machine but the app did not report status installed");
+  // The runner's own detection and the app's status mapping must agree,
+  // capability first: a build without the entitlement reports "unsupported"
+  // regardless of the machine, and only a CAPABLE build on a machine with
+  // the extension enabled must report "installed".
+  if (!capable && !compact.includes('"status":"unsupported"')) {
+    fail("profile-less build should report sysext status unsupported");
+  }
+  if (capable && camera && !compact.includes('"status":"installed"')) {
+    fail("extension is enabled on this machine but the capable app did not report status installed");
   }
   console.log("[smoke-packaged] PASS");
 });

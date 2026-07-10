@@ -1057,6 +1057,7 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
               voiceSupported: isSupported,
               overlayCount: overlays.length,
               cameraExtension: cameraExtension.state?.status,
+              cameraExtensionError: cameraExtension.state?.error,
             }}
             onOpenSettings={() => setSettingsOpen(true)}
             onInstallCamera={cameraExtension.install}

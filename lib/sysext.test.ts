@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   SYSEXT_BUNDLE_ID,
   describeSysextError,
+  formatExtensionVersion,
   parseSystemExtensionsList,
   reduceRequestEvent,
+  sysextNeedsUpgrade,
   sysextUiStatus,
   type SysextRequestState,
   type SysextSnapshot,
@@ -31,6 +33,7 @@ describe("parseSystemExtensionsList", () => {
       present: true,
       enabled: true,
       awaitingApproval: false,
+      enabledVersion: "0.1.0/1",
     });
   });
 
@@ -39,6 +42,7 @@ describe("parseSystemExtensionsList", () => {
       present: true,
       enabled: false,
       awaitingApproval: true,
+      enabledVersion: null,
     });
   });
 
@@ -51,6 +55,7 @@ describe("parseSystemExtensionsList", () => {
       present: false,
       enabled: false,
       awaitingApproval: false,
+      enabledVersion: null,
     });
   });
 
@@ -64,6 +69,8 @@ describe("parseSystemExtensionsList", () => {
     expect(parseSystemExtensionsList(output)).toMatchObject({
       enabled: true,
       awaitingApproval: false,
+      // The version comes from the ENABLED row, never the stale sibling.
+      enabledVersion: "0.1.0/1",
     });
   });
 
@@ -72,7 +79,42 @@ describe("parseSystemExtensionsList", () => {
       present: false,
       enabled: false,
       awaitingApproval: false,
+      enabledVersion: null,
     });
+  });
+
+  it("returns a null version when the enabled row does not parse", () => {
+    const output = "*\t*\tTEAM123456\tcom.capturia.camera.extension\tCapturia Camera\t[activated enabled]";
+    expect(parseSystemExtensionsList(output)).toMatchObject({
+      enabled: true,
+      enabledVersion: null,
+    });
+  });
+});
+
+describe("formatExtensionVersion / sysextNeedsUpgrade", () => {
+  it("composes the systemextensionsctl short/bundle shape", () => {
+    expect(formatExtensionVersion("0.1.0", "1")).toBe("0.1.0/1");
+    expect(formatExtensionVersion(null, "1")).toBeNull();
+    expect(formatExtensionVersion("0.1.0", undefined)).toBeNull();
+  });
+
+  it("wants an upgrade exactly when both versions are known and differ", () => {
+    expect(
+      sysextNeedsUpgrade("0.2.0/2", { enabled: true, enabledVersion: "0.1.0/1" })
+    ).toBe(true);
+    expect(
+      sysextNeedsUpgrade("0.1.0/1", { enabled: true, enabledVersion: "0.1.0/1" })
+    ).toBe(false);
+  });
+
+  it("never fires on unknown versions or a disabled extension", () => {
+    // An unknown version must not trigger a surprise replacement request.
+    expect(sysextNeedsUpgrade(null, { enabled: true, enabledVersion: "0.1.0/1" })).toBe(false);
+    expect(sysextNeedsUpgrade("0.2.0/2", { enabled: true, enabledVersion: null })).toBe(false);
+    expect(
+      sysextNeedsUpgrade("0.2.0/2", { enabled: false, enabledVersion: null })
+    ).toBe(false);
   });
 });
 

@@ -118,11 +118,12 @@ export default function OnboardingFlow({
     else setStepIndex((i) => i + 1);
   };
 
-  // Live copy that replaces the static body while the world is mid-change
-  // (extension installing, System Settings approval pending). While it shows,
-  // the primary button hides: the step advances on its own, and re-firing the
-  // install under a pending request would only confuse the OS flow.
+  // Live copy that replaces the static body (extension installing, approval
+  // pending, install FAILED with its mapped OS reason). The button only hides
+  // while the step is waiting on the world (step.waiting): a failure keeps
+  // the button so the user can read why and click to retry.
   const liveBody = !satisfied && step.dynamicBody ? step.dynamicBody(ctx) : null;
+  const waiting = !satisfied && Boolean(step.waiting?.(ctx));
 
   return (
     // bottom-28 clears the full-width CommandBar (bottom-0) and the caption
@@ -168,7 +169,7 @@ export default function OnboardingFlow({
           >
             Skip tour
           </button>
-          {!satisfied && !liveBody && (
+          {!satisfied && !waiting && (
             <button
               onClick={primaryAction}
               className="px-4 py-1.5 rounded-lg bg-cyan-400/15 border border-cyan-400/40 text-cyan-200 hover:bg-cyan-400/25 text-xs font-medium transition-all"

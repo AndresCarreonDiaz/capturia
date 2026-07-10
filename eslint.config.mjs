@@ -18,6 +18,11 @@ const eslintConfig = defineConfig([
     // and build scripts. The browser/React rules here don't apply to them.
     "electron/**",
     "scripts/**",
+    // Gitignored packaging artifacts (pack:mac output and the staged
+    // nodejs-whisper copy); linting a machine that has packed must report
+    // the same problems as a clean checkout.
+    "dist-app/**",
+    ".whisper-stage/**",
   ]),
 ]);
 
