@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Inherited by helper processes (GPU, renderer, utility) under the hardened
-     runtime. Keep in lockstep with entitlements.mac.plist's cs.* keys. -->
+<!-- Applied to every non-app binary electron-builder signs (Electron's GPU /
+     renderer / utility helpers, plus the Resources binaries the afterPack
+     hook ships: capturia-speech, capturia_frames.node, whisper-cli). Keep in
+     lockstep with entitlements.mac.plist's cs.* keys. The device.* keys are
+     required under the hardened runtime for any helper PROCESS that touches
+     the mic or camera itself: Chromium's audio capture runs in a helper, and
+     capturia-speech records the mic as its own process. -->
 <plist version="1.0">
   <dict>
     <key>com.apple.security.cs.allow-jit</key>
@@ -9,6 +14,10 @@
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
     <key>com.apple.security.inherit</key>
+    <true/>
+    <key>com.apple.security.device.camera</key>
+    <true/>
+    <key>com.apple.security.device.audio-input</key>
     <true/>
   </dict>
 </plist>

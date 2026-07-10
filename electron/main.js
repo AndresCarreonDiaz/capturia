@@ -38,6 +38,13 @@ const HOTKEY_TOGGLE_VOICE = "CmdOrCtrl+Alt+Space";
 
 const isDev = !app.isPackaged;
 const isSmoke = process.env.CAPTURIA_SMOKE === "1";
+// Smoke runs must never block on a macOS keychain consent: Chromium's network
+// service opens the "<app> Safe Storage" keychain item at startup, and when a
+// DIFFERENTLY SIGNED build of the same app touched it first (dev shell vs
+// packaged app on one machine) that read hangs the whole main process on a
+// user prompt. The mock keychain skips OSCrypt entirely; smoke saves no keys
+// and keeps no cookies, so nothing of value gets encrypted with the mock key.
+if (isSmoke) app.commandLine.appendSwitch("use-mock-keychain");
 const useStaticUi = !isDev || isSmoke || process.env.CAPTURIA_STATIC_UI === "1";
 const STUDIO_URL = useStaticUi
   ? `file://${path.join(__dirname, "../out/studio.html")}`
@@ -282,7 +289,12 @@ function createWindow() {
   // the page's own JS bundle executed (window.capturiaCatalog is set at studio
   // module load, so broken file:// asset paths fail here), and a real fetch to
   // the runtime with the bridge-provided URL + token answers the keycheck
-  // (which also exercises CORS from the file:// origin).
+  // (which also exercises CORS from the file:// origin). With
+  // CAPTURIA_SMOKE_CAMERA=1 (opt-in: it needs the extension installed AND
+  // approved, so unattended runs on other machines stay deterministic) the
+  // smoke additionally proves the whole packaged camera stack: the addon
+  // loads, the offscreen Program Output paints, the sink connects, and frames
+  // actually pump.
   if (isSmoke) {
     const smokeJs = `
       new Promise((resolve) => {
@@ -308,11 +320,38 @@ function createWindow() {
         return { bundleRan, hasBridge: Boolean(window.capturia), info: Boolean(info), keycheck };
       })
     `;
+    // The camera leg of the smoke. Resolves {ok, ...evidence}; never rejects.
+    // Waits for delivered frames, not just a connected sink, so a pump that
+    // connects and immediately starves still fails. dispose() runs before
+    // app.exit (which skips will-quit) so the sink is handed back cleanly and
+    // the extension's splash resumes after every run.
+    const smokeCamera = () =>
+      new Promise((resolve) => {
+        if (!cameraFeed) return resolve({ ok: false, reason: "camera module unavailable" });
+        const t0 = Date.now();
+        cameraFeed.start();
+        (function poll() {
+          const state = cameraFeed.getState();
+          if (state.running && state.pumped > 0) {
+            return resolve({ ok: true, pumped: state.pumped, fps: state.fps });
+          }
+          if (state.error) return resolve({ ok: false, reason: state.error });
+          if (Date.now() - t0 > 45000) {
+            return resolve({ ok: false, reason: "timeout", state });
+          }
+          setTimeout(poll, 500);
+        })();
+      });
     mainWindow.webContents.once("did-finish-load", async () => {
       try {
         const result = await mainWindow.webContents.executeJavaScript(smokeJs);
-        const pass =
+        let pass =
           result.bundleRan && result.hasBridge && result.info && result.keycheck?.status === 200;
+        if (pass && process.env.CAPTURIA_SMOKE_CAMERA === "1") {
+          result.camera = await smokeCamera();
+          cameraFeed?.dispose();
+          pass = result.camera.ok;
+        }
         console.log(`[smoke] ${JSON.stringify(result)}`);
         console.log(pass ? "[smoke] PASS" : "[smoke] FAIL");
         app.exit(pass ? 0 : 1);
