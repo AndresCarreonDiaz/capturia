@@ -431,17 +431,18 @@ if (!gotTheLock) {
             ...rendererState,
             cameraAvailable: camera.available,
             cameraRunning: camera.running,
+            cameraConnecting: camera.connecting,
+            cameraFrozen: camera.frozen,
+            cameraHasError: Boolean(camera.error),
           };
         },
         toggleHotkey: HOTKEY_TOGGLE_VOICE,
         actions: {
           "toggle-listening": () =>
             mainWindow?.webContents.send("hotkey", { action: "toggle-voice" }),
-          "toggle-camera": () => {
-            if (!cameraFeed) return;
-            if (cameraFeed.getState().running) cameraFeed.stop();
-            else cameraFeed.start();
-          },
+          // Intent-routed inside the feed: stops while connecting OR running
+          // (a pending auto-connect must be cancellable), starts otherwise.
+          "toggle-camera": () => cameraFeed?.toggle(),
           "open-control-room": showControlRoom,
           "open-settings": () => {
             showControlRoom();

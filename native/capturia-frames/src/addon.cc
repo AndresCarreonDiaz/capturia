@@ -400,6 +400,12 @@ Napi::Value ConnectSink(const Napi::CallbackInfo& info) {
   }
   const std::string wanted = info[0].As<Napi::String>().Utf8Value();
 
+  // Idempotent: a second in-process connect would copy a fresh buffer queue,
+  // orphan the one the pump holds, and register another client with the
+  // extension (which keeps only ONE sink client). Callers wanting a true
+  // reconnect must disconnectSink() first.
+  if (g_sinkQueue) return Napi::Boolean::New(env, true);
+
   for (CMIODeviceID device : CopyDeviceIDs()) {
     const std::string name = GetObjectString(device, kCMIOObjectPropertyName);
     const std::string uid = GetObjectString(device, kCMIODevicePropertyDeviceUID);

@@ -20,6 +20,12 @@
 //                              installed "Capturia" camera extension's sink at
 //                              a fixed 30fps cadence (repeat-last-frame). Then
 //                              open Zoom/Photo Booth and select "Capturia".
+//                              WARNING: one sink client at a time. Do NOT run
+//                              this while the desktop app (npm run electron)
+//                              is feeding the camera: the extension keeps a
+//                              single sink client, so the spike steals the
+//                              consume loop; the app's stall detector will
+//                              then reconnect and steal it right back.
 
 const { app, BrowserWindow, session } = require("electron");
 const path = require("path");

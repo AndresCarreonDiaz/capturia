@@ -29,7 +29,15 @@ export interface DesktopStateReport {
 export interface DesktopCameraState {
   available: boolean;
   running: boolean;
+  // Wanted but not delivering yet: page load (with retries) or sink-connect
+  // backoff. A stop request while connecting cancels the pending start.
+  connecting: boolean;
+  // Running, but the page has stopped painting (viewers see a frozen frame).
+  frozen: boolean;
   fps: number;
+  // Offscreen page paints in the last full second, and when the last one was.
+  paintFps: number;
+  lastPaintAt: number | null;
   pumped: number;
   droppedQueueFull: number;
   error: string | null;

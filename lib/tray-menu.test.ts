@@ -119,4 +119,37 @@ describe("buildTrayMenu", () => {
     expect(item?.enabled).toBe(true);
     expect(item?.label).toBe("Camera: Off");
   });
+
+  it("labels a pending connect as Connecting, beating every other state", () => {
+    // The click while connecting CANCELS the pending start, so the label must
+    // say the feed is in flight, not a settled On/Off.
+    const item = buildTrayMenu(
+      state({
+        cameraAvailable: true,
+        cameraRunning: false,
+        cameraConnecting: true,
+        cameraHasError: true,
+      })
+    ).find((i) => i.action === "toggle-camera");
+    expect(item?.label).toBe("Camera: Connecting…");
+    expect(item?.enabled).toBe(true);
+  });
+
+  it("labels a running feed with no paints as Frozen, never a healthy On", () => {
+    const frozen = buildTrayMenu(
+      state({ cameraAvailable: true, cameraRunning: true, cameraFrozen: true })
+    ).find((i) => i.action === "toggle-camera");
+    const healthy = buildTrayMenu(
+      state({ cameraAvailable: true, cameraRunning: true, cameraFrozen: false })
+    ).find((i) => i.action === "toggle-camera");
+    expect(frozen?.label).toBe("Camera: Frozen");
+    expect(healthy?.label).toBe("Camera: On");
+  });
+
+  it("labels a stopped feed with an error as Error, not a plain Off", () => {
+    const item = buildTrayMenu(
+      state({ cameraAvailable: true, cameraRunning: false, cameraHasError: true })
+    ).find((i) => i.action === "toggle-camera");
+    expect(item?.label).toBe("Camera: Error");
+  });
 });

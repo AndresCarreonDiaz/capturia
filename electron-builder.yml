@@ -83,3 +83,11 @@ mac:
   # The CMIO camera extension (native/CapturiaCamera) is NOT embedded yet; it
   # needs its own provisioning profile + strict signing before it can ship
   # inside the app. That lands with the M7b issue via an afterPack hook.
+  # Same deferral for the capturia-frames N-API addon (native/capturia-frames/
+  # build/Release/capturia_frames.node): it is not in `files` above, and a
+  # .node cannot load from inside the asar anyway, so it must ship unpacked
+  # (asarUnpack or extraResources) alongside the embedded extension. Until
+  # then packaged builds have no native camera: electron/camera-feed.js
+  # reports "Native camera module not built" and the shell degrades cleanly
+  # (documented in docs/virtual-camera.md). The addon is pure N-API, so the
+  # npmRebuild: false above stays correct when it ships.

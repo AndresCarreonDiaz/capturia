@@ -53,12 +53,28 @@ How it works while the desktop app (`npm run electron`) runs:
    (the extension then shows its animated splash again).
 
 If the extension is not installed, the app degrades gracefully: the feed
-reports "extension not found" (visible in the tray toggle doing nothing more
-than retrying discovery) and everything else keeps working; use the OBS bridge
-above instead. `CAPTURIA_CAMERA_LOG=1` makes main log pump stats every 5s.
+reports "extension not found" (the tray shows Camera: Error and a click
+retries discovery) and everything else keeps working; use the OBS bridge
+above instead. While the page is still loading or the sink is connecting the
+tray reads "Camera: Connecting…" and a click cancels; a page that stops
+painting flips the label to "Camera: Frozen" so a stuck feed never
+masquerades as healthy. `CAPTURIA_CAMERA_LOG=1` makes main log pump stats
+every 5s.
 
-Current limitation: the offscreen Program Output page is its own studio
-instance, so overlays driven in the Control Room window do not yet appear on
-the native camera feed (they do on the OBS bridge, which captures the visible
-window). Mirroring the live overlay state into the camera page is the next
-milestone; until then the native camera publishes the webcam layer.
+Current limitations:
+
+- The offscreen Program Output page is its own studio instance, so overlays
+  driven in the Control Room window do not yet appear on the native camera
+  feed (they do on the OBS bridge, which captures the visible window).
+  Mirroring the live overlay state into the camera page is the next
+  milestone; until then the native camera publishes the webcam layer.
+- Packaged builds (`npm run pack:mac`) do not ship the capturia-frames addon
+  yet (see the deferred-work notes in electron-builder.yml), so the native
+  camera works from a source checkout (`npm run electron`) only; the packaged
+  app reports "Native camera module not built" and degrades to the OBS
+  bridge.
+- One sink client at a time: the extension keeps a single sink client, so do
+  not run `electron/spike-frames.js` with `CAPTURIA_SINK=1` while the app is
+  feeding the camera. If another client does steal the sink, the app detects
+  the stall (queue pinned full, nothing consumed for a few seconds) and
+  reconnects automatically.
