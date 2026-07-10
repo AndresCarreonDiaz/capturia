@@ -62,6 +62,7 @@ import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
+import { resolveDeveloperIdIdentity, validateExtDistSignEnv } from "./ext-dist-sign.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -73,6 +74,33 @@ function run(cmd, args, env = process.env) {
 function fail(message) {
   console.error(`[pack-mac] FAIL: ${message}`);
   process.exit(1);
+}
+
+// Extension distribution signing (release builds): with
+// CAPTURIA_EXT_PROVISIONING_PROFILE set, the afterPack hook re-signs the
+// embedded camera extension into the Developer ID flavor (scripts/
+// ext-dist-sign.mjs has the whole contract). The contract is validated HERE
+// first because it is pure environment + keychain inspection: a broken
+// profile or a missing Developer ID identity fails in milliseconds instead
+// of after minutes of building. afterPack re-validates (it also serves
+// direct electron-builder invocations) and performs the actual re-sign.
+let extDistSign = null;
+if (process.env.CAPTURIA_EXT_PROVISIONING_PROFILE) {
+  if (!(process.env.CSC_NAME || process.env.CSC_LINK)) {
+    fail(
+      "CAPTURIA_EXT_PROVISIONING_PROFILE is set but no CSC_NAME/CSC_LINK; a " +
+        "distribution-signed extension inside an unsigned app cannot ship."
+    );
+  }
+  try {
+    extDistSign = validateExtDistSignEnv(process.env, root);
+    resolveDeveloperIdIdentity(process.env, extDistSign.team);
+  } catch (error) {
+    fail(error.message);
+  }
+  console.log(
+    "[pack-mac] extension distribution signing enabled (CAPTURIA_EXT_PROVISIONING_PROFILE + Developer ID identity verified)"
+  );
 }
 
 run(process.execPath, [join(root, "scripts", "build-electron-export.mjs")]);
@@ -184,6 +212,19 @@ if (signingRequested) {
       "[pack-mac] FAIL: the packed app is signed by a different team than CAPTURIA_TEAM_ID."
     );
     process.exit(1);
+  }
+  // Outer-vs-extension coherence: electron-builder resolves CSC_NAME with no
+  // team awareness, so with CAPTURIA_TEAM_ID unset the outer app can end up
+  // signed by a different team than the dist-signed extension (a two-team
+  // keychain), which macOS would treat as a foreign extension the app cannot
+  // activate. The extension's own team equals the profile's (asserted in the
+  // afterPack re-sign), so profile team vs outer team closes the loop.
+  if (extDistSign && team !== extDistSign.team) {
+    fail(
+      "the packed app is signed by a different team than the extension profile's; the app " +
+        "could not activate its own embedded extension. Point CSC_NAME at the Developer ID " +
+        "identity of the extension profile's team (or re-mint the profile under the app's)."
+    );
   }
   console.log(`[pack-mac] signature verified (TeamIdentifier=${team})`);
 

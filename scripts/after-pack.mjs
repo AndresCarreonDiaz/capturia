@@ -19,10 +19,11 @@
 //    built here on demand when CAPTURIA_TEAM_ID is set, and is copied as-is;
 //    electron-builder's signIgnore (see electron-builder.yml) keeps its inner
 //    binary from being re-signed with Electron's inherit entitlements, which
-//    would strip the app group + sandbox entitlements it needs. ACTIVATION of
-//    the embedded copy is not wired yet: until the in-app request flow lands
-//    (M8 slice 2) the extension still gets activated via the dev host app,
-//    and the embedded copy only has to be correctly placed and signed.
+//    would strip the app group + sandbox entitlements it needs. With
+//    CAPTURIA_EXT_PROVISIONING_PROFILE set (release builds), the embedded
+//    COPY is then re-signed into the Developer ID distribution flavor by
+//    scripts/ext-dist-sign.mjs (that file's header has the whole contract);
+//    without it, the dev flavor ships untouched, exactly as before.
 //
 // The identity/team never comes from a committed file: build-signed.sh reads
 // CAPTURIA_TEAM_ID from the environment, and this hook only VERIFIES that the
@@ -32,9 +33,15 @@ import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import {
+  EXT_ID,
+  assertExtensionTeamProvenance,
+  distSignEmbeddedExtension,
+  resolveDeveloperIdIdentity,
+  validateExtDistSignEnv,
+} from "./ext-dist-sign.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const EXT_ID = "com.capturia.camera.extension";
 
 function embedCameraExtension(resourcesSiblingContents) {
   const distSigned = join(
@@ -49,9 +56,19 @@ function embedCameraExtension(resourcesSiblingContents) {
     `${EXT_ID}.systemextension`
   );
   const teamId = process.env.CAPTURIA_TEAM_ID;
+  // Validated here as well as in pack-mac (this hook also runs under direct
+  // electron-builder invocations); throws on any broken contract.
+  const distSign = validateExtDistSignEnv(process.env, root);
 
   if (!existsSync(distSigned)) {
     if (!teamId) {
+      if (distSign) {
+        throw new Error(
+          "afterPack: CAPTURIA_EXT_PROVISIONING_PROFILE is set but there is no extension to " +
+            "embed (no dist-signed build and no CAPTURIA_TEAM_ID to build one); a release " +
+            "expecting a distribution-signed extension cannot silently pack without one."
+        );
+      }
       console.log(
         "  • afterPack: no dist-signed camera extension and no CAPTURIA_TEAM_ID; " +
           "packaging WITHOUT an embedded extension (an already-activated extension still works)"
@@ -71,6 +88,30 @@ function embedCameraExtension(resourcesSiblingContents) {
   // cp -R, not cpSync: preserves the bundle byte-for-byte the way codesign
   // sealed it (build-signed.sh uses the same to stage its dist).
   execFileSync("cp", ["-R", distSigned, dest]);
+
+  // Provenance, BEFORE any re-sign can rewrite the evidence: a pre-existing
+  // dist-signed bundle is reused as-is, so it can be a stale build from
+  // another team, and its Info.plist mach service name bakes that team in
+  // (unfixable by signing; the camera would ship dead). Checked against the
+  // release team (the extension profile's) or, on the dev path, against
+  // CAPTURIA_TEAM_ID; with neither there is no team claim to hold it to.
+  const expectedTeam = distSign?.team ?? teamId;
+  if (expectedTeam) assertExtensionTeamProvenance(dest, expectedTeam);
+
+  // Release flavor: re-sign the embedded copy with the Developer ID identity,
+  // the regenerated distribution entitlements, and the portal profile, then
+  // assert the result (deep-strict, Developer ID, hardened runtime, secure
+  // timestamp, entitlements, profile). The dev build in dist-signed stays
+  // untouched, and the outer app signing (after this hook) seals the result.
+  if (distSign) {
+    distSignEmbeddedExtension({
+      bundlePath: dest,
+      profilePath: distSign.profilePath,
+      team: distSign.team,
+      identityHash: resolveDeveloperIdIdentity(process.env, distSign.team),
+    });
+    console.log(`  • afterPack distribution-signed the embedded ${EXT_ID}.systemextension`);
+  }
 
   // The copy must still verify, and its team must match the environment's.
   execFileSync("codesign", ["--verify", "--deep", "--strict", dest]);
