@@ -93,4 +93,30 @@ describe("buildTrayMenu", () => {
       expect(item.label).toBeTruthy();
     }
   });
+
+  it("shows no camera item when the shell reports no camera state", () => {
+    const items = buildTrayMenu(state()).filter((i) => i.action === "toggle-camera");
+    expect(items).toHaveLength(0);
+  });
+
+  it("labels the camera toggle by its running state", () => {
+    const off = buildTrayMenu(state({ cameraAvailable: true, cameraRunning: false })).find(
+      (i) => i.action === "toggle-camera"
+    );
+    const on = buildTrayMenu(state({ cameraAvailable: true, cameraRunning: true })).find(
+      (i) => i.action === "toggle-camera"
+    );
+    expect(off?.label).toBe("Camera: Off");
+    expect(on?.label).toBe("Camera: On");
+  });
+
+  it("keeps the camera toggle enabled even when the extension is missing", () => {
+    // Clicking while unavailable retries discovery (someone may have just
+    // approved the extension in System Settings), so it must stay clickable.
+    const item = buildTrayMenu(
+      state({ cameraAvailable: false, cameraRunning: false })
+    ).find((i) => i.action === "toggle-camera");
+    expect(item?.enabled).toBe(true);
+    expect(item?.label).toBe("Camera: Off");
+  });
 });

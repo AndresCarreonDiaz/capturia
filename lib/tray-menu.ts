@@ -9,10 +9,16 @@ export interface TrayState {
   reported: boolean;
   listening: boolean;
   voiceSupported: boolean;
+  // Virtual camera feed (M7b). Omit BOTH when the shell has no camera module
+  // (the menu then shows no camera item at all); cameraAvailable=false means
+  // the Capturia camera extension is not installed or approved.
+  cameraAvailable?: boolean;
+  cameraRunning?: boolean;
 }
 
 export type TrayAction =
   | "toggle-listening"
+  | "toggle-camera"
   | "open-control-room"
   | "open-settings"
   | "quit";
@@ -43,10 +49,27 @@ export function buildTrayMenu(state: TrayState, toggleHotkey?: string): TrayItem
   };
   if (toggleHotkey) toggle.accelerator = toggleHotkey;
 
+  // Camera item only when the shell reports camera state at all. Always
+  // enabled (unlike the voice toggle): when the extension is missing, the
+  // click retries discovery, which is exactly what someone who just approved
+  // the extension in System Settings needs; it never silently does nothing.
+  const camera: TrayItem[] =
+    state.cameraAvailable === undefined
+      ? []
+      : [
+          {
+            type: "item",
+            label: state.cameraRunning ? "Camera: On" : "Camera: Off",
+            enabled: true,
+            action: "toggle-camera",
+          },
+        ];
+
   return [
     { type: "item", label: trayStatusLabel(state), enabled: false },
     { type: "separator" },
     toggle,
+    ...camera,
     { type: "item", label: "Open Control Room", enabled: true, action: "open-control-room" },
     { type: "item", label: "Settings…", enabled: true, action: "open-settings" },
     { type: "separator" },
