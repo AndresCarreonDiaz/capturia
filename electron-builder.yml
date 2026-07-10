@@ -102,12 +102,15 @@ mac:
   # file. Without CSC_NAME, pack-mac.mjs disables identity auto-discovery, so
   # the fallback is the same unsigned/ad-hoc app as before signing existed.
   #
-  # Notarization stays off until credentials exist. When they do: set
-  # notarize: true AND export APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD /
-  # APPLE_TEAM_ID in the packing environment; without those credentials
-  # electron-builder skips notarization silently rather than failing. A
-  # notarized build must also ship whisper fully provisioned: a post-install
-  # download would write into the bundle and break its signature.
+  # Notarization is deliberately NOT electron-builder's (notarize stays
+  # false): its built-in flow skips silently when credentials are missing,
+  # runs inside every pack (slowing the dev loop), and never staples the DMG.
+  # Instead scripts/notarize-mac.mjs (the tail of npm run dist:mac, gated on
+  # CAPTURIA_NOTARY_PROFILE, a notarytool keychain-profile name) submits the
+  # DMG, fails loudly on rejection, staples app + DMG, and re-asserts with
+  # spctl. docs/release.md has the credential setup. A notarized build must
+  # also ship whisper fully provisioned: a post-install download would write
+  # into the bundle and break its signature.
   hardenedRuntime: true
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
@@ -128,3 +131,20 @@ mac:
   # code, so codesign --verify --deep --strict covers it.
   signIgnore:
     - "Library/SystemExtensions"
+
+# The release DMG. Built ONLY by npm run dist:mac (scripts/dist-mac.mjs),
+# which wraps the app pack:mac already built and verified via electron-builder
+# --prepackaged; the mac target above stays dir so the pack:mac dev loop never
+# pays for an image. Volume name and icon fall back to productName + the app
+# icon, and the default window is the standard drag-to-Applications layout
+# (app left, /Applications symlink right), all deliberately left at their
+# defaults so they track the app's own metadata.
+dmg:
+  # Never sign the image: the app inside is already sealed (re-signing is
+  # exactly what the dist step must not do), notarization tickets ride the
+  # stapled DMG instead, and Apple's workflow does not require a signed
+  # container.
+  sign: false
+  # No auto-update infra exists; skip the .blockmap sidecar so dist-app holds
+  # exactly the artifact that ships.
+  writeUpdateInfo: false
