@@ -4,8 +4,9 @@
 //
 // Surface:
 //   window.capturia.isDesktop  - boolean flag the renderer can check
-//   window.capturia.onHotkey(handler) - subscribe to "toggle-voice" hotkey
-//     events. Returns an unsubscribe function.
+//   window.capturia.onHotkey(handler) - subscribe to hotkey/tray actions
+//     from main ("toggle-voice", "open-settings", "fire-cue" with an index,
+//     "fire-cue-next"). Returns an unsubscribe function.
 //   window.capturia.transcribe(wavBytes) - local whisper transcription
 //   window.capturia.keys.{save,clear,list} - BYOK vault (plaintext never
 //     crosses this bridge; main's runtime server reads keys itself)

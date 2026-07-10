@@ -59,6 +59,7 @@ import { coerceArrayArg, coerceRecordArg, toolArgText } from "@/lib/extract-json
 import { oversizedToolArg } from "@/lib/limits";
 import { isPlaceableOverlayType } from "@/lib/catalog";
 import { matchCue, matchInterimCue, type InterimCueState } from "@/lib/deck/cues";
+import { advanceCuePointer, nextCueIndex } from "@/lib/deck/pointer";
 import type { CueCard, DeckFacts } from "@/lib/deck/types";
 import type { OverlaySpec, OverlayPosition } from "@/lib/types";
 
@@ -334,6 +335,46 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
     });
   }, []);
 
+  // Silent cue triggers (issue #15: presenters mid-call often cannot speak).
+  // The pointer is the rail index the "next card" hotkey fires; per session
+  // and per deck (reset with `cues` below). Desktop binds Cmd/Ctrl+Alt+1..9
+  // and Cmd/Ctrl+Alt+Right as GLOBAL shortcuts while a deck is loaded (main
+  // reads cueCount off the state report), so cards land mid-Zoom without
+  // focusing Capturia; the in-page keydown fallback below covers the web.
+  const [cuePointer, setCuePointer] = useState(0);
+
+  // Fire a cue card and advance the pointer past it. EVERY fire path funnels
+  // here (rail click, voice final, interim confirm, hotkeys) so "next"
+  // always means the first card after the last one that landed, however it
+  // landed. Deliberately touches NO speech-segment state: hotkeys are not
+  // speech, so writing into interimCueRef or the parked marker here would
+  // swallow or double-answer a sentence in flight.
+  const fireCue = useCallback(
+    (card: CueCard) => {
+      applyCue(card);
+      const index = cuesRef.current.findIndex((c) => c.id === card.id);
+      if (index !== -1) setCuePointer((p) => advanceCuePointer(p, index));
+    },
+    [applyCue]
+  );
+
+  // Fire by rail position (the digit hotkeys). Out-of-range is a no-op: the
+  // deck may have fewer than nine cards.
+  const fireCueAt = useCallback(
+    (index: number) => {
+      const card = cuesRef.current[index];
+      if (card) fireCue(card);
+    },
+    [fireCue]
+  );
+
+  // Fire the card at the pointer (the next-card hotkey). Quiet past the end
+  // of the deck by design (no wrap; see lib/deck/pointer.ts).
+  const fireNextCue = useCallback(() => {
+    const index = nextCueIndex(cuePointer, cuesRef.current.length);
+    if (index !== null) fireCueAt(index);
+  }, [cuePointer, fireCueAt]);
+
   // Continuous voice can finish transcribing a second command while the
   // agent still renders the first. sendMessage drops mid-run turns by design
   // (v2's runAgent CANCELS an active run instead of queueing, which would
@@ -362,7 +403,10 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
 
   // Cue ids are per-deck (cue-<slideIndex>), so a deck swap mid-segment would
   // let a stale fired list poison the new deck's identical ids and silently
-  // swallow the sentence final. New deck, clean segment.
+  // swallow the sentence final. New deck, clean segment. (The silent-hotkey
+  // pointer resets at the setCues call sites instead: it is plain state, and
+  // setState from an effect body is the lint-banned cascading-render
+  // pattern, while refs are exactly what effects may write.)
   useEffect(() => {
     interimCueRef.current = null;
     parkedCueRef.current = null;
@@ -390,7 +434,7 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
         // pre-built card without a model call. Falls through to the agent on miss.
         const card = matchCue(cuesRef.current, text);
         if (card) {
-          applyCue(card);
+          fireCue(card);
           return;
         }
         sendMessage(`[VOICE] ${text}`)
@@ -414,7 +458,7 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
         // sentence final.
         const { fire, state } = matchInterimCue(cuesRef.current, interim, interimCueRef.current);
         interimCueRef.current = state;
-        if (fire) applyCue(fire);
+        if (fire) fireCue(fire);
       },
       () => {
         // Segment boundary with no final attached (filtered hallucination,
@@ -470,8 +514,81 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
   // Desktop tray: the Settings menu item rides the same channel as hotkeys.
   useDesktopHotkey("open-settings", () => setSettingsOpen(true));
 
-  // Mirror voice state to the tray (Listening/Idle status, toggle enablement).
-  useDesktopStateReport({ listening: isListening, voiceSupported: isSupported });
+  // Auto-repeat guard for the DESKTOP hotkey channel. Electron's
+  // globalShortcut fires once per press on macOS, but Windows RegisterHotKey
+  // auto-repeats WM_HOTKEY while the combo is held unless the registration
+  // opts out, and Electron does not document which behavior it ships; a held
+  // Cmd/Ctrl+Alt+Right must never machine-gun cards onto the live feed.
+  // Sliding same-combo window: every suppressed repeat refreshes the stamp,
+  // so a held combo fires exactly once and re-arms 150ms after release
+  // (repeats arrive every ~30-80ms, an intentional re-press comes later).
+  // Distinct combos (Alt+1 then Alt+2) never debounce each other. The web
+  // fallback needs none of this: its keydown carries e.repeat exactly.
+  const lastCueFireRef = useRef({ key: "", at: 0 });
+  const debouncedCueFire = useCallback((key: string, fire: () => void) => {
+    const now = performance.now();
+    const last = lastCueFireRef.current;
+    const isRepeat = last.key === key && now - last.at < 150;
+    lastCueFireRef.current = { key, at: now };
+    if (!isRepeat) fire();
+  }, []);
+
+  // Desktop silent cue triggers: main registers Cmd/Ctrl+Alt+1..9 and
+  // Cmd/Ctrl+Alt+Right globally while a deck is loaded and forwards presses
+  // here. index is the rail position; validated because only `action` is
+  // shape-checked at the preload bridge.
+  useDesktopHotkey("fire-cue", (payload) => {
+    if (typeof payload.index === "number" && Number.isInteger(payload.index)) {
+      const index = payload.index;
+      debouncedCueFire(`cue-${index}`, () => fireCueAt(index));
+    }
+  });
+  useDesktopHotkey("fire-cue-next", () => debouncedCueFire("next", fireNextCue));
+
+  // Web fallback for the silent cue triggers: the same combos as in-page
+  // keydown while the studio has focus. Mounted only while a deck is loaded,
+  // so an empty studio never intercepts anything. On desktop this listener
+  // is inert by construction: while a deck is loaded main owns these combos
+  // as global shortcuts and the OS consumes them before Chromium ever sees
+  // a keydown, so nothing can double-fire. Matches on e.code (Digit1,
+  // ArrowRight), never e.key: on macOS Option+1 types "¡", so e.key cannot
+  // name the digit.
+  useEffect(() => {
+    if (cues.length === 0) return;
+    const onKey = (e: KeyboardEvent) => {
+      // A held combo auto-repeats keydown, and each repeat of the next-card
+      // combo would fire a FRESH card (the pointer advance commits between
+      // events): one held Cmd/Ctrl+Alt+Right must never machine-gun the
+      // deck onto the audience-visible feed. Repeats are not presses.
+      if (e.repeat) return;
+      if (!(e.metaKey || e.ctrlKey) || !e.altKey || e.shiftKey) return;
+      // Never steal the combo from a focused text field (the CommandBar):
+      // Option+digit types a character there, and a presenter mid-typing
+      // must not surprise the live feed.
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      if (e.code === "ArrowRight") {
+        e.preventDefault();
+        fireNextCue();
+        return;
+      }
+      const digit = /^Digit([1-9])$/.exec(e.code);
+      if (digit) {
+        e.preventDefault();
+        fireCueAt(Number(digit[1]) - 1);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [cues.length, fireCueAt, fireNextCue]);
+
+  // Mirror voice state to the tray (Listening/Idle status, toggle enablement)
+  // and the deck size to the cue-hotkey registration.
+  useDesktopStateReport({
+    listening: isListening,
+    voiceSupported: isSupported,
+    cueCount: cues.length,
+  });
 
   // The poll currently on screen (first authored surface with ActionButtons);
   // see lib/derive-poll.ts. Memoized so the vote-room publish effect keys off
@@ -588,17 +705,27 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
       : isListening && fxOn,
   });
 
-  // Dev-only E2E driver: lets Playwright (and the desktop camera harness in
-  // scripts/e2e-desktop-camera.mjs) place overlays without a live model turn,
-  // since the real agent path is key-gated. NODE_ENV is inlined at build
+  // Dev-only E2E driver: lets Playwright (and the desktop harnesses in
+  // scripts/e2e-desktop-camera.mjs and scripts/e2e-desktop-hotkeys.mjs) place
+  // overlays and load a cue deck without a live model turn, since the real
+  // agent and deck-codegen paths are key-gated. NODE_ENV is inlined at build
   // time, so production bundles compile this whole effect away.
   useEffect(() => {
     if (process.env.NODE_ENV === "production") return;
     const w = window as unknown as {
-      capturiaDrive?: { setOverlays: (specs: OverlaySpec[]) => void };
+      capturiaDrive?: {
+        setOverlays: (specs: OverlaySpec[]) => void;
+        setCues: (cards: CueCard[]) => void;
+      };
     };
     w.capturiaDrive = {
       setOverlays: (specs) => setOverlays(Array.isArray(specs) ? specs : []),
+      setCues: (cards) => {
+        const next = Array.isArray(cards) ? cards : [];
+        setCues(next);
+        setDeckName(next.length > 0 ? "e2e-deck" : null);
+        setCuePointer(0);
+      },
     };
     return () => {
       delete w.capturiaDrive;
@@ -1174,15 +1301,19 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
             agentBusy={isRunning}
           />
 
-          {/* Left rail: deck cue cards */}
+          {/* Left rail: deck cue cards. onTrigger funnels through fireCue so
+              a click advances the silent-hotkey pointer like any other fire;
+              nextIndex lights the card Cmd/Ctrl+Alt+Right lands next. */}
           <CueDeck
             cards={cues}
             fileName={deckName}
-            onTrigger={applyCue}
+            nextIndex={nextCueIndex(cuePointer, cues.length)}
+            onTrigger={fireCue}
             onClear={() => {
               setCues([]);
               setDeckFacts(null);
               setDeckName(null);
+              setCuePointer(0);
             }}
           />
 
@@ -1195,6 +1326,9 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
                 setCues(cards);
                 setDeckFacts(facts);
                 setDeckName(fileName);
+                // A fresh deck restarts the silent-hotkey walk at the top,
+                // like the other two setCues call sites (clear, e2e driver).
+                setCuePointer(0);
               }}
             />
 
