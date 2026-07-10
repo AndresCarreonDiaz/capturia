@@ -357,6 +357,12 @@ function createWindow() {
 
   mainWindow.on("closed", () => {
     mainWindow = null;
+    // A real destroy (the no-tray degrade path, where close means close, or
+    // any other genuine teardown) takes the page and its deck with it, but
+    // macOS keeps the app alive after the last window: without this reset
+    // the cue shortcuts would stay registered system-wide with no renderer
+    // to receive them, silently swallowing those combos in every other app.
+    resetRendererState();
   });
 
   // Smoke mode: prove the static export + bridge + loopback runtime work end

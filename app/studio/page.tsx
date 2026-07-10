@@ -514,16 +514,36 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
   // Desktop tray: the Settings menu item rides the same channel as hotkeys.
   useDesktopHotkey("open-settings", () => setSettingsOpen(true));
 
+  // Auto-repeat guard for the DESKTOP hotkey channel. Electron's
+  // globalShortcut fires once per press on macOS, but Windows RegisterHotKey
+  // auto-repeats WM_HOTKEY while the combo is held unless the registration
+  // opts out, and Electron does not document which behavior it ships; a held
+  // Cmd/Ctrl+Alt+Right must never machine-gun cards onto the live feed.
+  // Sliding same-combo window: every suppressed repeat refreshes the stamp,
+  // so a held combo fires exactly once and re-arms 150ms after release
+  // (repeats arrive every ~30-80ms, an intentional re-press comes later).
+  // Distinct combos (Alt+1 then Alt+2) never debounce each other. The web
+  // fallback needs none of this: its keydown carries e.repeat exactly.
+  const lastCueFireRef = useRef({ key: "", at: 0 });
+  const debouncedCueFire = useCallback((key: string, fire: () => void) => {
+    const now = performance.now();
+    const last = lastCueFireRef.current;
+    const isRepeat = last.key === key && now - last.at < 150;
+    lastCueFireRef.current = { key, at: now };
+    if (!isRepeat) fire();
+  }, []);
+
   // Desktop silent cue triggers: main registers Cmd/Ctrl+Alt+1..9 and
   // Cmd/Ctrl+Alt+Right globally while a deck is loaded and forwards presses
   // here. index is the rail position; validated because only `action` is
   // shape-checked at the preload bridge.
   useDesktopHotkey("fire-cue", (payload) => {
     if (typeof payload.index === "number" && Number.isInteger(payload.index)) {
-      fireCueAt(payload.index);
+      const index = payload.index;
+      debouncedCueFire(`cue-${index}`, () => fireCueAt(index));
     }
   });
-  useDesktopHotkey("fire-cue-next", () => fireNextCue());
+  useDesktopHotkey("fire-cue-next", () => debouncedCueFire("next", fireNextCue));
 
   // Web fallback for the silent cue triggers: the same combos as in-page
   // keydown while the studio has focus. Mounted only while a deck is loaded,
@@ -536,6 +556,11 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
   useEffect(() => {
     if (cues.length === 0) return;
     const onKey = (e: KeyboardEvent) => {
+      // A held combo auto-repeats keydown, and each repeat of the next-card
+      // combo would fire a FRESH card (the pointer advance commits between
+      // events): one held Cmd/Ctrl+Alt+Right must never machine-gun the
+      // deck onto the audience-visible feed. Repeats are not presses.
+      if (e.repeat) return;
       if (!(e.metaKey || e.ctrlKey) || !e.altKey || e.shiftKey) return;
       // Never steal the combo from a focused text field (the CommandBar):
       // Option+digit types a character there, and a presenter mid-typing

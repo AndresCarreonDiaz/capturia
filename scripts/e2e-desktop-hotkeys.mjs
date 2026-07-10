@@ -4,9 +4,10 @@
 //   2. deck loads      -> Cmd/Ctrl+Alt+1..N (deck size, max 9) plus
 //                         Cmd/Ctrl+Alt+Right register globally; the voice
 //                         hotkey stays registered untouched
-//   3. a press arrives -> the card's overlays land in the Control Room
-//                         (simulated on the same "hotkey" channel the
-//                         globalShortcut callbacks send on, since nothing
+//   3. presses arrive  -> cards land in the Control Room, and a back-to-back
+//                         repeat burst lands exactly ONE card (the renderer
+//                         debounce; simulated on the same "hotkey" channel
+//                         the globalShortcut callbacks send on, since nothing
 //                         can synthesize a real OS-level keypress headless)
 //   4. deck clears     -> every cue shortcut unregisters, voice remains
 //
@@ -155,24 +156,38 @@ if (bound.digit3) fail("Alt+3 registered for a 2-card deck (digits must track de
 if (!bound.voice) fail("the voice hotkey disappeared when the cue shortcuts registered");
 console.log("[hotkey-e2e] deck loaded: digits 1..2 + Right bound, Alt+3 free, voice intact");
 
-// Gate 3: presses land cards. Simulated on the "hotkey" channel because a
-// real OS-level keypress cannot be synthesized here; the channel message is
-// byte-identical to what the globalShortcut callbacks send.
+// Gate 3: presses land cards, and a repeat burst lands ONE. Simulated on the
+// "hotkey" channel because a real OS-level keypress cannot be synthesized
+// here; the messages are byte-identical to what the globalShortcut callbacks
+// send. The back-to-back pair models Windows RegisterHotKey's WM_HOTKEY
+// auto-repeat stream: the renderer's sliding 150ms debounce must collapse it
+// into one fire, or a held combo would walk the whole deck onto the feed.
 const landed = (name) =>
   inControlRoom(`Boolean(document.body && document.body.innerText.includes(${JSON.stringify(name)}))`);
 await app.evaluate(
-  ({ BrowserWindow }, { id }) =>
-    BrowserWindow.fromId(id).webContents.send("hotkey", { action: "fire-cue", index: 0 }),
+  ({ BrowserWindow }, { id }) => {
+    const wc = BrowserWindow.fromId(id).webContents;
+    wc.send("hotkey", { action: "fire-cue-next" });
+    wc.send("hotkey", { action: "fire-cue-next" });
+  },
   { id: controlRoom.id }
 );
-await waitFor("card 1's overlay after the digit press", () => landed("Desktop Hotkey Proof 1"), 10_000);
+await waitFor("card 1's overlay after the next press", () => landed("Desktop Hotkey Proof 1"), 10_000);
+// Give a wrongly-accepted second fire time to render before asserting.
+await new Promise((r) => setTimeout(r, 400));
+if (await landed("Desktop Hotkey Proof 2")) {
+  fail("a repeat press inside the debounce window fired a second card");
+}
+console.log("[hotkey-e2e] next-press burst fired exactly one card");
+// A distinct combo after the window: the digit press for card 2 proves both
+// the digit path and that different combos are not debounced against "next".
 await app.evaluate(
   ({ BrowserWindow }, { id }) =>
-    BrowserWindow.fromId(id).webContents.send("hotkey", { action: "fire-cue-next" }),
+    BrowserWindow.fromId(id).webContents.send("hotkey", { action: "fire-cue", index: 1 }),
   { id: controlRoom.id }
 );
-await waitFor("card 2's overlay after the next press", () => landed("Desktop Hotkey Proof 2"), 10_000);
-console.log("[hotkey-e2e] digit fired card 1, next fired card 2");
+await waitFor("card 2's overlay after the digit press", () => landed("Desktop Hotkey Proof 2"), 10_000);
+console.log("[hotkey-e2e] digit fired card 2");
 
 // Gate 4: deck clears -> every cue shortcut unregisters, voice remains.
 if (!(await inControlRoom(DRIVE_CUES_JS([])))) fail("could not clear the driven cues");

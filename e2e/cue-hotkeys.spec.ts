@@ -105,16 +105,64 @@ test("a rail click advances the silent walk like any other fire", async ({ page 
   await expect(page.getByText("Hotkey Overlay 3")).toBeVisible();
 });
 
-test("clearing the deck unbinds the in-page combos", async ({ page }) => {
+// Dispatch a synthetic, cancelable combo keydown and report whether anything
+// consumed it. defaultPrevented is the probe: the cue listener is the only
+// thing that preventDefaults these combos, so TRUE means the binding is live
+// and FALSE means nobody is listening (not merely that no card matched).
+function dispatchCombo(page: Page, code: string, repeat = false) {
+  return page.evaluate(
+    ({ code, repeat }) => {
+      const e = new KeyboardEvent("keydown", {
+        code,
+        ctrlKey: true,
+        altKey: true,
+        bubbles: true,
+        cancelable: true,
+        repeat,
+      });
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    },
+    { code, repeat }
+  );
+}
+
+test("clearing the deck unbinds the in-page combos, not just the cards", async ({ page }) => {
   await page.goto("/studio");
   await driveCues(page, CARDS);
   await expect(page.getByText("Hotkey Card 1")).toBeVisible();
 
+  // Deck loaded: the probe must read BOUND (and fire), proving the probe
+  // itself detects the binding before the clear is asserted with it.
+  expect(await dispatchCombo(page, "Digit1")).toBe(true);
+  await expect(page.getByText("Hotkey Overlay 1")).toBeVisible();
+
   await page.getByLabel("Clear deck").click();
   await expect(page.getByText("Hotkey Card 1")).toHaveCount(0);
 
-  await page.getByPlaceholder(/Add a lower third/).blur();
-  await page.keyboard.press("Control+Alt+Digit1");
-  await page.waitForTimeout(300);
-  await expect(page.getByText("Hotkey Overlay 1")).toHaveCount(0);
+  // Deck cleared: nobody consumes the combo anymore. Without the unbind the
+  // listener would still preventDefault (an empty rail just fires nothing),
+  // so this catches the zombie-listener case an overlay check cannot.
+  expect(await dispatchCombo(page, "Digit1")).toBe(false);
+  expect(await dispatchCombo(page, "ArrowRight")).toBe(false);
+});
+
+test("held-key auto-repeats never machine-gun the deck", async ({ page }) => {
+  await page.goto("/studio");
+  await driveCues(page, CARDS);
+  await expect(page.getByText("Hotkey Card 1")).toBeVisible();
+
+  // A held combo is one real keydown followed by a stream of repeat=true
+  // events. Only the first may fire; every repeat must fall through
+  // unconsumed, or one held next-combo walks the whole deck onto the feed.
+  expect(await dispatchCombo(page, "ArrowRight")).toBe(true);
+  await expect(page.getByText("Hotkey Overlay 1")).toBeVisible();
+  for (let i = 0; i < 5; i++) {
+    expect(await dispatchCombo(page, "ArrowRight", true)).toBe(false);
+  }
+  await expect(page.getByText("Hotkey Overlay 2")).toHaveCount(0);
+
+  // Release and press again: the next real keydown still fires.
+  expect(await dispatchCombo(page, "ArrowRight")).toBe(true);
+  await expect(page.getByText("Hotkey Overlay 2")).toBeVisible();
 });
