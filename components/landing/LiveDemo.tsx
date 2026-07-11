@@ -400,7 +400,7 @@ export default function LiveDemo() {
       {/* External caption strip below card: gives context without crowding it */}
       <div className="mt-3 flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-1.5 px-1">
         <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
-          A real session, on a loop · every graphic here lands from a spoken line
+          The real overlays, on a scripted loop · in the app, every line is spoken
         </span>
         <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
           You speak · it appears

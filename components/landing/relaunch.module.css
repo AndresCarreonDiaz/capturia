@@ -52,6 +52,22 @@
   to   { background-position: 0 24px; }
 }
 
+/* Keyboard keycaps for the silent-hotkeys card: hairline border, mono,
+   a faint top bevel. Matches the studio chrome, no drop shadows. */
+.kbd {
+  display: inline-block;
+  padding: 1px 7px 2px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-top-color: rgba(255, 255, 255, 0.22);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.04);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.82em;
+  letter-spacing: 0.06em;
+  color: var(--studio-ink);
+  white-space: nowrap;
+}
+
 /* FAQ items: native details/summary, styled. The plus mark rotates into a
    close mark while open; no JavaScript involved. */
 .faqItem summary {
