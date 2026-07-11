@@ -59,6 +59,9 @@ describe("memory beacon store aggregation", () => {
     expect(s.versions["0.1.0"]).toBe(2);
     expect(s.versions["0.2.0"]).toBe(1);
     expect(Object.keys(s.versions).length).toBeLessThanOrEqual(200);
+    // ...and the refusals are visible, not silent: 300 attempts against a
+    // hash that already held 2 fields leaves 102 past the cap.
+    expect(s.versionsOverflow).toBe(102);
     // ...but known versions keep counting past it.
     await store.record(payload("id-y", "launch", "0.1.0"), NOW);
     expect((await store.summary(NOW)).versions["0.1.0"]).toBe(3);
@@ -117,8 +120,10 @@ describe("redis beacon store", () => {
     expect(commands[0][2]).toBe("id-a");
     expect(commands[2][1]).toBe("beacon:ids:m:202607");
     expect(commands[4][1]).toBe("beacon:count:launch");
-    // The version EVAL carries the hash key and the version field.
+    // The version EVAL carries the hash key, the overflow counter key, and
+    // the version field.
     expect(commands[5]).toContain("beacon:versions");
+    expect(commands[5]).toContain("beacon:versions-overflow");
     expect(commands[5]).toContain("0.1.0");
   });
 
@@ -140,6 +145,7 @@ describe("redis beacon store", () => {
       "8", // camera-installed count
       null, // update-check count never incremented
       ["0.1.0", "90", "0.2.0", "10"],
+      "5", // versions overflow counter
     ]);
     const store = createRedisBeaconStore(pipeline);
     const s = await store.summary(NOW);
@@ -153,6 +159,7 @@ describe("redis beacon store", () => {
       activations: 7,
       events: { launch: 100, "camera-installed": 8, "update-check": 0 },
       versions: { "0.1.0": 90, "0.2.0": 10 },
+      versionsOverflow: 5,
     });
     // The WAU PFCOUNT unions the 7 trailing daily keys in one command.
     const [commands] = calls;

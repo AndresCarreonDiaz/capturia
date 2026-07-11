@@ -69,9 +69,23 @@ describe("parseBeaconPayload", () => {
     expect(parseBeaconPayload({ ...VALID, macosVersion: 26 }).ok).toBe(false);
   });
 
-  it("accepts realistic version strings", () => {
-    for (const v of ["0.1.0", "1.2.0-beta.1", "26.0.1", "15.5"]) {
+  it("pins appVersion to the app's semver shape, not any short string", () => {
+    for (const v of ["0.1.0", "1.2.0-beta.1", "26.0.1"]) {
       expect(parseBeaconPayload({ ...VALID, appVersion: v }).ok).toBe(true);
+    }
+    // Two-part, alphabetic, and decorated strings are junk for the versions
+    // hash even though they would be harmless as plain text.
+    for (const v of ["15.5", "abc", "v0.1.0", "0.1.0.9999", "1.2.0-" + "x".repeat(30)]) {
+      expect(parseBeaconPayload({ ...VALID, appVersion: v }).ok).toBe(false);
+    }
+  });
+
+  it("accepts two- and three-part macOS versions only", () => {
+    for (const v of ["15.5", "26.0", "26.0.1"]) {
+      expect(parseBeaconPayload({ ...VALID, macosVersion: v }).ok).toBe(true);
+    }
+    for (const v of ["26", "26.0.1.2", "sequoia"]) {
+      expect(parseBeaconPayload({ ...VALID, macosVersion: v }).ok).toBe(false);
     }
   });
 });
@@ -104,6 +118,7 @@ describe("UTC stamps and keys", () => {
     expect(beaconKeys.week(NOW)).toHaveLength(7);
     expect(beaconKeys.week(NOW)[0]).toBe("beacon:ids:d:20260710");
     expect(beaconKeys.count("launch")).toBe("beacon:count:launch");
+    expect(beaconKeys.versionsOverflow).toBe("beacon:versions-overflow");
     expect(beaconKeys.rateLimit("abc")).toBe("beacon:rl:abc");
   });
 });

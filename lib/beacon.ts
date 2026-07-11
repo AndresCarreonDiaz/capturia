@@ -26,9 +26,14 @@ export interface BeaconPayload {
 // RFC 4122 textual shape (any version). Normalized to lowercase so the
 // same install never counts twice in a HyperLogLog because of casing.
 export const INSTALL_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-// Version strings ("0.1.0", "26.0.1", "1.2.0-beta.1"): short and
-// filename-safe, so they can be Redis hash fields without escaping.
-const VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z._-]{0,31}$/;
+// appVersion is what app.getVersion() reports: package.json semver, x.y.z
+// with an optional short prerelease suffix. Pinning the exact shape (not
+// just "short and printable") keeps junk strings out of the versions hash,
+// whose fields are a capped, long-lived metric (see MAX_VERSION_FIELDS).
+const APP_VERSION_RE = /^\d{1,4}\.\d{1,4}\.\d{1,4}(-[0-9A-Za-z.]{1,15})?$/;
+// macosVersion is what process.getSystemVersion() reports ("15.5", "26.0",
+// "26.0.1"): two or three numeric components.
+const MACOS_VERSION_RE = /^\d{1,4}\.\d{1,4}(\.\d{1,4})?$/;
 
 const ALLOWED_KEYS = ["installId", "event", "appVersion", "macosVersion"] as const;
 
@@ -43,15 +48,21 @@ export const RATE_LIMIT_WINDOW_MS = 60_000;
 
 // Unique-install keys expire on their own: dailies live long enough to
 // compute a trailing week plus a debugging margin, monthlies long enough for
-// a year-over-year look. Event counters and the versions hash are tiny,
-// bounded, and deliberately permanent (they ARE the funnel history).
+// a year-over-year look. Event counters are tiny, bounded, and deliberately
+// permanent (they ARE the funnel history); the versions hash gets its own
+// long TTL below so a poisoned state ages out.
 export const DAY_KEY_TTL_S = 40 * 24 * 3600;
 export const MONTH_KEY_TTL_S = 400 * 24 * 3600;
 
 // Cap on distinct appVersion fields in the versions hash: real releases are
 // rare, and the cap keeps a forged-but-valid payload loop from minting
-// unbounded hash fields on the metered backend.
+// unbounded hash fields on the metered backend. Rejected NEW versions are
+// not dropped silently: they increment an overflow counter the summary
+// surfaces, so a poisoning attempt is visible instead of quietly freezing
+// the metric, and the hash carries a long TTL so a poisoned state ages out.
+// Manual recovery: HDEL the junk fields from beacon:versions (docs/telemetry.md).
 export const MAX_VERSION_FIELDS = 200;
+export const VERSIONS_TTL_S = 800 * 24 * 3600;
 
 export type BeaconParse =
   | { ok: true; payload: BeaconPayload }
@@ -76,11 +87,11 @@ export function parseBeaconPayload(body: unknown): BeaconParse {
   if (typeof event !== "string" || !(BEACON_EVENTS as readonly string[]).includes(event)) {
     return { ok: false, error: "event must be one of launch, camera-installed, update-check" };
   }
-  if (typeof appVersion !== "string" || !VERSION_RE.test(appVersion)) {
-    return { ok: false, error: "appVersion must be a short version string" };
+  if (typeof appVersion !== "string" || !APP_VERSION_RE.test(appVersion)) {
+    return { ok: false, error: "appVersion must be a semver version string" };
   }
-  if (typeof macosVersion !== "string" || !VERSION_RE.test(macosVersion)) {
-    return { ok: false, error: "macosVersion must be a short version string" };
+  if (typeof macosVersion !== "string" || !MACOS_VERSION_RE.test(macosVersion)) {
+    return { ok: false, error: "macosVersion must be a numeric version string" };
   }
   return {
     ok: true,
@@ -124,7 +135,8 @@ export function lastNDayStamps(now: number, n: number): string[] {
 //   beacon:ids:m:<YYYYMM>    HLL of installIds seen that UTC month (TTL 400d)
 //   beacon:activated         HLL of installIds that ever activated the camera
 //   beacon:count:<event>     plain counter per event
-//   beacon:versions          hash appVersion -> launch count
+//   beacon:versions          hash appVersion -> launch count (TTL 800d)
+//   beacon:versions-overflow launches whose NEW version hit the field cap (TTL 800d)
 //   beacon:rl:<bucket>       per-IP-hash rate limit counter (TTL 60s)
 export const beaconKeys = {
   day: (now: number) => `beacon:ids:d:${utcDayStamp(now)}`,
@@ -133,6 +145,7 @@ export const beaconKeys = {
   count: (event: BeaconEvent) => `beacon:count:${event}`,
   activated: "beacon:activated",
   versions: "beacon:versions",
+  versionsOverflow: "beacon:versions-overflow",
   rateLimit: (bucket: string) => `beacon:rl:${bucket}`,
 };
 
@@ -149,4 +162,8 @@ export interface BeaconSummary {
   activations: number;
   events: Record<BeaconEvent, number>;
   versions: Record<string, number>;
+  // Launches whose NEW appVersion was refused by the field cap. Zero when
+  // healthy; anything else means someone is minting versions and the hash
+  // needs a look (see MAX_VERSION_FIELDS).
+  versionsOverflow: number;
 }

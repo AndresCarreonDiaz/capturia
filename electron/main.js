@@ -239,6 +239,11 @@ function registerIpc() {
       return { enabled: telemetry.setEnabled(enabled) };
     })
   );
+  // Renderer -> main: the onboarding disclosure was resolved (welcome step
+  // dismissed with the toggle state known, or onboarding already completed
+  // in an earlier session). Releases the first-run consent gate holding the
+  // launch ping (electron/telemetry.js); idempotent on later runs.
+  ipcMain.handle("telemetry:ack", guarded(() => ({ enabled: telemetry.ackDisclosure() })));
 
   // Renderer -> main: voice state for the tray (listening on/off, whether the
   // speech engine exists) plus the loaded deck size for the cue hotkeys.
@@ -648,7 +653,10 @@ if (!gotTheLock) {
 
     // One anonymous launch ping per run (the DAU/MAU signal). Async and
     // fire-and-forget: a dead or unreachable endpoint costs one swallowed
-    // fetch, never a slower start.
+    // fetch, never a slower start. On a FIRST run this parks behind the
+    // consent gate until the renderer acks the onboarding disclosure
+    // (telemetry:ack above); it is dropped silently if the user opts out
+    // there, and every later run sends immediately.
     telemetry.send("launch");
 
     // Menu-bar tray: live status plus the same actions the window offers, so

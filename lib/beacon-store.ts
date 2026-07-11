@@ -17,6 +17,7 @@ import {
   MONTH_KEY_TTL_S,
   RATE_LIMIT_MAX,
   RATE_LIMIT_WINDOW_MS,
+  VERSIONS_TTL_S,
   beaconKeys,
   lastNDayStamps,
   utcDayStamp,
@@ -47,6 +48,7 @@ export function createMemoryBeaconStore(): BeaconStore {
   const activated = new Set<string>();
   const counts = zeroCounts();
   const versions = new Map<string, number>();
+  let versionsOverflow = 0;
   const limiter = new Map<string, { count: number; resetAt: number }>();
 
   // Mirror of the Redis TTLs so a long-lived dev server does not grow
@@ -73,6 +75,10 @@ export function createMemoryBeaconStore(): BeaconStore {
       if (payload.event === "launch") {
         if (versions.has(payload.appVersion) || versions.size < MAX_VERSION_FIELDS) {
           versions.set(payload.appVersion, (versions.get(payload.appVersion) ?? 0) + 1);
+        } else {
+          // A NEW version past the cap: count the refusal so poisoning is
+          // visible in the summary instead of silently freezing the metric.
+          versionsOverflow += 1;
         }
       } else if (payload.event === "camera-installed") {
         activated.add(payload.installId);
@@ -95,6 +101,7 @@ export function createMemoryBeaconStore(): BeaconStore {
         activations: activated.size,
         events: { ...counts },
         versions: Object.fromEntries(versions),
+        versionsOverflow,
       };
     },
 
@@ -129,10 +136,18 @@ return n
 
 // Versions hash with a field cap: known versions always count, new fields
 // only while the hash is under the cap, so forged-but-valid payloads cannot
-// mint unbounded fields on the metered backend.
+// mint unbounded fields on the metered backend. A refused NEW version is
+// not a silent drop: it lands on the overflow counter (KEYS[2]) the summary
+// surfaces, and both keys ride a long TTL so a poisoned hash ages out
+// instead of freezing the metric forever (manual recovery: HDEL the junk
+// fields; docs/telemetry.md).
 const VERSION_LUA = `
 if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 1 or redis.call('HLEN', KEYS[1]) < tonumber(ARGV[2]) then
   redis.call('HINCRBY', KEYS[1], ARGV[1], 1)
+  redis.call('EXPIRE', KEYS[1], ARGV[3])
+else
+  redis.call('INCR', KEYS[2])
+  redis.call('EXPIRE', KEYS[2], ARGV[3])
 end
 return 1
 `;
@@ -166,10 +181,12 @@ export function createRedisBeaconStore(pipeline: RedisPipeline): BeaconStore {
         commands.push([
           "EVAL",
           VERSION_LUA,
-          1,
+          2,
           beaconKeys.versions,
+          beaconKeys.versionsOverflow,
           payload.appVersion,
           MAX_VERSION_FIELDS,
+          VERSIONS_TTL_S,
         ]);
       } else if (payload.event === "camera-installed") {
         commands.push(["PFADD", beaconKeys.activated, payload.installId]);
@@ -186,6 +203,7 @@ export function createRedisBeaconStore(pipeline: RedisPipeline): BeaconStore {
         ["PFCOUNT", beaconKeys.activated],
         ...BEACON_EVENTS.map((event) => ["GET", beaconKeys.count(event)]),
         ["HGETALL", beaconKeys.versions],
+        ["GET", beaconKeys.versionsOverflow],
       ]);
       const events = zeroCounts();
       BEACON_EVENTS.forEach((event, i) => {
@@ -201,6 +219,7 @@ export function createRedisBeaconStore(pipeline: RedisPipeline): BeaconStore {
         activations: Number(res[3]) || 0,
         events,
         versions: versionsFromFlat(res[4 + BEACON_EVENTS.length]),
+        versionsOverflow: Number(res[5 + BEACON_EVENTS.length]) || 0,
       };
     },
 
