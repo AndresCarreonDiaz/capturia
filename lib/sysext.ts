@@ -63,21 +63,56 @@ export function formatExtensionVersion(
   return `${shortVersion}/${bundleVersion}`;
 }
 
+// Where the embedded extension version stands relative to the enabled one.
+// "unknown" covers a missing side, an unparseable pair, and pairs whose
+// numbers agree while the strings differ (e.g. "0.1/1" vs "0.1.0/1"): a
+// direction that cannot be established must never drive a replacement.
+export type SysextVersionRelation = "newer" | "older" | "same" | "unknown";
+
+// "shortVersion/bundleVersion" as systemextensionsctl prints it.
+function parseVersionPair(pair: string): { parts: number[]; build: number } | null {
+  const match = /^(\d+(?:\.\d+)*)\/(\d+)$/.exec(pair);
+  if (!match) return null;
+  return { parts: match[1].split(".").map(Number), build: Number(match[2]) };
+}
+
+export function sysextVersionRelation(
+  embeddedVersion: string | null,
+  enabledVersion: string | null
+): SysextVersionRelation {
+  if (!embeddedVersion || !enabledVersion) return "unknown";
+  if (embeddedVersion === enabledVersion) return "same";
+  const embedded = parseVersionPair(embeddedVersion);
+  const enabled = parseVersionPair(enabledVersion);
+  if (!embedded || !enabled) return "unknown";
+  // CFBundleVersion is the monotonic build id and decides first; the dotted
+  // short version breaks a (misconfigured) build-number tie.
+  if (embedded.build !== enabled.build) {
+    return embedded.build > enabled.build ? "newer" : "older";
+  }
+  const length = Math.max(embedded.parts.length, enabled.parts.length);
+  for (let i = 0; i < length; i++) {
+    const a = embedded.parts[i] ?? 0;
+    const b = enabled.parts[i] ?? 0;
+    if (a !== b) return a > b ? "newer" : "older";
+  }
+  return "unknown";
+}
+
 // Should a capable build request activation to REPLACE the already-enabled
-// extension? Only when both versions are known and differ: a same-version
-// request is a quiet no-op (verified live), but firing one on every launch
-// would be noise, and an unknown version must never trigger a surprise
-// replacement. This is the OBS pattern: the host app re-requests activation
-// when it ships a different extension version than the one running.
+// extension? Only when the embedded version is provably NEWER: a
+// same-version request is a quiet no-op (verified live) but firing one on
+// every launch would be noise, an unknown version must never trigger a
+// surprise replacement, and an OLDER embedded version (a stale dist-signed
+// build, an old app relaunched after an upgrade) must never DOWNGRADE the
+// machine's running extension out from under it. This is the OBS pattern
+// with the direction check made explicit.
 export function sysextNeedsUpgrade(
   embeddedVersion: string | null,
   list: Pick<SysextListState, "enabled" | "enabledVersion">
 ): boolean {
   return (
-    list.enabled &&
-    embeddedVersion !== null &&
-    list.enabledVersion !== null &&
-    embeddedVersion !== list.enabledVersion
+    list.enabled && sysextVersionRelation(embeddedVersion, list.enabledVersion) === "newer"
   );
 }
 

@@ -31,7 +31,10 @@ EXT_ID="com.capturia.camera.extension"
 HOST_ID="com.capturia.camera.host"
 GROUP="${PREFIX}.com.capturia.camera"
 MACH_SERVICE="${GROUP}.frames"
-VERSION="0.1.0"
+# Keep in lockstep with Extension/Info.plist (the Xcode build's source of
+# truth); the version pair drives the packaged app's launch upgrade check.
+VERSION="0.1.2"
+BUILD="3"
 MIN_OS="13.0"
 SDK="$(xcrun --sdk macosx --show-sdk-path)"
 
@@ -69,7 +72,7 @@ cat > "${SYSEX}/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>${EXT_ID}</string>
   <key>CFBundlePackageType</key><string>SYSX</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
-  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleVersion</key><string>${BUILD}</string>
   <key>LSMinimumSystemVersion</key><string>${MIN_OS}</string>
   <key>NSSystemExtensionUsageDescription</key>
   <string>Capturia provides a virtual camera so your calls can show AI-composed overlays.</string>

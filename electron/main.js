@@ -33,6 +33,16 @@ const {
   assertStateReport,
 } = require("./ipc-schemas");
 
+// Webcam control script for the hidden Control Room (see below). Same
+// degrade-not-crash posture as the other electron/gen consumers: without the
+// gen build the hidden window simply keeps its capture (the old behavior).
+let webcamControlScript = null;
+try {
+  ({ webcamControlScript } = require("./gen/camera-feed"));
+} catch {
+  // electron/gen not built; camera-feed.js will log the actionable message.
+}
+
 // Push-to-talk hotkey. Cmd+Alt+Space on Mac, Ctrl+Alt+Space elsewhere.
 // Chosen to avoid Spotlight (Cmd+Space) and the macOS character viewer.
 const HOTKEY_TOGGLE_VOICE = "CmdOrCtrl+Alt+Space";
@@ -326,6 +336,29 @@ function createWindow() {
       mainWindow.setFullScreen(false);
     } else {
       mainWindow.hide();
+    }
+  });
+
+  // Privacy: the Control Room's webcam preview (components/WebcamFeed.tsx)
+  // holds the PHYSICAL webcam, and close-to-tray hides the window without
+  // unmounting the page, so without this the green camera LED stays lit for
+  // an app nobody can see (issue #38). backgroundThrottling:false keeps the
+  // hidden page's visibilityState "visible", so the page cannot detect the
+  // hide itself; main tells it through the same executeJavaScript contract
+  // the offscreen camera window uses. The offscreen feed is independent: it
+  // idles on the extension's consumer count (electron/camera-feed.js), so
+  // hiding the window never blanks a live call.
+  const sendWebcamControl = (paused) => {
+    if (!webcamControlScript || !mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.executeJavaScript(webcamControlScript(paused)).catch(() => {});
+  };
+  mainWindow.on("hide", () => sendWebcamControl(true));
+  mainWindow.on("show", () => sendWebcamControl(false));
+  // A page (re)loaded while the window is hidden must not relight the LED;
+  // the injected flag lands before React mounts the preview.
+  mainWindow.webContents.on("did-finish-load", () => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      sendWebcamControl(true);
     }
   });
 

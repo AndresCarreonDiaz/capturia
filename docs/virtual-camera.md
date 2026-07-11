@@ -58,7 +58,28 @@ How it works while the desktop app (`npm run electron`) runs:
    camera never freezes to black when nothing repaints).
 3. The tray menu's **Camera: On/Off** item mirrors and toggles the feed; it is
    on by default for the app's whole lifetime and disconnects cleanly on quit
-   (the extension then shows its animated splash again).
+   (the extension then shows its animated splash again). Turning it Off tears
+   the offscreen page down entirely, releasing its physical-webcam capture
+   with it.
+4. **The physical webcam idles when nobody watches.** The extension counts
+   the call apps consuming its source stream and publishes that count to the
+   host (a custom CMIO device property, `'ccon'`). When no call app has
+   consumed the Capturia camera for ~10 seconds, the offscreen page releases
+   its `getUserMedia` capture, so the green camera LED goes dark instead of
+   staying lit for an app nobody can see; the feed keeps pumping a branded
+   "Capturia standing by" card. The moment a call app picks the camera
+   again, live video is back within a couple of seconds. The hidden-to-tray
+   Control Room releases its own webcam preview the same way while the
+   window is not visible.
+
+Worth knowing in daily use:
+
+- **Closing the Capturia window does not quit the app.** It hides to the
+  menu bar on purpose (the camera feed keeps running for your call); quit it
+  fully from the menu bar icon's Quit item.
+- **Zoom mirrors your self-view by default**, so overlay text can look
+  backwards TO YOU while the audience sees it correctly. Either ignore it or
+  uncheck Zoom Settings > Video > "Mirror my video".
 
 If the extension is not installed, the app degrades gracefully: the feed
 reports "extension not found" (the tray shows Camera: Error and a click
