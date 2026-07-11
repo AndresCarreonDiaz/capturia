@@ -8,7 +8,11 @@ const fs = require("fs");
 const path = require("path");
 const { app, safeStorage } = require("electron");
 
-const PROVIDERS = ["gemini", "claude", "openai"];
+// "capturia-hosted" is not an API-key vendor: its slot stores the Capturia
+// Pro access token (M11 hosted tier), which routes through the same vault so
+// the token gets the exact keychain treatment keys do and never touches a
+// renderer process.
+const PROVIDERS = ["gemini", "claude", "openai", "capturia-hosted"];
 
 function vaultPath() {
   return path.join(app.getPath("userData"), "keys.json");

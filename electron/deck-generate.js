@@ -23,6 +23,15 @@ async function buildModel(provider, key) {
     const { createOpenAI } = await import("@ai-sdk/openai");
     return createOpenAI({ apiKey: key })(MODELS.openai);
   }
+  if (provider === "capturia-hosted") {
+    // Hosted tier: same Gemini wire, but through Capturia's proxy with the
+    // vault's access token in the key slot. Never send that token to Google
+    // directly. Mirrors hostedRouteFromEnv in lib/desktop-runtime.ts.
+    const { createGoogleGenerativeAI } = await import("@ai-sdk/google");
+    const base = (process.env.CAPTURIA_HOSTED_URL || "https://capturia.app/api/hosted")
+      .replace(/\/+$/, "");
+    return createGoogleGenerativeAI({ apiKey: key, baseURL: `${base}/v1beta` })(MODELS.gemini);
+  }
   const { createGoogleGenerativeAI } = await import("@ai-sdk/google");
   return createGoogleGenerativeAI({ apiKey: key })(MODELS.gemini);
 }

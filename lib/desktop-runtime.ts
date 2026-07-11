@@ -18,9 +18,37 @@ import {
   envKeysForSpec,
 } from "./server-keys";
 
+// The hosted-tier pseudo-provider (M11, issue #10): the vault slot holds a
+// Capturia access token instead of a vendor API key, and the runtime points
+// the Gemini wire at Capturia's proxy with that token in the key slot. The
+// proxy speaks the exact @ai-sdk/google shape (see lib/hosted/proxy.ts), so
+// hosted mode is a baseURL + key swap, not a new client.
+export const HOSTED_PROVIDER = "capturia-hosted";
+const DEFAULT_HOSTED_BASE = "https://capturia.app/api/hosted";
+const DEFAULT_HOSTED_MODEL_ID = "gemini-2.5-flash-lite";
+
+export interface HostedRoute {
+  /** baseURL for createGoogleGenerativeAI: <hosted base>/v1beta. */
+  baseUrl: string;
+  /** Bare Gemini model id; the proxy enforces its own allowlist anyway. */
+  modelId: string;
+}
+
 export interface DesktopAgentSpec {
   model: string;
   apiKey: string | undefined;
+  /** Present only for the capturia-hosted provider. */
+  hosted?: HostedRoute;
+}
+
+// CAPTURIA_HOSTED_URL overrides the proxy origin (dev: http://localhost:3000
+// /api/hosted); CAPTURIA_HOSTED_MODEL picks among the proxy's allowed ids.
+export function hostedRouteFromEnv(env: Record<string, string | undefined>): HostedRoute {
+  const base = (env.CAPTURIA_HOSTED_URL || DEFAULT_HOSTED_BASE).replace(/\/+$/, "");
+  return {
+    baseUrl: `${base}/v1beta`,
+    modelId: env.CAPTURIA_HOSTED_MODEL || DEFAULT_HOSTED_MODEL_ID,
+  };
 }
 
 export interface DesktopKeyInput {
@@ -43,6 +71,15 @@ export interface DesktopKeyInput {
 // run fails. Unmapped specs (vertex, unknown) still return undefined for
 // resolveModel to handle itself.
 export function resolveDesktopAgentSpec({ provider, storedKey, env }: DesktopKeyInput): DesktopAgentSpec {
+  // Hosted tier first: the stored value is the Capturia token (slice 1 keeps
+  // the raw JWT in the vault; the refresh loop is the desktop entitlement
+  // slice). The model string stays a google/<id> spec so shared logic like
+  // isNoThinkingModel keeps working; runtime-server builds the actual
+  // proxy-pointed model instance from `hosted`.
+  if (provider === HOSTED_PROVIDER && storedKey) {
+    const hosted = hostedRouteFromEnv(env);
+    return { model: `google/${hosted.modelId}`, apiKey: storedKey, hosted };
+  }
   if (provider && storedKey) {
     const fallback = providerModelSpec(provider);
     const override = env.CAPTURIA_MODEL;
@@ -60,9 +97,21 @@ export function resolveDesktopAgentSpec({ provider, storedKey, env }: DesktopKey
 }
 
 // Missing-key fail-fast with the same message source as the web route, so the
-// studio banner wording never forks between web and desktop.
+// studio banner wording never forks between web and desktop. The hosted
+// provider gets its own message: telling a Pro user to go set GOOGLE_API_KEY
+// would be exactly the setup the hosted tier exists to remove.
 export function desktopKeyError({ provider, storedKey, env }: DesktopKeyInput): string | null {
-  return missingModelKeyError({ byokProvider: provider, byokKey: storedKey, env });
+  const error = missingModelKeyError({ byokProvider: provider, byokKey: storedKey, env });
+  // Only rewrite a REAL failure: with a usable env fallback the agents
+  // factory would run anyway (hosted-without-token falls through to the env
+  // spec), and blocking a run that would succeed forks keycheck from run.
+  if (error && provider === HOSTED_PROVIDER && !storedKey) {
+    return (
+      "Capturia Pro is selected but no access token is stored. " +
+      "Paste your token in Settings, or switch to a BYOK provider."
+    );
+  }
+  return error;
 }
 
 // Browser origins allowed to call the loopback runtime. The packaged renderer

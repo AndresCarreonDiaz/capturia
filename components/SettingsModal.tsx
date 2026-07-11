@@ -35,9 +35,17 @@ const PROVIDER_META: Record<
     url: "https://platform.openai.com",
     placeholder: "sk-... key",
   },
+  // Hosted-tier stub (M11 slice 1): paste-a-token wiring only; the guided
+  // upgrade and automatic token refresh land with the next slice.
+  "capturia-hosted": {
+    name: "Capturia Pro",
+    tagline: "hosted, no API key needed",
+    url: "https://capturia.app",
+    placeholder: "Paste your Capturia access token",
+  },
 };
 
-const PROVIDER_ORDER: KeyProvider[] = ["gemini", "claude", "openai"];
+const PROVIDER_ORDER: KeyProvider[] = ["gemini", "claude", "openai", "capturia-hosted"];
 
 export default function SettingsModal({
   open,

@@ -1,0 +1,182 @@
+# Hosted tier: LLM proxy + entitlements (M11 slice 1)
+
+The backbone of Capturia Pro, built to the architecture decided on issue #10:
+Stripe for billing (test mode until launch), the LLM proxy as a Vercel
+function inside this Next.js app, Cloudflare AI Gateway between the proxy and
+Gemini, Upstash Redis for runtime state, and no database and no user accounts
+(Stripe is the customer source of truth; the desktop app holds tokens in the
+OS keychain).
+
+## Free-tier discipline (read this first)
+
+Nothing in the free web demo or the BYOK path touches these endpoints or
+requires their env. The studio, `/api/copilotkit`, the vote flow, and the
+desktop BYOK providers are untouched; every hosted/billing endpoint answers
+503 when its env is absent and spends nothing without a valid Capturia JWT.
+Adding a dependency from any free path onto `/api/hosted` or `/api/billing`
+is a regression.
+
+## Request path
+
+```
+Desktop app (Capturia JWT from keychain)
+  -> POST /api/hosted/...            Vercel function, this repo
+       1. verify Ed25519 JWT          stateless, lib/hosted/jwt.ts
+       2. Redis brakes                 lib/hosted/gate.ts
+            kill switch                hosted:kill
+            entitlement cache          hosted:ent:<customer>
+            rate limit                 ~10/min sliding window
+            monthly token budget       hosted:usage:<customer>:<YYYY-MM>
+            concurrent-stream lease    hosted:lease:<customer>
+       3. forward Gemini wire body
+            CAPTURIA_AI_GATEWAY_URL    Cloudflare AI Gateway (per-user $ caps,
+                                       Gemini key in gateway secret store)
+            else                       direct Gemini with server GOOGLE_API_KEY
+       4. stream SSE back; on end: release lease, record one usage event to
+          Redis and (when configured) Stripe Billing Meters
+```
+
+Entitlement flow (no accounts):
+
+```
+Stripe Checkout (test mode)
+  -> webhook /api/billing/webhook (signature-verified)
+       checkout.session.completed  -> entitlement active in Redis
+                                      + one-time activation code
+       subscription.updated        -> entitlement cache follows status
+       subscription.deleted        -> entitlement revoked
+  -> POST /api/billing/activate { code, deviceId }
+       one-time code -> long-lived refresh token (device cap: 3)
+  -> POST /api/billing/token { refreshToken }
+       -> Ed25519 JWT (~1h) held in the keychain "capturia-hosted" slot
+```
+
+## Endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/hosted/v1/generate` | Stable alias: `{ model?, stream?, request }` where `request` is a Gemini `generateContent` payload; streams SSE back |
+| `POST /api/hosted/v1beta/models/<id>:streamGenerateContent` | The exact wire shape `@ai-sdk/google` emits; lets the desktop runtime point at the proxy by swapping `baseURL` + key slot only |
+| `POST /api/hosted/v1beta/models/<id>:generateContent` | Non-streaming variant |
+| `POST /api/billing/checkout` | Creates the Stripe Checkout session (subscription, `STRIPE_PRICE_ID`) |
+| `POST /api/billing/webhook` | Stripe events -> Redis entitlement cache + activation codes |
+| `POST /api/billing/activate` | `{ code, deviceId }` -> `{ refreshToken, token, expiresAt, devices }` |
+| `POST /api/billing/token` | `{ refreshToken }` -> `{ token, expiresAt }` |
+| `GET /api/billing/activation-code?session_id=cs_...` | One-time code pickup for the checkout success page |
+
+The JWT rides in `x-goog-api-key` (what `@ai-sdk/google` sends) or a
+standard `Authorization: Bearer`. The proxy enforces a server-side model
+allowlist (`gemini-2.5-flash-lite`, `gemini-2.5-flash` by default), so a
+valid token cannot pick an expensive model on Capturia's key.
+
+## Env contract
+
+| Variable | Where | Meaning |
+|---|---|---|
+| `STRIPE_SECRET_KEY` | server | Stripe API key (sk_test until launch). Absent: billing endpoints 503, proxy skips meter events |
+| `STRIPE_WEBHOOK_SECRET` | server | Webhook signature secret (whsec_...) |
+| `STRIPE_PRICE_ID` | server | Pro monthly price, printed by `scripts/hosted-setup-stripe.mjs` |
+| `STRIPE_API_BASE` | dev only | Point at stripe-mock (`http://localhost:12111`) |
+| `UPSTASH_REDIS_REST_URL` / `_TOKEN` | server | Runtime state. Absent: in-memory single-process fallback (dev) |
+| `CAPTURIA_AI_GATEWAY_URL` | server | Cloudflare AI Gateway base (`https://gateway.ai.cloudflare.com/v1/<acct>/<gw>/google-ai-studio`). Absent: direct Gemini fallback |
+| `CAPTURIA_AI_GATEWAY_TOKEN` | server | Optional `cf-aig-authorization` token for an authenticated gateway |
+| `GOOGLE_API_KEY` (or `GOOGLE_GENERATIVE_AI_API_KEY`) | server | Gemini key for the direct fallback; with gateway-side BYOK neither is needed here |
+| `CAPTURIA_JWT_PRIVATE_KEY` | server | base64 PKCS8 DER Ed25519 (PEM also accepted). Mints JWTs. NEVER commit |
+| `CAPTURIA_JWT_PUBLIC_KEY` | server | base64 SPKI DER. Verifies JWTs at the proxy |
+| `CAPTURIA_HOSTED_MODELS` | server | Optional csv override of the model allowlist |
+| `CAPTURIA_HOSTED_RATE_LIMIT` / `_MONTHLY_TOKENS` / `_LEASE_TTL_MS` | server | Brake tuning (defaults 10/min, 5M tokens, 120s) |
+| `CAPTURIA_HOSTED_DEV_ENTITLEMENT` | dev only | Seeds an active entitlement + the fixed dev activation code for that customer id. Ignored in production builds |
+| `CAPTURIA_HOSTED_URL` | desktop | Proxy origin override for the desktop runtime (dev: `http://localhost:3000/api/hosted`) |
+| `CAPTURIA_HOSTED_MODEL` | desktop | Hosted model id override (must be on the server allowlist) |
+
+Generate the keypair with `node scripts/hosted-gen-keys.mjs` (prints both
+env lines; nothing touches disk).
+
+## Desktop wiring (slice 1 scope)
+
+The keychain vault gained a `capturia-hosted` slot (Settings shows it as
+"Capturia Pro"). When it holds a token, `resolveDesktopAgentSpec`
+(lib/desktop-runtime.ts) returns a `hosted` route and the loopback runtime
+builds its Gemini client with `baseURL` pointed at the proxy and the token
+in the key slot; deck codegen does the same. Slice 1 stores the JWT
+directly; the refresh loop, device management UX, and guided upgrade land
+with the desktop entitlement slice. Everything is testable today via
+`CAPTURIA_HOSTED_URL`.
+
+## Local dev quickstart (no paid services)
+
+```sh
+node scripts/hosted-gen-keys.mjs        # append both lines to .env.local
+echo "CAPTURIA_HOSTED_DEV_ENTITLEMENT=cus_dev" >> .env.local
+# plus a Google key for the direct fallback (GOOGLE_API_KEY or
+# GOOGLE_GENERATIVE_AI_API_KEY)
+npm run dev
+
+TOKEN=$(node --env-file=.env.local scripts/hosted-dev-token.mjs cus_dev)
+curl -N -X POST http://localhost:3000/api/hosted/v1/generate \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"request":{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}}'
+```
+
+The activation flow is drivable the same way: the dev seed plants the code
+`CAPTURIA-DEV0-DEV0-DEV0-DEV0`, so `POST /api/billing/activate` with it (plus
+any `deviceId` of 6+ chars) returns a refresh token, and
+`POST /api/billing/token` mints JWTs from then on. Note the in-memory
+fallback lives inside the dev server process: seeding and reading happen
+through the endpoints, not from other processes.
+
+## Verification runbook
+
+Ran green for this slice (2026-07): `npm test` (vitest, includes the JWT,
+gate, entitlement, Stripe-client, proxy-planning, memory-redis, backend, and
+desktop-runtime suites), `tsc --noEmit`, `next build`, eslint (pre-existing
+React 19 baseline only), `npm run smoke:runtime`, `npx playwright test`
+(BYOK studio untouched, live agent turn included), plus the live local
+end-to-end above: streamed and non-streamed generations through the proxy
+with a real Gemini key, 401 (missing/garbage token), 403 (model allowlist),
+404 activation-code replay, 401 bad refresh token, 409 concurrent stream,
+and 429 with `retry-after` after the 10/min window filled.
+
+When the Stripe sk_test key lands:
+
+1. `STRIPE_SECRET_KEY=sk_test_... node scripts/hosted-setup-stripe.mjs`,
+   put the printed `STRIPE_PRICE_ID` in the env.
+2. `stripe listen --forward-to localhost:3000/api/billing/webhook`
+   (Stripe CLI), put the printed `whsec_...` in `STRIPE_WEBHOOK_SECRET`.
+3. Drive a test checkout: `curl -X POST .../api/billing/checkout`, pay with
+   `4242 4242 4242 4242`, watch the webhook log `activation_minted`, fetch
+   the code via `/api/billing/activation-code?session_id=...`, then run the
+   activate -> token -> generate chain above with the real code.
+4. Cancel the subscription in the test dashboard and confirm the next
+   `/api/billing/token` call answers 402 and the proxy rejects new calls.
+5. Confirm meter events in the dashboard (Billing -> Meters ->
+   capturia_hosted_tokens) after a generation.
+6. Optional offline check: `stripe-mock` + `STRIPE_API_BASE=http://localhost:12111`
+   exercises the setup script and checkout endpoint without the network.
+
+When the Cloudflare account lands:
+
+1. Create an AI Gateway, store the Gemini key in its BYOK secret store, set
+   per-user dollar spend limits.
+2. Set `CAPTURIA_AI_GATEWAY_URL` (and `CAPTURIA_AI_GATEWAY_TOKEN` if the
+   gateway is authenticated); remove the server-side Google key.
+3. Re-run the streamed curl above and confirm the request appears in the
+   gateway logs.
+
+When the dedicated GCP project lands: new key into the gateway secret
+store, arm the monthly spend cap and lowered RPD quota per issue #10, then
+re-run the same curl.
+
+## Security notes
+
+- JWTs are Ed25519 only; the verifier pins `alg: EdDSA`, so `alg:none` and
+  HMAC downgrades are rejected structurally (unit-tested).
+- Refresh tokens are stored only as SHA-256 hashes; activation codes are
+  one-time (GETDEL) and 80-bit random; codes and tokens are never logged.
+- Client headers never travel upstream; the proxy builds fresh headers per
+  call, so the JWT cannot leak to Google or Cloudflare.
+- Kill switch: `SET hosted:kill 1` in Redis stops all hosted generation
+  (503) without a deploy; `DEL hosted:kill` restores it.
+- Budget/rate races between serverless invocations are tolerated by design:
+  the gateway dollar caps and the GCP project cap sit behind them
+  (defense in depth per issue #10).
