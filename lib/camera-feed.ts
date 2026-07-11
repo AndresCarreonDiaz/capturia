@@ -42,6 +42,27 @@ export const FROZEN_AFTER_SECONDS = 3;
 // extension's consume loop and reconnects through the normal backoff.
 export const SINK_STALL_SECONDS = 3;
 
+// How long the offscreen Program Output page keeps its physical-webcam
+// capture after the last call app stops consuming the Capturia camera
+// (issue #38: a green camera LED with no visible app reads as spyware).
+// Long enough to ride out a camera re-pick or a brief app switch, short
+// enough that the LED goes dark soon after the call ends.
+export const WEBCAM_IDLE_AFTER_SECONDS = 10;
+
+// While the webcam capture is idled, the feed polls the consumer count this
+// often, so a call app picking Capturia gets live video back well inside the
+// 2s budget (poll latency + getUserMedia reacquisition).
+export const WEBCAM_RESUME_POLL_MS = 250;
+
+// The DOM contract through which Electron main drives a studio page's webcam
+// capture (components/WebcamFeed.tsx implements the page side). Injected via
+// webContents.executeJavaScript because the offscreen Program Output window
+// deliberately has no preload (see electron/camera-feed.js): the window flag
+// makes the desired state sticky across the injection/React-mount race, and
+// the event flips a page that is already mounted.
+export const WEBCAM_CONTROL_EVENT = "capturia:webcam";
+export const WEBCAM_PAUSED_FLAG = "__capturiaWebcamPaused";
+
 // One CMIO device as reported by the native addon's listDevices().
 export interface CameraDevice {
   id: number;
@@ -75,6 +96,10 @@ export interface CameraFeedState {
   pumped: number;
   // Pump ticks dropped because the sink queue was full.
   droppedQueueFull: number;
+  // The offscreen page was told to release the physical webcam because no
+  // call app consumed the Capturia camera for WEBCAM_IDLE_AFTER_SECONDS; the
+  // pump keeps delivering the page's "standing by" card.
+  webcamIdle: boolean;
   // Why the feed is degraded or stopped (null while healthy).
   error: string | null;
 }
@@ -124,4 +149,74 @@ export function cameraToggleAction(
   state: Pick<CameraFeedState, "running" | "connecting">
 ): "stop" | "start" {
   return state.running || state.connecting ? "stop" : "start";
+}
+
+// The studio page must NEVER capture the Capturia camera itself: with the
+// extension installed, the virtual camera can become the browser's DEFAULT
+// video device, and a deviceId-less getUserMedia then feeds the camera its
+// own output (a feedback loop) while holding the source stream open, which
+// reads as a permanent consumer and defeats the webcam idle machine below
+// (found live while verifying issue #38 on this machine).
+export function isVirtualSelfCapture(trackLabel: string): boolean {
+  return trackLabel.includes(CAMERA_DEVICE_NAME);
+}
+
+// The subset of MediaDeviceInfo the picker needs (pure for tests).
+export interface VideoInputInfo {
+  kind: string;
+  label: string;
+  deviceId: string;
+}
+
+// The first real (non-Capturia) camera, in the browser's own preference
+// order; null when the virtual camera is the only one.
+export function pickPhysicalVideoInput(devices: VideoInputInfo[]): VideoInputInfo | null {
+  return (
+    devices.find((d) => d.kind === "videoinput" && !isVirtualSelfCapture(d.label)) ?? null
+  );
+}
+
+// The webcam idle machine: whether the offscreen page should be holding its
+// physical-webcam capture, driven by the extension's consumer count.
+export interface WebcamIdleState {
+  // Consecutive whole seconds with zero consumers.
+  idleSeconds: number;
+  // The page has been told to release the webcam (LED off).
+  paused: boolean;
+}
+
+export const WEBCAM_IDLE_INITIAL: WebcamIdleState = { idleSeconds: 0, paused: false };
+
+// One 1Hz step of the webcam idle machine. `consumers` is the extension's
+// source-client count (the addon's sinkConsumers()): 0 means no call app is
+// consuming the virtual camera right now; NEGATIVE means unknown (the enabled
+// extension predates the 'ccon' property, the read failed, or the sink is not
+// connected). Unknown fails SAFE to "assume watched": a webcam that never
+// idles is merely the old behavior, while one that wrongly idles would blank
+// the presenter out of a live call. Any non-zero reading also RESUMES a
+// paused capture immediately, which is the fast-poll resume path.
+export function reduceWebcamIdleSecond(
+  prev: WebcamIdleState,
+  consumers: number
+): WebcamIdleState {
+  if (consumers !== 0) return WEBCAM_IDLE_INITIAL;
+  const idleSeconds = prev.idleSeconds + 1;
+  return {
+    idleSeconds,
+    paused: prev.paused || idleSeconds >= WEBCAM_IDLE_AFTER_SECONDS,
+  };
+}
+
+// The statement main injects (webContents.executeJavaScript) to drive a
+// studio page's webcam capture: sets the sticky flag, then dispatches the
+// control event for pages that are already mounted. Ends in `void 0` so the
+// injection resolves to undefined (nothing structured-clones back).
+export function webcamControlScript(paused: boolean): string {
+  const flag = paused ? "true" : "false";
+  return (
+    `window.${WEBCAM_PAUSED_FLAG} = ${flag};` +
+    `window.dispatchEvent(new CustomEvent(${JSON.stringify(WEBCAM_CONTROL_EVENT)}, ` +
+    `{ detail: { paused: ${flag} } }));` +
+    `void 0;`
+  );
 }

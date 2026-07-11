@@ -112,7 +112,11 @@ const ALL_STEPS: OnboardingStep[] = [
     title: "Use it in a call",
     body:
       "In Zoom or Meet, pick “Capturia” as your camera, or share this " +
-      "window, to broadcast the stage.",
+      "window, to broadcast the stage. Closing this window keeps Capturia " +
+      "running in the menu bar so the camera stays live; quit it fully from " +
+      "the menu bar icon. And if your own Zoom preview shows text backwards, " +
+      "that is only your self-view: the audience sees it correctly. Uncheck " +
+      "“Mirror my video” in Zoom’s Video settings to fix your side too.",
     cta: "Finish",
     isSatisfied: () => false,
   },

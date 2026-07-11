@@ -102,6 +102,12 @@ or human judgment; run them before a release-worthy merge.
 4. Quit the app. The splash returns (clean sink disconnect, no frozen last
    frame), and a relaunch resumes feeding without a reboot or extension
    restart.
+5. Privacy idle (issue #38): close the Photo Booth/Zoom consumer and hide the
+   Capturia window to the tray. Within ~15s the Mac's green camera LED goes
+   dark (the terminal logs "releasing the webcam capture"). Re-select
+   Capturia in Photo Booth: the feed shows the "Capturia standing by" card,
+   then live video within ~2s, and the LED lights again. Tray > Camera: Off
+   with the window hidden must also leave the LED dark.
 
 ## Desktop static bundle + loopback runtime (M8)
 

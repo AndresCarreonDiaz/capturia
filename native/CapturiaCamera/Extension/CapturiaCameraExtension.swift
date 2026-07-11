@@ -8,6 +8,8 @@
 //     see native/capturia-frames and docs/m7a-spike.md).
 // While nothing feeds the sink, the source emits a generated splash frame so
 // selecting "Capturia" in a call app never shows a frozen or black feed.
+// The device also publishes a custom consumer-count property so the host app
+// can idle its physical-webcam capture while no call app is watching.
 
 import CoreMediaIO
 import CoreVideo
@@ -20,6 +22,16 @@ let capturiaWidth = 1920
 let capturiaHeight = 1080
 // Stable device identity: changing this creates a "new" camera in call apps.
 let capturiaDeviceUID = UUID(uuidString: "7A1C6E2D-9B4F-4C11-8A5E-CAB2C0FFEE01")!
+
+// Custom device property: how many source-stream clients (Zoom, Photo Booth,
+// ...) are consuming the camera right now, as a decimal string. The host app
+// polls it through the sink connection so it can release its physical-webcam
+// capture while nobody watches (issue #38: a lit camera LED with no visible
+// app reads as spyware) and reacquire the moment a call app attaches.
+// Custom CMIO extension properties must use the "4cc_<fourcc>_glob_0000"
+// rawValue form; DAL clients read this one as selector 'ccon' with global
+// scope on the main element (native/capturia-frames sinkConsumers()).
+let capturiaConsumerCountProperty = CMIOExtensionProperty(rawValue: "4cc_ccon_glob_0000")
 
 // MARK: - Provider
 
@@ -78,6 +90,10 @@ final class CapturiaDeviceSource: NSObject, CMIOExtensionDeviceSource {
   // generator stands down.
   private var sinkActive = false
   private var splashTick: UInt64 = 0
+  // Source-stream clients currently consuming (the framework coalesces
+  // start/stop around the first/last client, so in practice this is 0 or 1;
+  // counting keeps it correct either way). Guarded by stateQueue.
+  private var sourceClientCount = 0
 
   init(localizedName: String) {
     super.init()
@@ -142,7 +158,7 @@ final class CapturiaDeviceSource: NSObject, CMIOExtensionDeviceSource {
   }
 
   var availableProperties: Set<CMIOExtensionProperty> {
-    [.deviceTransportType, .deviceModel]
+    [.deviceTransportType, .deviceModel, capturiaConsumerCountProperty]
   }
 
   func deviceProperties(
@@ -155,15 +171,36 @@ final class CapturiaDeviceSource: NSObject, CMIOExtensionDeviceSource {
     if properties.contains(.deviceModel) {
       deviceProperties.model = "Capturia Virtual Camera"
     }
+    if properties.contains(capturiaConsumerCountProperty) {
+      let count = stateQueue.sync { sourceClientCount }
+      deviceProperties.setPropertyState(
+        consumerCountState(count),
+        forProperty: capturiaConsumerCountProperty
+      )
+    }
     return deviceProperties
   }
 
   func setDeviceProperties(_ deviceProperties: CMIOExtensionDeviceProperties) throws {}
 
+  private func consumerCountState(_ count: Int) -> CMIOExtensionPropertyState<AnyObject> {
+    CMIOExtensionPropertyState(value: String(count) as NSString)
+  }
+
+  // Notify property listeners and any client-side caches on every consumer
+  // transition; the getter above still serves polls. Call on stateQueue.
+  private func publishConsumerCount() {
+    device.notifyPropertiesChanged([
+      capturiaConsumerCountProperty: consumerCountState(sourceClientCount)
+    ])
+  }
+
   // MARK: source-stream lifecycle (called by CapturiaSourceStreamSource)
 
   func startStreaming() {
     stateQueue.async { [self] in
+      sourceClientCount += 1
+      publishConsumerCount()
       guard splashTimer == nil else { return }
       let timer = DispatchSource.makeTimerSource(queue: stateQueue)
       timer.schedule(
@@ -181,6 +218,8 @@ final class CapturiaDeviceSource: NSObject, CMIOExtensionDeviceSource {
 
   func stopStreaming() {
     stateQueue.async { [self] in
+      sourceClientCount = max(0, sourceClientCount - 1)
+      publishConsumerCount()
       splashTimer?.cancel()
       splashTimer = nil
     }

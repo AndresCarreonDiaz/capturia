@@ -6,12 +6,22 @@ import {
   MAX_CRASHES_PER_WINDOW,
   SINK_CONNECT_DELAYS_MS,
   SINK_STALL_SECONDS,
+  WEBCAM_CONTROL_EVENT,
+  WEBCAM_IDLE_AFTER_SECONDS,
+  WEBCAM_IDLE_INITIAL,
+  WEBCAM_PAUSED_FLAG,
+  WEBCAM_RESUME_POLL_MS,
   cameraToggleAction,
   findCameraDevice,
+  isVirtualSelfCapture,
+  pickPhysicalVideoInput,
   programOutputUrl,
+  reduceWebcamIdleSecond,
   shouldRecreateAfterCrash,
   sinkStalledSecond,
+  webcamControlScript,
   type CameraDevice,
+  type WebcamIdleState,
 } from "./camera-feed";
 
 const device = (over: Partial<CameraDevice> = {}): CameraDevice => ({
@@ -149,5 +159,136 @@ describe("health thresholds", () => {
     expect(FROZEN_AFTER_SECONDS).toBeLessThanOrEqual(10);
     expect(SINK_STALL_SECONDS).toBeGreaterThanOrEqual(2);
     expect(SINK_STALL_SECONDS).toBeLessThanOrEqual(10);
+  });
+});
+
+describe("physical camera selection", () => {
+  const input = (label: string, kind = "videoinput") => ({
+    kind,
+    label,
+    deviceId: `id-${label}`,
+  });
+
+  it("flags a track that captured the Capturia virtual camera", () => {
+    expect(isVirtualSelfCapture("Capturia")).toBe(true);
+    expect(isVirtualSelfCapture("FaceTime HD Camera")).toBe(false);
+  });
+
+  it("skips the virtual camera even when the browser prefers it", () => {
+    // The feedback-loop case found live: Capturia enumerates as the default
+    // video device, so a deviceId-less capture would feed the camera its own
+    // output and register the page as a permanent consumer.
+    const picked = pickPhysicalVideoInput([
+      input("Capturia"),
+      input("FaceTime HD Camera"),
+      input("Logitech BRIO"),
+    ]);
+    expect(picked?.label).toBe("FaceTime HD Camera");
+  });
+
+  it("ignores non-video devices", () => {
+    const picked = pickPhysicalVideoInput([
+      input("MacBook Pro Microphone", "audioinput"),
+      input("FaceTime HD Camera"),
+    ]);
+    expect(picked?.label).toBe("FaceTime HD Camera");
+  });
+
+  it("returns null when the virtual camera is the only camera", () => {
+    expect(pickPhysicalVideoInput([input("Capturia")])).toBeNull();
+    expect(pickPhysicalVideoInput([])).toBeNull();
+  });
+});
+
+// Run the 1Hz reducer n times against a constant consumer reading.
+const tick = (state: WebcamIdleState, consumers: number, n = 1): WebcamIdleState => {
+  for (let i = 0; i < n; i++) state = reduceWebcamIdleSecond(state, consumers);
+  return state;
+};
+
+describe("reduceWebcamIdleSecond", () => {
+  it("stays live while a call app consumes the camera", () => {
+    expect(tick(WEBCAM_IDLE_INITIAL, 1, 60)).toEqual(WEBCAM_IDLE_INITIAL);
+  });
+
+  it("pauses the webcam after WEBCAM_IDLE_AFTER_SECONDS without a consumer", () => {
+    const atThreshold = tick(WEBCAM_IDLE_INITIAL, 0, WEBCAM_IDLE_AFTER_SECONDS);
+    expect(atThreshold.paused).toBe(true);
+  });
+
+  it("does not pause one second early", () => {
+    const justBefore = tick(WEBCAM_IDLE_INITIAL, 0, WEBCAM_IDLE_AFTER_SECONDS - 1);
+    expect(justBefore.paused).toBe(false);
+  });
+
+  it("resets the countdown when a consumer returns mid-count", () => {
+    const counting = tick(WEBCAM_IDLE_INITIAL, 0, WEBCAM_IDLE_AFTER_SECONDS - 2);
+    expect(tick(counting, 1)).toEqual(WEBCAM_IDLE_INITIAL);
+  });
+
+  it("resumes immediately when a consumer attaches while paused", () => {
+    // This is the fast-poll resume path: one non-zero reading unpauses.
+    const paused = tick(WEBCAM_IDLE_INITIAL, 0, WEBCAM_IDLE_AFTER_SECONDS + 30);
+    expect(paused.paused).toBe(true);
+    expect(tick(paused, 2)).toEqual(WEBCAM_IDLE_INITIAL);
+  });
+
+  it("stays paused while nobody consumes", () => {
+    const paused = tick(WEBCAM_IDLE_INITIAL, 0, WEBCAM_IDLE_AFTER_SECONDS);
+    expect(tick(paused, 0, 300).paused).toBe(true);
+  });
+
+  it("fails safe on an unknown consumer count (old extension, read failure)", () => {
+    // A webcam that never idles is the pre-fix behavior; one that wrongly
+    // idles would blank the presenter out of a live call.
+    expect(tick(WEBCAM_IDLE_INITIAL, -1, 60)).toEqual(WEBCAM_IDLE_INITIAL);
+    const paused = tick(WEBCAM_IDLE_INITIAL, 0, WEBCAM_IDLE_AFTER_SECONDS);
+    expect(tick(paused, -1).paused).toBe(false);
+  });
+
+  it("keeps the idle window long enough to ride out a camera re-pick", () => {
+    expect(WEBCAM_IDLE_AFTER_SECONDS).toBeGreaterThanOrEqual(5);
+    expect(WEBCAM_IDLE_AFTER_SECONDS).toBeLessThanOrEqual(30);
+    // The resume poll must land a consumer well inside the 2s live target.
+    expect(WEBCAM_RESUME_POLL_MS).toBeLessThanOrEqual(1000);
+  });
+});
+
+describe("webcamControlScript", () => {
+  it("sets the sticky flag and dispatches the control event", () => {
+    const script = webcamControlScript(true);
+    expect(script).toContain(`window.${WEBCAM_PAUSED_FLAG} = true`);
+    expect(script).toContain(JSON.stringify(WEBCAM_CONTROL_EVENT));
+    expect(script).toContain("paused: true");
+  });
+
+  it("drives both directions", () => {
+    const script = webcamControlScript(false);
+    expect(script).toContain(`window.${WEBCAM_PAUSED_FLAG} = false`);
+    expect(script).toContain("paused: false");
+  });
+
+  it("evaluates cleanly and reaches a page-world listener", () => {
+    // Simulate the executeJavaScript environment: a window global with
+    // addEventListener/dispatchEvent and the DOM CustomEvent constructor.
+    const seen: Array<{ paused?: boolean }> = [];
+    const listeners: Array<(e: { detail?: { paused?: boolean } }) => void> = [];
+    const fakeWindow: Record<string, unknown> = {
+      dispatchEvent: (e: { detail?: { paused?: boolean } }) => {
+        listeners.forEach((fn) => fn(e));
+        return true;
+      },
+    };
+    listeners.push((e) => seen.push(e.detail ?? {}));
+    class FakeCustomEvent {
+      detail?: { paused?: boolean };
+      constructor(_type: string, init?: { detail?: { paused?: boolean } }) {
+        this.detail = init?.detail;
+      }
+    }
+    const run = new Function("window", "CustomEvent", webcamControlScript(true));
+    expect(run(fakeWindow, FakeCustomEvent)).toBeUndefined();
+    expect(fakeWindow[WEBCAM_PAUSED_FLAG]).toBe(true);
+    expect(seen).toEqual([{ paused: true }]);
   });
 });
