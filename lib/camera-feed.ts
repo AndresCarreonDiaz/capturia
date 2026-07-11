@@ -63,6 +63,15 @@ export const WEBCAM_RESUME_POLL_MS = 250;
 export const WEBCAM_CONTROL_EVENT = "capturia:webcam";
 export const WEBCAM_PAUSED_FLAG = "__capturiaWebcamPaused";
 
+// Webcam acquisition retry: one failed getUserMedia on resume (a Continuity
+// iPhone not reattached yet, the camera briefly held by another process)
+// must never pin a terminal error card into a live call. The page retries
+// every WEBCAM_ACQUIRE_RETRY_MS up to WEBCAM_ACQUIRE_MAX_ATTEMPTS (~30s of
+// trying), then holds the error card until the next control transition (in
+// practice: the next consumer attach) starts a fresh series.
+export const WEBCAM_ACQUIRE_RETRY_MS = 2000;
+export const WEBCAM_ACQUIRE_MAX_ATTEMPTS = 15;
+
 // One CMIO device as reported by the native addon's listDevices().
 export interface CameraDevice {
   id: number;
@@ -161,6 +170,32 @@ export function isVirtualSelfCapture(trackLabel: string): boolean {
   return trackLabel.includes(CAMERA_DEVICE_NAME);
 }
 
+// Label patterns of virtual cameras other apps publish. Excluding only
+// Capturia would let OBS/Snap/mmhmm win the enumeration order and put a
+// second synthetic feed on the published camera. Heuristic by nature; the
+// real fix is a user-facing camera selector (deferred, tracked on the
+// hardening list in issue #12).
+const VIRTUAL_CAMERA_LABEL_PATTERNS = [
+  CAMERA_DEVICE_NAME.toLowerCase(),
+  "virtual", // "OBS Virtual Camera", "Snap Virtual...", e2eSoft-style names
+  "snap camera",
+  "manycam",
+  "mmhmm",
+  "camtwist",
+  "wirecast",
+  "xsplit",
+  "streamlabs",
+];
+
+export function isVirtualCameraLabel(label: string): boolean {
+  const lower = label.toLowerCase();
+  return VIRTUAL_CAMERA_LABEL_PATTERNS.some((pattern) => lower.includes(pattern));
+}
+
+// Labels that strongly suggest a real, user-facing camera; preferred over
+// unknown labels so an exotic capture device never beats the built-in one.
+const PHYSICAL_CAMERA_LABEL_HINTS = ["facetime", "built-in", "integrated", "iphone", "ipad"];
+
 // The subset of MediaDeviceInfo the picker needs (pure for tests).
 export interface VideoInputInfo {
   kind: string;
@@ -168,11 +203,23 @@ export interface VideoInputInfo {
   deviceId: string;
 }
 
-// The first real (non-Capturia) camera, in the browser's own preference
-// order; null when the virtual camera is the only one.
+// The camera the studio should capture: a LABELED video input that is not a
+// known virtual camera, preferring built-in/FaceTime/Continuity labels over
+// unknown ones, browser order breaking ties. Unlabeled devices are excluded
+// on purpose: labels are only empty before a capture permission exists, and
+// an unlabeled device cannot be certified non-virtual (the caller falls back
+// to open-then-fix in that case). Returns null when no physical camera can
+// be identified.
 export function pickPhysicalVideoInput(devices: VideoInputInfo[]): VideoInputInfo | null {
+  const cameras = devices.filter(
+    (d) => d.kind === "videoinput" && d.label !== "" && !isVirtualCameraLabel(d.label)
+  );
   return (
-    devices.find((d) => d.kind === "videoinput" && !isVirtualSelfCapture(d.label)) ?? null
+    cameras.find((d) =>
+      PHYSICAL_CAMERA_LABEL_HINTS.some((hint) => d.label.toLowerCase().includes(hint))
+    ) ??
+    cameras[0] ??
+    null
   );
 }
 

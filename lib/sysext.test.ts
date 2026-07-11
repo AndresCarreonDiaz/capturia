@@ -7,6 +7,7 @@ import {
   reduceRequestEvent,
   sysextNeedsUpgrade,
   sysextUiStatus,
+  sysextVersionRelation,
   type SysextRequestState,
   type SysextSnapshot,
 } from "./sysext";
@@ -99,12 +100,24 @@ describe("formatExtensionVersion / sysextNeedsUpgrade", () => {
     expect(formatExtensionVersion("0.1.0", undefined)).toBeNull();
   });
 
-  it("wants an upgrade exactly when both versions are known and differ", () => {
+  it("wants an upgrade exactly when the embedded version is newer", () => {
     expect(
       sysextNeedsUpgrade("0.2.0/2", { enabled: true, enabledVersion: "0.1.0/1" })
     ).toBe(true);
     expect(
       sysextNeedsUpgrade("0.1.0/1", { enabled: true, enabledVersion: "0.1.0/1" })
+    ).toBe(false);
+  });
+
+  it("never downgrades: an OLDER embedded version must not fire", () => {
+    // The stale-build case: an old app relaunched after an upgrade (or a
+    // stale dist-signed bundle that slipped through) must not replace the
+    // machine's newer running extension.
+    expect(
+      sysextNeedsUpgrade("0.1.1/2", { enabled: true, enabledVersion: "0.1.2/3" })
+    ).toBe(false);
+    expect(
+      sysextNeedsUpgrade("0.1.0/1", { enabled: true, enabledVersion: "0.1.2/3" })
     ).toBe(false);
   });
 
@@ -115,6 +128,34 @@ describe("formatExtensionVersion / sysextNeedsUpgrade", () => {
     expect(
       sysextNeedsUpgrade("0.2.0/2", { enabled: false, enabledVersion: null })
     ).toBe(false);
+  });
+});
+
+describe("sysextVersionRelation", () => {
+  it("orders by the bundle (build) number first", () => {
+    expect(sysextVersionRelation("0.1.2/3", "0.1.1/2")).toBe("newer");
+    expect(sysextVersionRelation("0.1.1/2", "0.1.2/3")).toBe("older");
+    // A short-version bump without a build bump still resolves by build.
+    expect(sysextVersionRelation("0.9.0/1", "0.1.0/2")).toBe("older");
+  });
+
+  it("breaks a build-number tie on the dotted short version", () => {
+    expect(sysextVersionRelation("0.2.0/1", "0.1.9/1")).toBe("newer");
+    expect(sysextVersionRelation("0.1.0/1", "0.1.1/1")).toBe("older");
+  });
+
+  it("reads identical pairs as same", () => {
+    expect(sysextVersionRelation("0.1.2/3", "0.1.2/3")).toBe("same");
+  });
+
+  it("refuses to guess a direction it cannot establish", () => {
+    expect(sysextVersionRelation(null, "0.1.0/1")).toBe("unknown");
+    expect(sysextVersionRelation("0.1.0/1", null)).toBe("unknown");
+    expect(sysextVersionRelation("garbage", "0.1.0/1")).toBe("unknown");
+    expect(sysextVersionRelation("0.1.0", "0.1.0/1")).toBe("unknown");
+    // Different strings whose numbers agree ("0.1/1" vs "0.1.0/1"): no
+    // provable direction, so no replacement may ride on it.
+    expect(sysextVersionRelation("0.1/1", "0.1.0/1")).toBe("unknown");
   });
 });
 

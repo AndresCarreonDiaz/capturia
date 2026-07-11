@@ -6,6 +6,8 @@ import {
   MAX_CRASHES_PER_WINDOW,
   SINK_CONNECT_DELAYS_MS,
   SINK_STALL_SECONDS,
+  WEBCAM_ACQUIRE_MAX_ATTEMPTS,
+  WEBCAM_ACQUIRE_RETRY_MS,
   WEBCAM_CONTROL_EVENT,
   WEBCAM_IDLE_AFTER_SECONDS,
   WEBCAM_IDLE_INITIAL,
@@ -13,6 +15,7 @@ import {
   WEBCAM_RESUME_POLL_MS,
   cameraToggleAction,
   findCameraDevice,
+  isVirtualCameraLabel,
   isVirtualSelfCapture,
   pickPhysicalVideoInput,
   programOutputUrl,
@@ -186,6 +189,41 @@ describe("physical camera selection", () => {
     expect(picked?.label).toBe("FaceTime HD Camera");
   });
 
+  it("denies other virtual cameras, not just Capturia", () => {
+    expect(isVirtualCameraLabel("OBS Virtual Camera")).toBe(true);
+    expect(isVirtualCameraLabel("Snap Camera")).toBe(true);
+    expect(isVirtualCameraLabel("mmhmm Camera")).toBe(true);
+    expect(isVirtualCameraLabel("FaceTime HD Camera")).toBe(false);
+    const picked = pickPhysicalVideoInput([
+      input("OBS Virtual Camera"),
+      input("Snap Camera"),
+      input("Logitech BRIO"),
+    ]);
+    expect(picked?.label).toBe("Logitech BRIO");
+  });
+
+  it("prefers built-in/FaceTime/Continuity labels over unknown ones", () => {
+    // An exotic capture device that wins enumeration order must not beat
+    // the camera the user actually points at their face.
+    const picked = pickPhysicalVideoInput([
+      input("Elgato Cam Link 4K"),
+      input("FaceTime HD Camera"),
+    ]);
+    expect(picked?.label).toBe("FaceTime HD Camera");
+    const continuity = pickPhysicalVideoInput([
+      input("Weird Capture Thing"),
+      input("Andres iPhone Camera"),
+    ]);
+    expect(continuity?.label).toBe("Andres iPhone Camera");
+  });
+
+  it("never picks an unlabeled device", () => {
+    // Labels are empty before a capture permission exists, and an unlabeled
+    // device cannot be certified non-virtual; callers fall back to the
+    // open-then-fix path instead.
+    expect(pickPhysicalVideoInput([input("")])).toBeNull();
+  });
+
   it("ignores non-video devices", () => {
     const picked = pickPhysicalVideoInput([
       input("MacBook Pro Microphone", "audioinput"),
@@ -252,6 +290,16 @@ describe("reduceWebcamIdleSecond", () => {
     // The resume poll must land a consumer well inside the 2s live target.
     expect(WEBCAM_RESUME_POLL_MS).toBeLessThanOrEqual(1000);
   });
+
+  it("bounds the acquisition retry to roughly half a minute of trying", () => {
+    // Retries exist so one failed getUserMedia (a Continuity iPhone not
+    // reattached yet) never pins a terminal error card into a live call;
+    // the bound exists so an unplugged camera does not poll forever.
+    const totalMs = WEBCAM_ACQUIRE_RETRY_MS * (WEBCAM_ACQUIRE_MAX_ATTEMPTS - 1);
+    expect(WEBCAM_ACQUIRE_RETRY_MS).toBeGreaterThanOrEqual(1000);
+    expect(totalMs).toBeGreaterThanOrEqual(10_000);
+    expect(totalMs).toBeLessThanOrEqual(60_000);
+  });
 });
 
 describe("webcamControlScript", () => {
@@ -260,6 +308,19 @@ describe("webcamControlScript", () => {
     expect(script).toContain(`window.${WEBCAM_PAUSED_FLAG} = true`);
     expect(script).toContain(JSON.stringify(WEBCAM_CONTROL_EVENT));
     expect(script).toContain("paused: true");
+  });
+
+  it("writes the flag BEFORE dispatching the event", () => {
+    // WebcamFeed's mount-time reconciliation depends on this order: an
+    // injection landing between the initial render's flag read and the
+    // listener attaching loses the EVENT, and re-reading the flag after
+    // addEventListener only closes that race if the flag was already
+    // written when the event fired.
+    for (const paused of [true, false]) {
+      const script = webcamControlScript(paused);
+      expect(script.indexOf(WEBCAM_PAUSED_FLAG)).toBeGreaterThanOrEqual(0);
+      expect(script.indexOf(WEBCAM_PAUSED_FLAG)).toBeLessThan(script.indexOf("dispatchEvent"));
+    }
   });
 
   it("drives both directions", () => {

@@ -43,6 +43,16 @@ import {
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
+// "shortVersion/bundleVersion" from an extension Info.plist, the same shape
+// systemextensionsctl prints and lib/sysext.ts compares.
+function extensionVersionPair(plistPath) {
+  const read = (key) =>
+    execFileSync("plutil", ["-extract", key, "raw", "-o", "-", plistPath], {
+      encoding: "utf8",
+    }).trim();
+  return `${read("CFBundleShortVersionString")}/${read("CFBundleVersion")}`;
+}
+
 function embedCameraExtension(resourcesSiblingContents) {
   const distSigned = join(
     root,
@@ -60,8 +70,33 @@ function embedCameraExtension(resourcesSiblingContents) {
   // electron-builder invocations); throws on any broken contract.
   const distSign = validateExtDistSignEnv(process.env, root);
 
-  if (!existsSync(distSigned)) {
+  // Version provenance: the repo's Extension/Info.plist is the source of
+  // truth, and a pre-existing dist-signed bundle is otherwise reused as-is,
+  // so a STALE build would ship an old protocol under a new app (and the
+  // launch upgrade check would then sit on, or even offer, the wrong
+  // version). A mismatch rebuilds when the team id allows it and fails
+  // loudly when it does not; silence is the one forbidden outcome.
+  const expectedVersion = extensionVersionPair(
+    join(root, "native", "CapturiaCamera", "Extension", "Info.plist")
+  );
+  const stagedVersion = () =>
+    existsSync(distSigned)
+      ? extensionVersionPair(join(distSigned, "Contents", "Info.plist"))
+      : null;
+  const staleVersion = stagedVersion() !== null && stagedVersion() !== expectedVersion
+    ? stagedVersion()
+    : null;
+
+  if (!existsSync(distSigned) || staleVersion) {
     if (!teamId) {
+      if (staleVersion) {
+        throw new Error(
+          `afterPack: the dist-signed camera extension is ${staleVersion} but this checkout ` +
+            `builds ${expectedVersion}; embedding it would ship a stale extension. Rebuild it ` +
+            "(CAPTURIA_TEAM_ID=... bash native/CapturiaCamera/build-signed.sh) or delete " +
+            "native/CapturiaCamera/dist-signed."
+        );
+      }
       if (distSign) {
         throw new Error(
           "afterPack: CAPTURIA_EXT_PROVISIONING_PROFILE is set but there is no extension to " +
@@ -75,10 +110,21 @@ function embedCameraExtension(resourcesSiblingContents) {
       );
       return;
     }
-    console.log("  • afterPack: building the camera extension (build-signed.sh)");
+    console.log(
+      staleVersion
+        ? `  • afterPack: dist-signed extension is stale (${staleVersion} != ${expectedVersion}); rebuilding (build-signed.sh)`
+        : "  • afterPack: building the camera extension (build-signed.sh)"
+    );
     execFileSync("bash", [join(root, "native", "CapturiaCamera", "build-signed.sh")], {
       stdio: "inherit",
     });
+    const rebuilt = stagedVersion();
+    if (rebuilt !== expectedVersion) {
+      throw new Error(
+        `afterPack: rebuilt extension reports ${rebuilt}, expected ${expectedVersion}; ` +
+          "Extension/Info.plist and the build output disagree."
+      );
+    }
   }
 
   const destDir = join(resourcesSiblingContents, "Library", "SystemExtensions");

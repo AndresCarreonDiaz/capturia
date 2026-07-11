@@ -434,6 +434,14 @@ function createCameraFeed({ studioUrl, isAllowedNavigation, onStateChange, log =
         applyWebcamControl();
         syncWebcamResumePoll();
         notify();
+      } else if (webcamIdle.paused) {
+        // Re-assert a standing pause once a second: the transition-time
+        // injection is fire-and-forget into a page whose React listener may
+        // not have mounted yet. The page reconciles from the sticky flag on
+        // mount, so this is belt and braces for the dangerous direction (a
+        // lit LED while the machine believes the webcam is idle), and it is
+        // idempotent on a page already paused.
+        applyWebcamControl();
       }
 
       // Frozen: the pump is healthy but the page stopped painting, so the

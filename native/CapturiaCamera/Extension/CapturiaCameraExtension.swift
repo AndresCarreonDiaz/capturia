@@ -220,6 +220,12 @@ final class CapturiaDeviceSource: NSObject, CMIOExtensionDeviceSource {
     stateQueue.async { [self] in
       sourceClientCount = max(0, sourceClientCount - 1)
       publishConsumerCount()
+      // Only the LAST consumer detaching stands the splash down: if the
+      // framework ever delivers per-client stop calls, an unconditional
+      // cancel here would freeze the frames of every remaining viewer the
+      // moment ANY one consumer quits (the counter-gated pattern OBS's
+      // mac-camera-extension uses).
+      guard sourceClientCount == 0 else { return }
       splashTimer?.cancel()
       splashTimer = nil
     }

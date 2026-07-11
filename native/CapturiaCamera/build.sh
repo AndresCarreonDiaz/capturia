@@ -33,8 +33,8 @@ GROUP="${PREFIX}.com.capturia.camera"
 MACH_SERVICE="${GROUP}.frames"
 # Keep in lockstep with Extension/Info.plist (the Xcode build's source of
 # truth); the version pair drives the packaged app's launch upgrade check.
-VERSION="0.1.1"
-BUILD="2"
+VERSION="0.1.2"
+BUILD="3"
 MIN_OS="13.0"
 SDK="$(xcrun --sdk macosx --show-sdk-path)"
 

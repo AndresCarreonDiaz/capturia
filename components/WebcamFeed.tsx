@@ -1,6 +1,8 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
+  WEBCAM_ACQUIRE_MAX_ATTEMPTS,
+  WEBCAM_ACQUIRE_RETRY_MS,
   WEBCAM_CONTROL_EVENT,
   WEBCAM_PAUSED_FLAG,
   isVirtualSelfCapture,
@@ -18,13 +20,27 @@ import {
 // unaffected. The card's pulse is deliberate: it keeps the offscreen
 // renderer painting a live (if quiet) frame instead of a stale one.
 
-// Read the sticky flag main injects alongside the control event; it covers
-// pauses applied before this component mounted (page reloads while hidden).
-function initiallyPaused(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    (window as unknown as Record<string, unknown>)[WEBCAM_PAUSED_FLAG] === true
-  );
+// The desired-pause state is an external store: the sticky window flag holds
+// the value (set by main's injected script BEFORE it dispatches the change
+// event; asserted in lib/camera-feed.test.ts), and the control event is the
+// change notification. Reading it through useSyncExternalStore makes the
+// injection race unlosable by construction: React re-reads the snapshot
+// after subscribing, so a control injection landing between the first
+// render and the subscription can change the flag but never strand the
+// component on a stale value (main also re-asserts a standing pause once a
+// second; electron/camera-feed.js).
+function readPausedFlag(): boolean {
+  if (typeof window === "undefined") return false;
+  return (window as unknown as Record<string, unknown>)[WEBCAM_PAUSED_FLAG] === true;
+}
+
+function subscribeWebcamControl(onStoreChange: () => void): () => void {
+  window.addEventListener(WEBCAM_CONTROL_EVENT, onStoreChange);
+  return () => window.removeEventListener(WEBCAM_CONTROL_EVENT, onStoreChange);
+}
+
+function serverPausedSnapshot(): boolean {
+  return false;
 }
 
 const VIDEO_SIZE = { width: { ideal: 1920 }, height: { ideal: 1080 } };
@@ -33,9 +49,28 @@ const VIDEO_SIZE = { width: { ideal: 1920 }, height: { ideal: 1080 } };
 // extension installed, "Capturia" can be the browser's default video device,
 // and capturing it would feed the camera its own output while registering
 // this page as a permanent consumer (lib/camera-feed.ts has the full story).
-// The default acquisition happens first so device labels are populated for
-// the re-pick (labels are empty before a capture permission is granted).
+//
+// Order matters: the pick happens BEFORE anything is opened, because even a
+// brief deviceId-less open of the virtual camera registers this page as a
+// consumer and blips the idle machine awake for a full cycle. On the desktop
+// app labels are already populated (media permission is granted to the
+// studio origin); only when enumeration cannot identify a physical camera
+// (web before the first permission grant leaves labels empty) does the
+// open-then-fix fallback run.
 async function acquirePhysicalWebcam(): Promise<MediaStream> {
+  const known = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+  const preferred = pickPhysicalVideoInput(known);
+  if (preferred) {
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        video: { ...VIDEO_SIZE, deviceId: { exact: preferred.deviceId } },
+        audio: false,
+      });
+    } catch {
+      // The picked device vanished between enumeration and open (unplugged,
+      // a Continuity camera dropping off); fall through to the default path.
+    }
+  }
   const fallback = await navigator.mediaDevices.getUserMedia({
     video: VIDEO_SIZE,
     audio: false,
@@ -57,13 +92,22 @@ async function acquirePhysicalWebcam(): Promise<MediaStream> {
 
 export default function WebcamFeed() {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [paused, setPaused] = useState<boolean>(initiallyPaused);
+  const paused = useSyncExternalStore(
+    subscribeWebcamControl,
+    readPausedFlag,
+    serverPausedSnapshot
+  );
+  // Bumped on every resume control event: after the retry series below is
+  // exhausted, the next consumer attach (a pause/resume transition from
+  // main) starts a fresh series instead of leaving a terminal error card.
+  const [acquireRequest, setAcquireRequest] = useState(0);
 
   useEffect(() => {
     const onControl = (event: Event) => {
       const detail = (event as CustomEvent<{ paused?: unknown }>).detail;
-      if (detail && typeof detail.paused === "boolean") setPaused(detail.paused);
+      if (detail && detail.paused === false) setAcquireRequest((n) => n + 1);
     };
     window.addEventListener(WEBCAM_CONTROL_EVENT, onControl);
     return () => window.removeEventListener(WEBCAM_CONTROL_EVENT, onControl);
@@ -72,30 +116,50 @@ export default function WebcamFeed() {
   useEffect(() => {
     if (paused) return; // hold nothing while paused: that IS the feature
     let cancelled = false;
-    let stream: MediaStream | undefined;
-    acquirePhysicalWebcam()
-      .then((s) => {
-        // A pause can land while getUserMedia is in flight; keeping that
-        // stream would leave the LED lit with nothing rendering it.
-        if (cancelled) {
-          s.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        stream = s;
-        setError(null);
-        if (videoRef.current) {
-          videoRef.current.srcObject = s;
-        }
-      })
-      .catch((e) => {
-        if (!cancelled) setError(e.message);
-      });
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const attempt = (attemptsMade: number) => {
+      acquirePhysicalWebcam()
+        .then((s) => {
+          // A pause can land while getUserMedia is in flight; keeping that
+          // stream would leave the LED lit with nothing rendering it.
+          if (cancelled) {
+            s.getTracks().forEach((t) => t.stop());
+            return;
+          }
+          streamRef.current = s;
+          setError(null);
+        })
+        .catch((e) => {
+          if (cancelled) return;
+          setError(e.message);
+          // Bounded retry (never terminal mid-call): the camera often comes
+          // back on its own (a Continuity iPhone reattaching, another app
+          // releasing the device).
+          if (attemptsMade + 1 < WEBCAM_ACQUIRE_MAX_ATTEMPTS) {
+            retryTimer = setTimeout(() => attempt(attemptsMade + 1), WEBCAM_ACQUIRE_RETRY_MS);
+          }
+        });
+    };
+    attempt(0);
 
     return () => {
       cancelled = true;
-      stream?.getTracks().forEach((t) => t.stop());
+      if (retryTimer) clearTimeout(retryTimer);
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
     };
-  }, [paused]);
+  }, [paused, acquireRequest]);
+
+  // Attach the live stream whenever the <video> is in the tree. Runs on
+  // every render on purpose: a retry can succeed while the error card is up
+  // (no video element mounted), and the element must pick the stream up as
+  // soon as it returns. The assignment is guarded, so this is idempotent.
+  useEffect(() => {
+    if (videoRef.current && videoRef.current.srcObject !== streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+    }
+  });
 
   if (paused) {
     return (

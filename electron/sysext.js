@@ -36,6 +36,7 @@ const {
   reduceRequestEvent,
   sysextNeedsUpgrade,
   sysextUiStatus,
+  sysextVersionRelation,
 } = require("./gen/sysext");
 
 // How often to re-poll systemextensionsctl while an install could still
@@ -101,10 +102,13 @@ function createSysext({ onStateChange, onInstalled, offerMove, log = console } =
   // capability probe; null until known. Drives the launch upgrade check.
   let embeddedVersion = null;
   // The app auto-requests a replacement at most once per run when the
-  // embedded version differs from the enabled one (the OBS launch pattern);
+  // embedded version is NEWER than the enabled one (the OBS launch pattern);
   // same versions stay a deliberate no-request (a request WOULD no-op
   // quietly, but firing one every launch is noise).
   let upgradeRequested = false;
+  // Warned once per run that this build embeds an OLDER extension than the
+  // enabled one; the auto-upgrade must never downgrade a machine.
+  let downgradeWarned = false;
   let pollTimer = null;
   let lastPushed = "";
 
@@ -168,17 +172,31 @@ function createSysext({ onStateChange, onInstalled, offerMove, log = console } =
   }
 
   // Launch-time upgrade check (the OBS pattern): a capable build whose
-  // embedded extension version differs from the enabled one auto-requests a
+  // embedded extension version is NEWER than the enabled one auto-requests a
   // replacement, once per run. Same-team replacement of an already-approved
   // extension does not re-prompt, and same versions never fire at all, so
   // this can run unconditionally after every list refresh and capability
-  // probe (whichever settles last triggers it).
+  // probe (whichever settles last triggers it). Direction matters: an OLDER
+  // embedded version (stale dist-signed build, an old app relaunched after
+  // an upgrade) warns instead of silently downgrading the machine.
   function maybeAutoUpgrade() {
     if (disposed || upgradeRequested || !supported || request.phase !== "idle") return;
-    if (!sysextNeedsUpgrade(embeddedVersion, list)) return;
+    if (!sysextNeedsUpgrade(embeddedVersion, list)) {
+      if (
+        !downgradeWarned &&
+        list.enabled &&
+        sysextVersionRelation(embeddedVersion, list.enabledVersion) === "older"
+      ) {
+        downgradeWarned = true;
+        log.warn(
+          `[sysext] embedded extension ${embeddedVersion} is OLDER than enabled ${list.enabledVersion}; not downgrading (is this a stale build?)`
+        );
+      }
+      return;
+    }
     upgradeRequested = true;
     log.log(
-      `[sysext] embedded extension ${embeddedVersion} differs from enabled ${list.enabledVersion}; requesting the upgrade`
+      `[sysext] embedded extension ${embeddedVersion} is newer than enabled ${list.enabledVersion}; requesting the upgrade`
     );
     install();
   }
