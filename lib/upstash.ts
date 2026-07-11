@@ -25,6 +25,38 @@ export function upstashFromEnv(env: Record<string, string | undefined> = process
 // { error } on failure; both non-2xx and error bodies throw.
 export type RedisRunner = (command: (string | number)[]) => Promise<unknown>;
 
+// Runs several commands in one HTTP round trip via Upstash's /pipeline
+// endpoint (same command-count billing, one network hop). Results come back
+// positionally; any per-command error throws, since the callers (the beacon
+// store) treat a partial write as a failure worth logging.
+export type RedisPipeline = (commands: (string | number)[][]) => Promise<unknown[]>;
+
+export function createRedisPipeline(cfg: UpstashConfig): RedisPipeline {
+  return async (commands) => {
+    const res = await fetch(`${cfg.url.replace(/\/+$/, "")}/pipeline`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${cfg.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(commands.map((c) => c.map(String))),
+      cache: "no-store",
+    });
+    const body = (await res.json().catch(() => null)) as
+      | { result?: unknown; error?: string }[]
+      | null;
+    if (!res.ok || !Array.isArray(body)) {
+      throw new Error(`upstash pipeline: HTTP ${res.status}`);
+    }
+    return body.map((entry) => {
+      if (entry && typeof entry.error === "string") {
+        throw new Error(`upstash: ${entry.error}`);
+      }
+      return entry?.result;
+    });
+  };
+}
+
 export function createRedisRunner(cfg: UpstashConfig): RedisRunner {
   return async (command) => {
     const res = await fetch(cfg.url, {

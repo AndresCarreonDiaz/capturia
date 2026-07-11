@@ -85,6 +85,13 @@ interface CapturiaBridge {
     install: () => Promise<SysextStateReport | null>;
     onState: (handler: (state: SysextStateReport) => void) => () => void;
   };
+  // Anonymous usage beacon toggle (electron/telemetry.js); optional for the
+  // same stale-preload reason. Only the boolean crosses the bridge: the
+  // installId and the sending live in main.
+  telemetry?: {
+    get: () => Promise<{ enabled: boolean } | null>;
+    set: (enabled: boolean) => Promise<{ enabled: boolean } | null>;
+  };
   // On-device streaming speech (macOS 26+ helper); optional for the same
   // stale-preload reason. Events: ready | downloading-model | interim |
   // final | error | done.

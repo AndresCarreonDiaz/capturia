@@ -117,6 +117,16 @@ contextBridge.exposeInMainWorld("capturia", {
       return () => ipcRenderer.off("sysext", listener);
     },
   },
+  // Anonymous usage beacon toggle (electron/telemetry.js): the renderer
+  // reads and flips the boolean; the installId and the sending stay in main.
+  telemetry: {
+    get() {
+      return ipcRenderer.invoke("telemetry:get");
+    },
+    set(enabled) {
+      return ipcRenderer.invoke("telemetry:set", Boolean(enabled));
+    },
+  },
   // On-device streaming speech (macOS 26+): start/stop the mic helper and
   // subscribe to its events (ready/interim/final/error/done).
   speech: {
