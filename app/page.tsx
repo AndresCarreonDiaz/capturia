@@ -4,6 +4,7 @@ import LiveDemo from "@/components/landing/LiveDemo";
 import SlotPreview, { type SlotCode } from "@/components/landing/SlotPreview";
 import DeckPrime from "@/components/landing/DeckPrime";
 import VotePreview from "@/components/landing/VotePreview";
+import DownloadLink from "@/components/landing/DownloadLink";
 import { CapturiaLogo, CapturiaMark } from "@/components/landing/Brand";
 import styles from "@/components/landing/relaunch.module.css";
 
@@ -171,14 +172,15 @@ function Hero() {
         </div>
         <p className="mt-4 font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)] reveal-up [animation-delay:300ms]">
           Free · open source · app release coming ·{" "}
-          <a
+          <DownloadLink
+            location="hero"
             href={RELEASES}
             target="_blank"
             rel="noopener noreferrer"
             className="text-[var(--studio-graphite)] hover:text-white transition-colors underline decoration-dotted underline-offset-4"
           >
             get notified
-          </a>
+          </DownloadLink>
         </p>
 
         {/* The live demo, framed as a Mac screen: menu bar on top */}
@@ -692,7 +694,8 @@ function Pricing() {
             <Feature accent="var(--phosphor)">Hosted audience voting for any crowd size</Feature>
             <Feature accent="var(--phosphor)">Premium features as they ship</Feature>
           </ul>
-          <a
+          <DownloadLink
+            location="pricing"
             href={RELEASES}
             target="_blank"
             rel="noopener noreferrer"
@@ -700,7 +703,7 @@ function Pricing() {
           >
             Get notified on GitHub
             <span aria-hidden>→</span>
-          </a>
+          </DownloadLink>
         </div>
       </div>
 
@@ -895,14 +898,15 @@ function FinalCta() {
         </div>
         <p className="mt-5 font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
           No email, no list ·{" "}
-          <a
+          <DownloadLink
+            location="final-cta"
             href={RELEASES}
             target="_blank"
             rel="noopener noreferrer"
             className="text-[var(--studio-graphite)] hover:text-white transition-colors underline decoration-dotted underline-offset-4"
           >
             watch releases
-          </a>{" "}
+          </DownloadLink>{" "}
           to get notified
         </p>
       </div>
@@ -954,9 +958,15 @@ function SiteFooter() {
           <a href={GITHUB} target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
             GitHub
           </a>
-          <a href={RELEASES} target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
+          <DownloadLink
+            location="footer"
+            href={RELEASES}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-white transition-colors"
+          >
             Releases
-          </a>
+          </DownloadLink>
         </nav>
       </div>
 

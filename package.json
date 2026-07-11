@@ -37,6 +37,7 @@
     "@copilotkit/react-core": "^1.57.1",
     "@copilotkit/react-ui": "^1.57.1",
     "@copilotkit/runtime": "^1.57.1",
+    "@vercel/analytics": "^2.0.1",
     "ai": "^6.0.177",
     "next": "16.2.6",
     "nodejs-whisper": "^0.3.0",

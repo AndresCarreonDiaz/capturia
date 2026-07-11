@@ -1,6 +1,15 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
+
+// Cookieless pageview tracking for the hosted web surfaces (landing, /studio
+// demo, /vote phone pages). The Electron static export must NOT mount it: the
+// desktop app is measured by the anonymous beacon instead (docs/telemetry.md)
+// and an analytics script is dead weight on file://. Same build-time switch
+// next.config.ts keys the export on; next.config also aliases the package to
+// a no-op stub in that build so no analytics code lands in the bundle at all.
+const isElectronBuild = process.env.CAPTURIA_ELECTRON_BUILD === "1";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -42,7 +51,10 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} ${instrumentSerif.variable} antialiased`}
     >
-      <body>{children}</body>
+      <body>
+        {children}
+        {!isElectronBuild && <Analytics />}
+      </body>
     </html>
   );
 }
