@@ -120,7 +120,8 @@ function TopNav() {
             <StarIcon />
             GitHub
           </a>
-          <a
+          <DownloadLink
+            location="nav"
             href={DOWNLOAD}
             target="_blank"
             rel="noopener noreferrer"
@@ -128,7 +129,7 @@ function TopNav() {
           >
             <DownloadIcon />
             Download
-          </a>
+          </DownloadLink>
         </div>
       </div>
     </header>
@@ -175,7 +176,8 @@ function Hero() {
 
         {/* CTAs */}
         <div className="mt-9 flex flex-col sm:flex-row items-center justify-center gap-3 reveal-up [animation-delay:240ms]">
-          <a
+          <DownloadLink
+            location="hero"
             href={DOWNLOAD}
             target="_blank"
             rel="noopener noreferrer"
@@ -183,7 +185,7 @@ function Hero() {
           >
             <DownloadIcon />
             Download for macOS
-          </a>
+          </DownloadLink>
           <Link
             href="/studio"
             className="ghost-btn inline-flex items-center gap-2.5 rounded-full px-7 py-3.5 text-[15px] font-medium w-full sm:w-auto justify-center"
@@ -256,11 +258,12 @@ function HumanCaption() {
       <div className="mx-auto max-w-4xl px-6 py-14 sm:py-20 text-center">
         <p className="display-serif text-[var(--studio-ink)] text-[clamp(1.7rem,4vw,3rem)] leading-[1.18]">
           Everything above is{" "}
-          <span className="italic text-[var(--phosphor)]">live</span>. No editing,
-          no cuts. You just talk.
+          <span className="italic text-[var(--phosphor)]">real</span>. The exact
+          overlays the engine renders, replayed on a loop. On a call, you just
+          talk.
         </p>
         <p className="mt-5 text-[var(--studio-graphite)] text-[15px] leading-relaxed max-w-xl mx-auto">
-          That is the browser demo, free at{" "}
+          Try it live in the browser demo, free at{" "}
           <Link href="/studio" className="cue-link">
             /studio
           </Link>
@@ -406,8 +409,9 @@ function DeckSection() {
             <p className="mt-3 text-[var(--studio-graphite)] text-[14.5px] leading-relaxed">
               Muted, or someone else has the floor?{" "}
               <kbd className={styles.kbd}>⌘⌥1</kbd> through{" "}
-              <kbd className={styles.kbd}>⌘⌥9</kbd> fires any primed card and{" "}
-              <kbd className={styles.kbd}>⌘⌥→</kbd> walks the rail in order,
+              <kbd className={styles.kbd}>⌘⌥9</kbd> fires the first nine cards
+              on the rail and <kbd className={styles.kbd}>⌘⌥→</kbd> walks the
+              whole rail in order,
               from inside Zoom, without Capturia focused. Clear the deck and the
               shortcuts release.
             </p>
@@ -618,6 +622,21 @@ function PrivacySection() {
           </div>
         ))}
       </div>
+
+      <p className="mt-8 text-center text-[13px] text-[var(--studio-graphite)] leading-relaxed max-w-2xl mx-auto">
+        The one thing the app does send: an anonymous launch ping, four fields
+        (a random install id connected to nothing, the event name, app version,
+        macOS version). The switch to turn it off is in Settings, and{" "}
+        <a
+          href="https://github.com/AndresCarreonDiaz/capturia/blob/main/docs/telemetry.md"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="cue-link"
+        >
+          docs/telemetry.md
+        </a>{" "}
+        shows the exact bytes.
+      </p>
     </section>
   );
 }
@@ -798,10 +817,11 @@ function Pricing() {
             <ul className="mt-7 space-y-3.5 text-[14.5px] text-[var(--studio-graphite)] flex-1">
               <Feature>The native Capturia camera, deck priming, silent hotkeys, voice control</Feature>
               <Feature>Your key is encrypted on your Mac with a key held in the macOS Keychain, never on our servers</Feature>
-              <Feature>The browser studio, free to try with zero installs</Feature>
+              <Feature>The browser demo, free to try with zero installs</Feature>
               <Feature>Open source under MIT</Feature>
             </ul>
-            <a
+            <DownloadLink
+              location="pricing"
               href={DOWNLOAD}
               target="_blank"
               rel="noopener noreferrer"
@@ -809,7 +829,7 @@ function Pricing() {
             >
               <DownloadIcon />
               Download for macOS
-            </a>
+            </DownloadLink>
           </div>
 
           {/* Pro (coming soon) */}
@@ -893,9 +913,9 @@ const FAQS: Array<{ q: string; a: React.ReactNode }> = [
     a: (
       <>
         Yes. Grab the DMG from{" "}
-        <a href={DOWNLOAD} target="_blank" rel="noopener noreferrer" className="cue-link">
+        <DownloadLink location="faq" href={DOWNLOAD} target="_blank" rel="noopener noreferrer" className="cue-link">
           GitHub releases
-        </a>
+        </DownloadLink>
         , drag Capturia into Applications, and launch. Builds are Developer ID
         signed and notarized by Apple, so Gatekeeper opens them without
         warnings. The{" "}
@@ -1038,7 +1058,8 @@ function FinalCta() {
         </p>
 
         <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-3">
-          <a
+          <DownloadLink
+            location="final-cta"
             href={DOWNLOAD}
             target="_blank"
             rel="noopener noreferrer"
@@ -1046,7 +1067,7 @@ function FinalCta() {
           >
             <DownloadIcon />
             Download for macOS
-          </a>
+          </DownloadLink>
           <Link
             href="/studio"
             className="ghost-btn inline-flex items-center gap-2.5 rounded-full px-9 py-4 text-base font-medium w-full sm:w-auto justify-center"
@@ -1100,9 +1121,9 @@ function SiteFooter() {
         </div>
 
         <nav className="flex flex-col sm:items-end gap-2.5 text-[13px] text-[var(--studio-graphite)]">
-          <a href={DOWNLOAD} target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
+          <DownloadLink location="footer" href={DOWNLOAD} target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
             Download for macOS
-          </a>
+          </DownloadLink>
           <Link href="/studio" className="hover:text-white transition-colors">
             Try the browser demo
           </Link>
