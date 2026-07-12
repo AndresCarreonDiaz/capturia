@@ -66,7 +66,7 @@ Stripe Checkout (test mode)
 | `POST /api/hosted/v1beta/models/<id>:streamGenerateContent` | The exact wire shape `@ai-sdk/google` emits; lets the desktop runtime point at the proxy by swapping `baseURL` + key slot only |
 | `POST /api/hosted/v1beta/models/<id>:generateContent` | Non-streaming variant |
 | `POST /api/billing/checkout` | Creates the Stripe Checkout session (subscription, `STRIPE_PRICE_ID`) |
-| `POST /api/billing/webhook` | Stripe events -> Redis entitlement cache + activation codes (deduplicated on event.id, ordered by event.created, one code per checkout session) |
+| `POST /api/billing/webhook` | Stripe events -> Redis entitlement cache + activation codes (deduplicated on event.id, ordered by event.created with revocations winning same-second ties, one code per checkout session; dedup markers commit only after effects land, so a mid-apply fault answers 500 and the Stripe retry re-processes instead of being swallowed) |
 | `POST /api/billing/activate` | `{ code, deviceId }` -> `{ refreshToken, token, expiresAt, devices }` |
 | `POST /api/billing/token` | `{ refreshToken }` -> `{ token, expiresAt }` |
 | `GET /api/billing/activation-code?session_id=cs_...&pickup=...` | One-time code pickup for the checkout success page; the pickup nonce is minted per checkout, travels only in the success URL, and the code is filed under hash(session, nonce), so a bare session id retrieves nothing |
@@ -74,7 +74,10 @@ Stripe Checkout (test mode)
 The JWT rides in `x-goog-api-key` (what `@ai-sdk/google` sends) or a
 standard `Authorization: Bearer`. The proxy enforces a server-side model
 allowlist (`gemini-2.5-flash-lite`, `gemini-2.5-flash` by default), so a
-valid token cannot pick an expensive model on Capturia's key.
+valid token cannot pick an expensive model on Capturia's key. Requests are
+text-only: `fileData`/`inlineData` parts are refused with 400 (their token
+cost is decoupled from request size, which would defeat the budget brakes),
+and `generationConfig.maxOutputTokens` is clamped server-side.
 
 ## Env contract
 
@@ -92,6 +95,7 @@ valid token cannot pick an expensive model on Capturia's key.
 | `CAPTURIA_JWT_PUBLIC_KEY` | server | base64 SPKI DER. Verifies JWTs at the proxy |
 | `CAPTURIA_HOSTED_MODELS` | server | Optional csv override of the model allowlist |
 | `CAPTURIA_HOSTED_RATE_LIMIT` / `_MONTHLY_TOKENS` / `_LEASE_TTL_MS` | server | Brake tuning (defaults 10/min, 5M tokens, 120s) |
+| `CAPTURIA_HOSTED_MAX_OUTPUT_TOKENS` | server | Per-request output clamp injected into every forwarded generationConfig (default 8192) |
 | `CAPTURIA_HOSTED_DEV_ENTITLEMENT` | dev only | Seeds an active entitlement + the fixed dev activation code for that customer id. Seeded only into the in-memory backend: ignored in production builds AND whenever real Upstash env is present |
 | `CAPTURIA_HOSTED_URL` | desktop | Proxy origin override for the desktop runtime (dev: `http://localhost:3000/api/hosted`) |
 | `CAPTURIA_HOSTED_MODEL` | desktop | Hosted model id override (must be on the server allowlist) |

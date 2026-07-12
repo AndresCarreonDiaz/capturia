@@ -34,7 +34,11 @@ export function allowedHostedModels(env: Env = process.env): string[] {
 export interface HostedPlan {
   modelId: string;
   stream: boolean;
-  /** Gemini GenerateContentRequest, forwarded verbatim. */
+  /**
+   * Gemini GenerateContentRequest, forwarded with two hosted-tier
+   * adjustments: media parts are refused and maxOutputTokens is clamped
+   * (see sanitizeHostedRequest).
+   */
   request: Record<string, unknown>;
 }
 
@@ -47,6 +51,45 @@ function bad(status: number, error: string): PlanResult {
 }
 
 const MODEL_ID_RE = /^[a-z0-9][a-z0-9.-]{1,80}$/i;
+
+export const DEFAULT_HOSTED_MAX_OUTPUT_TOKENS = 8192;
+
+// Token cost must stay coupled to request size for the budget brakes to
+// mean anything. fileData (a ~100-byte YouTube URI can cost ~300 tokens per
+// SECOND of video on Capturia's key) and inlineData (base64 media) decouple
+// it, and nothing in the product sends media through the hosted tier, so
+// both are refused server-side. Output volume is clamped per request so the
+// rate limit bounds total spend, not just call count; deck codegen asks for
+// 4096 and overlays far less, so the default cap is generous.
+function sanitizeHostedRequest(
+  request: Record<string, unknown>,
+  env: Env
+): { ok: true; request: Record<string, unknown> } | { ok: false; error: string } {
+  const groups: unknown[] = [];
+  if (Array.isArray(request.contents)) groups.push(...request.contents);
+  if (request.systemInstruction) groups.push(request.systemInstruction);
+  for (const content of groups) {
+    const parts = (content as { parts?: unknown })?.parts;
+    if (!Array.isArray(parts)) continue;
+    for (const part of parts) {
+      if (part && typeof part === "object" && ("fileData" in part || "inlineData" in part)) {
+        return { ok: false, error: "Media inputs are not available on the hosted tier." };
+      }
+    }
+  }
+  const capRaw = Math.floor(Number(env.CAPTURIA_HOSTED_MAX_OUTPUT_TOKENS));
+  const cap =
+    Number.isFinite(capRaw) && capRaw > 0 ? capRaw : DEFAULT_HOSTED_MAX_OUTPUT_TOKENS;
+  const rawConfig = request.generationConfig;
+  const generationConfig =
+    rawConfig && typeof rawConfig === "object" && !Array.isArray(rawConfig)
+      ? { ...(rawConfig as Record<string, unknown>) }
+      : {};
+  const requested = Number(generationConfig.maxOutputTokens);
+  generationConfig.maxOutputTokens =
+    Number.isFinite(requested) && requested > 0 ? Math.min(Math.floor(requested), cap) : cap;
+  return { ok: true, request: { ...request, generationConfig } };
+}
 
 // slug comes from the [[...slug]] catch-all. Accepted shapes:
 //   ["v1", "generate"]                      body { model?, stream?, request }
@@ -69,9 +112,11 @@ export function planHostedCall(slug: readonly string[], body: unknown, env: Env 
     const modelId = model === undefined ? DEFAULT_HOSTED_MODEL_ID : String(model);
     if (!MODEL_ID_RE.test(modelId)) return bad(400, "Invalid model id.");
     if (!allowed.includes(modelId)) return bad(403, "Model not available on the hosted tier.");
+    const sanitized = sanitizeHostedRequest(request as Record<string, unknown>, env);
+    if (!sanitized.ok) return bad(400, sanitized.error);
     return {
       ok: true,
-      plan: { modelId, stream: stream !== false, request: request as Record<string, unknown> },
+      plan: { modelId, stream: stream !== false, request: sanitized.request },
     };
   }
 
@@ -85,12 +130,14 @@ export function planHostedCall(slug: readonly string[], body: unknown, env: Env 
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       return bad(400, "Expected a Gemini generateContent JSON body.");
     }
+    const sanitized = sanitizeHostedRequest(body as Record<string, unknown>, env);
+    if (!sanitized.ok) return bad(400, sanitized.error);
     return {
       ok: true,
       plan: {
         modelId,
         stream: method === "streamGenerateContent",
-        request: body as Record<string, unknown>,
+        request: sanitized.request,
       },
     };
   }
@@ -229,6 +276,39 @@ export function usageFromJsonBody(body: unknown): UsageTotals | null {
   return usageFrom(body);
 }
 
+// Reads at most maxBytes from a request body, counting BYTES incrementally
+// and cancelling the stream the moment the cap is crossed, so a chunked
+// request with no content-length header can never buffer unbounded memory
+// the way an unconditional request.text() would.
+export type CappedBody = { ok: true; text: string } | { ok: false };
+
+export async function readBodyCapped(
+  body: ReadableStream<Uint8Array> | null,
+  maxBytes: number
+): Promise<CappedBody> {
+  if (!body) return { ok: true, text: "" };
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel("body too large").catch(() => {});
+      return { ok: false };
+    }
+    chunks.push(value);
+  }
+  const joined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { ok: true, text: new TextDecoder().decode(joined) };
+}
+
 // Conservative prompt-token estimate from the serialized request (the usual
 // ~4 chars/token heuristic). This is the abort brake: a client that opens a
 // stream with a huge prompt and bails before Gemini's final usageMetadata
@@ -333,7 +413,12 @@ export function createRelayStream(
         observer.write(decoder.decode(value, { stream: true }));
         controller.enqueue(value);
       } catch (err) {
-        await settle(observer.usage());
+        // The UPSTREAM died mid-stream: charge only what Gemini actually
+        // reported (usually nothing; usageMetadata is the final frame). The
+        // request-size estimate is reserved for CLIENT aborts (cancel below),
+        // matching the route contract that upstream failures cost nothing.
+        const usage = observer.usage();
+        await settle(usage, { metered: usage !== null });
         controller.error(err);
       }
     },

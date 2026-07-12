@@ -33,6 +33,7 @@ import {
   createSseUsageObserver,
   estimateTokensForRequest,
   planHostedCall,
+  readBodyCapped,
   upstreamFor,
   usageFromJsonBody,
 } from "@/lib/hosted/proxy";
@@ -46,8 +47,9 @@ export const maxDuration = 60;
 
 // Gemini payloads here are prompt-sized JSON; 1 MB is far above any real
 // deck or overlay request and small enough that parsing before the lease is
-// harmless. Enforced against content-length AND the read body, since a
-// chunked request carries no length header.
+// harmless. Enforced against content-length up front AND byte-by-byte while
+// reading (readBodyCapped), so a chunked request with no length header still
+// cannot buffer more than the cap.
 const MAX_BODY_BYTES = 1_000_000;
 
 function jsonError(status: number, error: string, retryAfterSec?: number): Response {
@@ -103,13 +105,12 @@ export async function POST(
   const gate = await gateHostedCall(backend.run, customer, gateConfig);
   if (!gate.ok) return jsonError(gate.status, gate.error, gate.retryAfterSec);
 
-  const rawBody = await request.text().catch(() => "");
-  if (rawBody.length > MAX_BODY_BYTES) {
-    return jsonError(413, "Request body too large.");
-  }
+  const rawBody = await readBodyCapped(request.body, MAX_BODY_BYTES).catch(() => null);
+  if (!rawBody) return jsonError(400, "Could not read request body.");
+  if (!rawBody.ok) return jsonError(413, "Request body too large.");
   let body: unknown = null;
   try {
-    body = JSON.parse(rawBody);
+    body = JSON.parse(rawBody.text);
   } catch {
     // planHostedCall answers a precise 400 for a null body.
   }

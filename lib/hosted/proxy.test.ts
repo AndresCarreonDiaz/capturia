@@ -11,15 +11,22 @@ import {
   createRelayStream,
   createSettler,
   createSseUsageObserver,
+  DEFAULT_HOSTED_MAX_OUTPUT_TOKENS,
   DEFAULT_HOSTED_MODEL_ID,
   estimateTokensForRequest,
   planHostedCall,
+  readBodyCapped,
   upstreamFor,
   usageFromJsonBody,
   type UsageTotals,
 } from "./proxy";
 
 const GEMINI_BODY = { contents: [{ role: "user", parts: [{ text: "hi" }] }] };
+// What the planner forwards: the same request with the output clamp applied.
+const PLANNED_BODY = {
+  ...GEMINI_BODY,
+  generationConfig: { maxOutputTokens: DEFAULT_HOSTED_MAX_OUTPUT_TOKENS },
+};
 
 describe("allowedHostedModels", () => {
   it("defaults to the two hosted Gemini tiers", () => {
@@ -43,7 +50,7 @@ describe("planHostedCall", () => {
     const res = planHostedCall(["v1", "generate"], { request: GEMINI_BODY }, {});
     expect(res).toEqual({
       ok: true,
-      plan: { modelId: DEFAULT_HOSTED_MODEL_ID, stream: true, request: GEMINI_BODY },
+      plan: { modelId: DEFAULT_HOSTED_MODEL_ID, stream: true, request: PLANNED_BODY },
     });
   });
 
@@ -55,8 +62,63 @@ describe("planHostedCall", () => {
     );
     expect(res).toEqual({
       ok: true,
-      plan: { modelId: "gemini-2.5-flash-lite", stream: true, request: GEMINI_BODY },
+      plan: { modelId: "gemini-2.5-flash-lite", stream: true, request: PLANNED_BODY },
     });
+  });
+
+  it("clamps maxOutputTokens and honors a lower client value plus the env override", () => {
+    const asking = (config: Record<string, unknown> | undefined, env = {}) => {
+      const res = planHostedCall(
+        ["v1", "generate"],
+        { request: { ...GEMINI_BODY, ...(config ? { generationConfig: config } : {}) } },
+        env
+      );
+      if (!res.ok) throw new Error("expected ok");
+      return (res.plan.request.generationConfig as Record<string, unknown>).maxOutputTokens;
+    };
+    expect(asking(undefined)).toBe(DEFAULT_HOSTED_MAX_OUTPUT_TOKENS);
+    expect(asking({ maxOutputTokens: 4096 })).toBe(4096);
+    expect(asking({ maxOutputTokens: 500_000 })).toBe(DEFAULT_HOSTED_MAX_OUTPUT_TOKENS);
+    expect(asking({ maxOutputTokens: "junk" })).toBe(DEFAULT_HOSTED_MAX_OUTPUT_TOKENS);
+    expect(asking({ maxOutputTokens: 500_000 }, { CAPTURIA_HOSTED_MAX_OUTPUT_TOKENS: "16000" })).toBe(16_000);
+    // Other generationConfig keys survive the clamp.
+    const res = planHostedCall(
+      ["v1", "generate"],
+      { request: { ...GEMINI_BODY, generationConfig: { temperature: 0 } } },
+      {}
+    );
+    expect(res).toMatchObject({
+      ok: true,
+      plan: {
+        request: {
+          generationConfig: { temperature: 0, maxOutputTokens: DEFAULT_HOSTED_MAX_OUTPUT_TOKENS },
+        },
+      },
+    });
+  });
+
+  it("refuses media parts on BOTH shapes: token cost must track request size", () => {
+    const withFile = {
+      contents: [
+        { role: "user", parts: [{ fileData: { fileUri: "https://youtube.com/watch?v=x" } }] },
+      ],
+    };
+    const withInline = {
+      contents: [{ role: "user", parts: [{ inlineData: { mimeType: "image/png", data: "AAAA" } }] }],
+    };
+    const inSystem = {
+      contents: [{ role: "user", parts: [{ text: "hi" }] }],
+      systemInstruction: { parts: [{ fileData: { fileUri: "gs://bucket/movie.mp4" } }] },
+    };
+    for (const request of [withFile, withInline, inSystem]) {
+      expect(planHostedCall(["v1", "generate"], { request }, {})).toMatchObject({
+        ok: false,
+        status: 400,
+      });
+      expect(
+        planHostedCall(["v1beta", "models", "gemini-2.5-flash-lite:streamGenerateContent"], request, {})
+      ).toMatchObject({ ok: false, status: 400 });
+    }
   });
 
   it("plans non-streaming :generateContent", () => {
@@ -330,8 +392,8 @@ describe("createRelayStream", () => {
     expect(calls.recorded).toEqual([321]);
   });
 
-  it("an upstream read error settles once and surfaces the error", async () => {
-    const { settler, calls } = settlerWorld();
+  it("an upstream mid-stream error settles once, releases, and charges NOTHING when no usage arrived", async () => {
+    const { settler, calls } = settlerWorld({ estimatedTokens: 500 });
     const upstream = new ReadableStream<Uint8Array>({
       pull() {
         throw new Error("upstream reset");
@@ -342,6 +404,72 @@ describe("createRelayStream", () => {
     await expect(reader.read()).rejects.toThrow("upstream reset");
     await settler.done;
     expect(calls.released).toBe(1);
-    expect(calls.recorded).toHaveLength(1);
+    // The estimate is a CLIENT-abort brake; Capturia's upstream dying is not
+    // the customer's bill.
+    expect(calls.recorded).toEqual([]);
+    expect(calls.metered).toEqual([]);
+  });
+
+  it("an upstream error AFTER the usage frame still charges the observed usage", async () => {
+    const { settler, calls } = settlerWorld();
+    let sent = false;
+    const upstream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (!sent) {
+          sent = true;
+          controller.enqueue(sseBytes(USAGE_FRAME));
+          return;
+        }
+        throw new Error("upstream reset");
+      },
+    });
+    const relay = createRelayStream(upstream, createSseUsageObserver(), settler.settle);
+    const reader = relay.getReader();
+    await reader.read();
+    await expect(reader.read()).rejects.toThrow("upstream reset");
+    await settler.done;
+    expect(calls.recorded).toEqual([11]);
+  });
+});
+
+describe("readBodyCapped", () => {
+  function chunked(...pieces: Uint8Array[]): ReadableStream<Uint8Array> {
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const piece of pieces) controller.enqueue(piece);
+        controller.close();
+      },
+    });
+  }
+
+  it("reads a multi-chunk body under the cap intact", async () => {
+    const res = await readBodyCapped(chunked(sseBytes('{"a":'), sseBytes("1}")), 100);
+    expect(res).toEqual({ ok: true, text: '{"a":1}' });
+  });
+
+  it("refuses the moment cumulative BYTES cross the cap, without buffering the rest", async () => {
+    let pulls = 0;
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls++;
+        controller.enqueue(new Uint8Array(1024));
+      },
+    });
+    const res = await readBodyCapped(endless, 4096);
+    expect(res).toEqual({ ok: false });
+    // 4 chunks fit, the 5th crossed the cap; nothing close to unbounded.
+    expect(pulls).toBeLessThan(10);
+  });
+
+  it("counts bytes, not code units: multi-byte UTF-8 cannot sneak past the cap", async () => {
+    // 4 chars but 16 bytes.
+    const emoji = sseBytes("🎥🎥🎥🎥");
+    expect(emoji.byteLength).toBe(16);
+    expect(await readBodyCapped(chunked(emoji), 15)).toEqual({ ok: false });
+    expect(await readBodyCapped(chunked(emoji), 16)).toEqual({ ok: true, text: "🎥🎥🎥🎥" });
+  });
+
+  it("treats a missing body as empty", async () => {
+    expect(await readBodyCapped(null, 10)).toEqual({ ok: true, text: "" });
   });
 });

@@ -49,11 +49,19 @@ export async function POST(request: Request): Promise<Response> {
   } catch {
     return Response.json({ error: "Billing state backend is not configured." }, { status: 503 });
   }
-  const outcome = await applyStripeEvent(
-    backend.run,
-    event as Parameters<typeof applyStripeEvent>[1],
-    Date.now()
-  );
+  // A transient Redis fault mid-apply must answer non-2xx: the dedup marker
+  // is only written after the event's effects land, so Stripe's retry of a
+  // failed delivery re-processes it instead of being swallowed.
+  let outcome;
+  try {
+    outcome = await applyStripeEvent(
+      backend.run,
+      event as Parameters<typeof applyStripeEvent>[1],
+      Date.now()
+    );
+  } catch {
+    return Response.json({ error: "Event processing failed; retry." }, { status: 500 });
+  }
   // ids only; never codes, tokens, or full event payloads.
   if (outcome.handled) {
     console.log(`capturia billing: ${outcome.action} for ${outcome.customer ?? "unknown"}`);

@@ -354,4 +354,87 @@ describe("applyStripeEvent (webhook -> cache transitions)", () => {
     const outcome = await applyStripeEvent(run, { type: "invoice.paid", data: { object: {} } }, T0);
     expect(outcome).toEqual({ handled: false });
   });
+
+  it("a Redis fault mid-apply does NOT poison the dedup: the Stripe retry still mints", async () => {
+    const { run } = world();
+    // Fail the first write of the activation code (a transient Upstash blip
+    // right after the entitlement write), then heal.
+    let failNextActStore = true;
+    const flaky: typeof run = async (command) => {
+      if (failNextActStore && command[0] === "SET" && String(command[1]).startsWith("hosted:act:")) {
+        failNextActStore = false;
+        throw new Error("upstash blip");
+      }
+      return run(command);
+    };
+    const codes: string[] = [];
+    const mint = () => {
+      const code = mintActivationCode();
+      codes.push(code);
+      return code;
+    };
+    const event = checkoutEvent({}, { id: "evt_flaky" });
+    await expect(applyStripeEvent(flaky, event, T0, mint)).rejects.toThrow("upstash blip");
+    // The retry (same event id, as Stripe sends it) must re-process, not be
+    // swallowed as duplicate_ignored: the markers are written only after the
+    // effects land.
+    const retry = await applyStripeEvent(flaky, event, T0, mint);
+    expect(retry).toEqual({ handled: true, action: "activation_minted", customer: CUSTOMER });
+    const redeemable = codes[codes.length - 1];
+    expect(await consumeActivationCode(run, redeemable)).toMatchObject({ customer: CUSTOMER });
+  });
+
+  it("same-second conflicting events converge on canceled in EITHER delivery order", async () => {
+    const CREATED = Math.floor(T0 / 1000);
+    const active = {
+      type: "customer.subscription.updated",
+      created: CREATED,
+      data: { object: { id: "sub_9", customer: CUSTOMER, status: "active" } },
+    };
+    const deleted = {
+      type: "customer.subscription.deleted",
+      created: CREATED,
+      data: { object: { id: "sub_9", customer: CUSTOMER } },
+    };
+    // Order 1: active then deleted -> revocation ties-win.
+    const w1 = world();
+    await applyStripeEvent(w1.run, active, T0);
+    await applyStripeEvent(w1.run, deleted, T0);
+    expect(isEntitled(await readEntitlement(w1.run, CUSTOMER))).toBe(false);
+    // Order 2: deleted then active -> a tied grant never resurrects.
+    const w2 = world();
+    await applyStripeEvent(w2.run, deleted, T0);
+    const stale = await applyStripeEvent(w2.run, active, T0);
+    expect(stale).toEqual({ handled: true, action: "stale_ignored", customer: CUSTOMER });
+    expect(isEntitled(await readEntitlement(w2.run, CUSTOMER))).toBe(false);
+  });
+
+  it("a late checkout event cannot resurrect a newer cancellation, but its code still mints", async () => {
+    const { run } = world();
+    const CREATED = Math.floor(T0 / 1000);
+    await applyStripeEvent(
+      run,
+      {
+        type: "customer.subscription.deleted",
+        created: CREATED + 120,
+        data: { object: { id: "sub_9", customer: CUSTOMER } },
+      },
+      T0
+    );
+    const codes: string[] = [];
+    const late = checkoutEvent({}, { id: "evt_late_checkout", created: CREATED });
+    const outcome = await applyStripeEvent(run, late, T0, () => {
+      const code = mintActivationCode();
+      codes.push(code);
+      return code;
+    });
+    // The code exists (the buyer paid) but redeeming it hits the entitlement
+    // check, and the cache still says canceled.
+    expect(outcome).toEqual({ handled: true, action: "activation_minted", customer: CUSTOMER });
+    expect(isEntitled(await readEntitlement(run, CUSTOMER))).toBe(false);
+    expect(await redeemActivationCode(run, codes[0], "device-late-1")).toMatchObject({
+      ok: false,
+      status: 402,
+    });
+  });
 });

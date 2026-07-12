@@ -313,15 +313,24 @@ function mintMarkerKey(sessionId: string): string {
 // Stripe event: delivery order is explicitly not guaranteed, and without the
 // watermark a delayed "active" could resurrect a canceled customer (or a
 // delayed "canceled" lock out a paying one) until the next event, which for
-// a resurrected cancellation never comes.
+// a resurrected cancellation never comes. event.created has SECOND
+// granularity, so same-second ties are decided fail-closed: a revocation
+// ties-wins, a grant must be strictly newer; either delivery order of a
+// same-second active+canceled pair converges on canceled. The read-then-
+// write pair is not atomic (this module deliberately avoids Lua for
+// memory-mode parity); the remaining window is one Redis round trip on
+// truly concurrent deliveries, Stripe stays the source of truth, and the
+// token refresh re-consults Stripe-driven state within one JWT lifetime.
 async function isStaleEvent(
   run: RedisRunner,
   customer: string,
-  eventAtMs: number | null
+  eventAtMs: number | null,
+  revoking: boolean
 ): Promise<boolean> {
   if (eventAtMs === null) return false;
   const current = await readEntitlement(run, customer);
-  return typeof current?.eventAt === "number" && current.eventAt > eventAtMs;
+  if (typeof current?.eventAt !== "number") return false;
+  return revoking ? current.eventAt > eventAtMs : current.eventAt >= eventAtMs;
 }
 
 // Applies one verified Stripe event to the Redis cache. Returns a description
@@ -329,6 +338,15 @@ async function isStaleEvent(
 // acknowledged untouched so the webhook endpoint can subscribe broadly.
 // Deliveries are deduplicated on event.id (Stripe retries re-sign the same
 // event) and ordered by event.created (Stripe does not guarantee order).
+//
+// MARKER ORDER MATTERS: both dedup markers are read-checked up front but
+// WRITTEN only after the event's effects have all landed. A crash or Redis
+// fault mid-apply therefore leaves no marker, the delivery fails non-2xx,
+// and the Stripe retry re-processes the event instead of being swallowed as
+// a duplicate; a paid activation can never be lost to a transient fault.
+// Re-processing is safe because entitlement writes are idempotent under the
+// watermark and the worst concurrent-duplicate outcome is one extra
+// activation code for the SAME customer (benign) rather than a lost one.
 export async function applyStripeEvent(
   run: RedisRunner,
   event: StripeEventLike,
@@ -344,10 +362,12 @@ export async function applyStripeEvent(
       : null;
 
   const eventId = typeof event?.id === "string" && event.id ? event.id : null;
-  if (eventId) {
-    const fresh = await run(["SET", eventDedupKey(eventId), "1", "NX", "EX", EVENT_DEDUP_TTL_S]);
-    if (fresh !== "OK") return { handled: true, action: "duplicate_ignored" };
+  if (eventId && (await run(["GET", eventDedupKey(eventId)])) !== null) {
+    return { handled: true, action: "duplicate_ignored" };
   }
+  const markProcessed = async () => {
+    if (eventId) await run(["SET", eventDedupKey(eventId), "1", "EX", EVENT_DEDUP_TTL_S]);
+  };
 
   if (type === "checkout.session.completed" || type === "checkout.session.async_payment_succeeded") {
     const paid = object.payment_status === "paid" || object.payment_status === "no_payment_required";
@@ -357,12 +377,12 @@ export async function applyStripeEvent(
     // paid state through several distinct events (completed + async variants
     // carry different event ids, so the event dedup alone would not stop a
     // second mint).
-    if (sessionId) {
-      const first = await run(["SET", mintMarkerKey(sessionId), "1", "NX", "EX", ACTIVATION_TTL_S]);
-      if (first !== "OK") return { handled: true, action: "duplicate_ignored", customer };
+    if (sessionId && (await run(["GET", mintMarkerKey(sessionId)])) !== null) {
+      await markProcessed();
+      return { handled: true, action: "duplicate_ignored", customer };
     }
     const subscription = typeof object.subscription === "string" ? object.subscription : null;
-    if (!(await isStaleEvent(run, customer, eventAtMs))) {
+    if (!(await isStaleEvent(run, customer, eventAtMs, false))) {
       await writeEntitlement(run, customer, "active", subscription, nowMs, eventAtMs ?? undefined);
     }
     const code = mintCode();
@@ -372,6 +392,10 @@ export async function applyStripeEvent(
     if (sessionId && pickup && PICKUP_NONCE_RE.test(pickup)) {
       await storeActivationBySession(run, sessionId, pickup, code);
     }
+    if (sessionId) {
+      await run(["SET", mintMarkerKey(sessionId), "1", "EX", ACTIVATION_TTL_S]);
+    }
+    await markProcessed();
     return { handled: true, action: "activation_minted", customer };
   }
 
@@ -383,12 +407,17 @@ export async function applyStripeEvent(
       : REVOKED_STATUSES.has(raw)
         ? "canceled"
         : null;
-    if (status === null) return { handled: true, action: "status_ignored", customer };
-    if (await isStaleEvent(run, customer, eventAtMs)) {
+    if (status === null) {
+      await markProcessed();
+      return { handled: true, action: "status_ignored", customer };
+    }
+    if (await isStaleEvent(run, customer, eventAtMs, status === "canceled")) {
+      await markProcessed();
       return { handled: true, action: "stale_ignored", customer };
     }
     const subscription = typeof object.id === "string" ? object.id : null;
     await writeEntitlement(run, customer, status, subscription, nowMs, eventAtMs ?? undefined);
+    await markProcessed();
     return {
       handled: true,
       action: status === "canceled" ? "entitlement_revoked" : "entitlement_updated",
@@ -398,11 +427,13 @@ export async function applyStripeEvent(
 
   if (type === "customer.subscription.deleted") {
     if (!customer) return { handled: false };
-    if (await isStaleEvent(run, customer, eventAtMs)) {
+    if (await isStaleEvent(run, customer, eventAtMs, true)) {
+      await markProcessed();
       return { handled: true, action: "stale_ignored", customer };
     }
     const subscription = typeof object.id === "string" ? object.id : null;
     await writeEntitlement(run, customer, "canceled", subscription, nowMs, eventAtMs ?? undefined);
+    await markProcessed();
     return { handled: true, action: "entitlement_revoked", customer };
   }
 
