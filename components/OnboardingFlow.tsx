@@ -1,10 +1,11 @@
 "use client";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   onboardingSteps,
   shouldShowOnboarding,
   type OnboardingContext,
 } from "@/lib/onboarding";
+import { useTelemetry } from "@/hooks/useTelemetry";
 
 const STORAGE_KEY = "capturia:onboarded";
 
@@ -45,6 +46,9 @@ export default function OnboardingFlow({
 }) {
   const initiallyCompleted = useSyncExternalStore(subscribeNoop, readCompleted, () => true);
   const [finished, setFinished] = useState(false);
+  // Anonymous-beacon disclosure on the welcome step (desktop only; the hook
+  // reports unsupported on web and the sentence never renders).
+  const telemetry = useTelemetry();
   // Session-scoped progress: toggling Program Output unmounts all operator
   // chrome including this card, and losing the step would restart the tour
   // from the top. A fresh launch (new session) still starts clean.
@@ -68,6 +72,23 @@ export default function OnboardingFlow({
     });
   };
   const completed = initiallyCompleted || finished;
+
+  // First-run consent gate for the anonymous beacon: main parks the launch
+  // ping until this page reports that the disclosure was RESOLVED, which is
+  // exactly when the welcome step (the one carrying the sentence and the
+  // toggle) is behind the user: tour finished or skipped, the step advanced,
+  // or onboarding already completed in an earlier session. That last case
+  // reads localStorage directly INSIDE the effect: the hydration commit
+  // renders with the server snapshot of initiallyCompleted (true), and
+  // keying on it would ack, and ping, every fresh install on mount. Fired at
+  // most once per page; the ack is idempotent in main, so remounts are
+  // harmless.
+  const ackedRef = useRef(false);
+  useEffect(() => {
+    if (ackedRef.current || !(finished || stepIndex > 0 || readCompleted())) return;
+    ackedRef.current = true;
+    window.capturia?.telemetry?.ackDisclosure?.()?.catch(() => {});
+  }, [finished, stepIndex]);
 
   // Steps are fixed for the life of the flow; satisfaction drives
   // advancement, never membership (the keys step must not vanish mid-flow
@@ -160,6 +181,21 @@ export default function OnboardingFlow({
               ? "Key saved. You are live on your own model."
               : liveBody ?? step.body}
           </p>
+          {step.id === "welcome" && telemetry.supported && (
+            <label className="mt-3 flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={telemetry.enabled}
+                onChange={(e) => telemetry.setEnabled(e.target.checked)}
+                className="mt-0.5 h-3 w-3 accent-cyan-400"
+              />
+              <span className="text-white/40 text-[11px] leading-relaxed">
+                Send anonymous pings on launch and on the one-time camera
+                install (random install id, app and macOS version, never audio
+                or content) so installs can be counted.
+              </span>
+            </label>
+          )}
         </div>
 
         <div className="flex items-center justify-between px-5 pb-4">

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import type { KeyEntry, KeyProvider } from "@/hooks/useDesktopHotkey";
+import { useTelemetry } from "@/hooks/useTelemetry";
 
 interface Props {
   open: boolean;
@@ -52,6 +53,9 @@ export default function SettingsModal({
   const [drafts, setDrafts] = useState<Partial<Record<KeyProvider, string>>>({});
   const [busy, setBusy] = useState<KeyProvider | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Desktop-only anonymous beacon toggle; unsupported (web, stale preload)
+  // hides the whole Privacy section.
+  const telemetry = useTelemetry();
 
   useEffect(() => {
     if (!open) return;
@@ -227,6 +231,38 @@ export default function SettingsModal({
           {error && (
             <div className="mt-4 bg-red-950/50 border border-red-500/30 rounded-lg px-3 py-2 text-red-400 text-xs font-mono">
               {error}
+            </div>
+          )}
+
+          {telemetry.supported && (
+            <div className="mt-6 pt-5 border-t border-white/10">
+              <div className="mb-1.5 text-white/40 text-[10px] font-mono uppercase tracking-[0.2em]">
+                Privacy
+              </div>
+              <div className="flex items-start justify-between gap-4">
+                <p className="text-white/50 text-xs leading-relaxed">
+                  Share anonymous usage pings: a random install id plus the app
+                  and macOS versions, sent on launch and camera install. Never
+                  audio, transcripts, or anything on your feed.
+                </p>
+                <button
+                  role="switch"
+                  aria-checked={telemetry.enabled}
+                  aria-label="Share anonymous usage pings"
+                  onClick={() => telemetry.setEnabled(!telemetry.enabled)}
+                  className={`relative shrink-0 mt-0.5 w-9 h-5 rounded-full border transition-colors ${
+                    telemetry.enabled
+                      ? "bg-cyan-400/30 border-cyan-400/60"
+                      : "bg-white/10 border-white/20"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 h-3.5 w-3.5 rounded-full transition-all ${
+                      telemetry.enabled ? "left-[18px] bg-cyan-300" : "left-0.5 bg-white/50"
+                    }`}
+                  />
+                </button>
+              </div>
             </div>
           )}
         </div>

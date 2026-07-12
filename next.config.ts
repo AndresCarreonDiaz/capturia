@@ -24,6 +24,17 @@ const nextConfig: NextConfig = {
     // the exact path electron/main.js loads), so a relative prefix resolves.
     assetPrefix: "./",
     images: { unoptimized: true },
+    // The desktop bundle ships no analytics: Vercel Web Analytics covers the
+    // hosted web surfaces only (the anonymous beacon covers the app, see
+    // docs/telemetry.md), and on file:// the insights script has nothing to
+    // talk to. Aliasing the package to a no-op stub keeps its code out of
+    // the export entirely; the root layout additionally skips the mount.
+    turbopack: {
+      resolveAlias: {
+        "@vercel/analytics": "./lib/vercel-analytics-noop.tsx",
+        "@vercel/analytics/next": "./lib/vercel-analytics-noop.tsx",
+      },
+    },
   }),
 };
 
