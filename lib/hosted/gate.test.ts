@@ -52,6 +52,9 @@ describe("gateConfigFromEnv", () => {
   it("ignores garbage overrides", () => {
     expect(gateConfigFromEnv({ CAPTURIA_HOSTED_RATE_LIMIT: "-2" }).ratePerMinute).toBe(10);
     expect(gateConfigFromEnv({ CAPTURIA_HOSTED_RATE_LIMIT: "lots" }).ratePerMinute).toBe(10);
+    // Fractions below 1 must fall back, not floor to a zero limit.
+    expect(gateConfigFromEnv({ CAPTURIA_HOSTED_RATE_LIMIT: "0.5" }).ratePerMinute).toBe(10);
+    expect(gateConfigFromEnv({ CAPTURIA_HOSTED_LEASE_TTL_MS: "0.9" }).leaseTtlMs).toBe(120_000);
   });
 });
 
@@ -110,6 +113,32 @@ describe("sliding-window rate limit", () => {
     for (let i = 0; i < 10; i++) await checkRateLimit(run, CUSTOMER, 10, clock.now());
     expect((await checkRateLimit(run, "cus_other", 10, clock.now())).allowed).toBe(true);
   });
+
+  it("gives a retry-after that actually clears after an over-limit burst", async () => {
+    const { run, clock } = world();
+    // 11 attempts back to back: the 11th is refused with current=11 > limit,
+    // so no instant inside this window can admit a request and the hint must
+    // reach into the next window plus the decay time of today's bucket.
+    let refused = { allowed: true, retryAfterSec: 0 };
+    for (let i = 0; i < 11; i++) refused = await checkRateLimit(run, CUSTOMER, 10, clock.now());
+    expect(refused.allowed).toBe(false);
+    // The naive to-window-boundary hint (30s from the mid-minute T0) is a
+    // guaranteed second refusal; the honest hint is longer.
+    expect(refused.retryAfterSec).toBeGreaterThan(30);
+    clock.tick(refused.retryAfterSec * 1000);
+    expect((await checkRateLimit(run, CUSTOMER, 10, clock.now())).allowed).toBe(true);
+  });
+
+  it("gives an in-window retry-after when the previous bucket drives the refusal", async () => {
+    const { run, clock } = world();
+    for (let i = 0; i < 11; i++) await checkRateLimit(run, CUSTOMER, 10, clock.now());
+    // Early in the next window the previous bucket still weighs ~11.
+    clock.tick(60_000 - (clock.now() % 60_000) + 5_000);
+    const refused = await checkRateLimit(run, CUSTOMER, 10, clock.now());
+    expect(refused.allowed).toBe(false);
+    clock.tick(refused.retryAfterSec * 1000);
+    expect((await checkRateLimit(run, CUSTOMER, 10, clock.now())).allowed).toBe(true);
+  });
 });
 
 describe("monthly budget", () => {
@@ -146,6 +175,22 @@ describe("concurrent-stream lease", () => {
     void clock;
   });
 
+  it("keeps the stream and batch lanes independent (live overlay + deck codegen)", async () => {
+    const { run } = world();
+    const stream = await acquireLease(run, CUSTOMER, 120_000, "req-live", "stream");
+    expect(stream).not.toBeNull();
+    // Deck codegen's non-streaming call must not 409 against the live stream.
+    const batch = await acquireLease(run, CUSTOMER, 120_000, "req-deck", "batch");
+    expect(batch).not.toBeNull();
+    // But a second call in the SAME lane still conflicts.
+    expect(await acquireLease(run, CUSTOMER, 120_000, "req-live-2", "stream")).toBeNull();
+    expect(await acquireLease(run, CUSTOMER, 120_000, "req-deck-2", "batch")).toBeNull();
+    // Releasing one lane never frees the other.
+    await batch!.release();
+    expect(await acquireLease(run, CUSTOMER, 120_000, "req-live-3", "stream")).toBeNull();
+    expect(await acquireLease(run, CUSTOMER, 120_000, "req-deck-3", "batch")).not.toBeNull();
+  });
+
   it("expires by TTL if never released (crashed function backstop)", async () => {
     const { run, clock } = world();
     await acquireLease(run, CUSTOMER, 120_000, "req-1");
@@ -164,15 +209,18 @@ describe("concurrent-stream lease", () => {
   });
 });
 
-describe("gateHostedCall (the full stack, in order)", () => {
+describe("gateHostedCall (the brake stack, in order)", () => {
   const cfg = { ratePerMinute: 2, monthlyTokenBudget: 100, leaseTtlMs: 120_000 };
 
-  it("passes an entitled, unthrottled call and hands back a working lease", async () => {
+  it("passes an entitled, unthrottled call without touching any lease", async () => {
     const { run, clock } = world();
     await entitle(run);
-    const decision = await gateHostedCall(run, CUSTOMER, cfg, "req-1", clock.now());
-    expect(decision.ok).toBe(true);
-    if (decision.ok) await decision.lease.release();
+    const decision = await gateHostedCall(run, CUSTOMER, cfg, clock.now());
+    expect(decision).toEqual({ ok: true });
+    // The gate never acquires leases (the route does, per lane, after
+    // planning), so both lanes remain free.
+    expect(await acquireLease(run, CUSTOMER, 120_000, "r1", "stream")).not.toBeNull();
+    expect(await acquireLease(run, CUSTOMER, 120_000, "r2", "batch")).not.toBeNull();
   });
 
   it("503s everything when the kill switch is set", async () => {
@@ -180,20 +228,20 @@ describe("gateHostedCall (the full stack, in order)", () => {
     await entitle(run);
     await run(["SET", "hosted:kill", "1"]);
     expect(await isKillSwitchOn(run)).toBe(true);
-    const decision = await gateHostedCall(run, CUSTOMER, cfg, "req-1", clock.now());
+    const decision = await gateHostedCall(run, CUSTOMER, cfg, clock.now());
     expect(decision).toMatchObject({ ok: false, status: 503 });
   });
 
   it("402s a customer without an entitlement record", async () => {
     const { run, clock } = world();
-    const decision = await gateHostedCall(run, CUSTOMER, cfg, "req-1", clock.now());
+    const decision = await gateHostedCall(run, CUSTOMER, cfg, clock.now());
     expect(decision).toMatchObject({ ok: false, status: 402 });
   });
 
   it("402s a canceled subscription (webhook revocation reaches the proxy)", async () => {
     const { run, clock } = world();
     await writeEntitlement(run, CUSTOMER, "canceled", "sub_1", T0);
-    const decision = await gateHostedCall(run, CUSTOMER, cfg, "req-1", clock.now());
+    const decision = await gateHostedCall(run, CUSTOMER, cfg, clock.now());
     expect(decision).toMatchObject({ ok: false, status: 402 });
   });
 
@@ -201,11 +249,9 @@ describe("gateHostedCall (the full stack, in order)", () => {
     const { run, clock } = world();
     await entitle(run);
     for (let i = 0; i < 2; i++) {
-      const d = await gateHostedCall(run, CUSTOMER, cfg, `req-${i}`, clock.now());
-      expect(d.ok).toBe(true);
-      if (d.ok) await d.lease.release();
+      expect((await gateHostedCall(run, CUSTOMER, cfg, clock.now())).ok).toBe(true);
     }
-    const throttled = await gateHostedCall(run, CUSTOMER, cfg, "req-3", clock.now());
+    const throttled = await gateHostedCall(run, CUSTOMER, cfg, clock.now());
     expect(throttled).toMatchObject({ ok: false, status: 429 });
     if (!throttled.ok) expect(throttled.retryAfterSec).toBeGreaterThan(0);
   });
@@ -214,25 +260,8 @@ describe("gateHostedCall (the full stack, in order)", () => {
     const { run, clock } = world();
     await entitle(run);
     await recordUsage(run, CUSTOMER, 100, clock.now());
-    const decision = await gateHostedCall(run, CUSTOMER, cfg, "req-1", clock.now());
+    const decision = await gateHostedCall(run, CUSTOMER, cfg, clock.now());
     expect(decision).toMatchObject({ ok: false, status: 429 });
     if (!decision.ok) expect(decision.error).toMatch(/usage exhausted/i);
-  });
-
-  it("409s a second concurrent stream and never leaks a lease on refusal", async () => {
-    const { run, clock } = world();
-    await entitle(run);
-    const first = await gateHostedCall(run, CUSTOMER, cfg, "req-1", clock.now());
-    expect(first.ok).toBe(true);
-    const second = await gateHostedCall(run, CUSTOMER, cfg, "req-2", clock.now());
-    expect(second).toMatchObject({ ok: false, status: 409 });
-    if (first.ok) await first.lease.release();
-    // The refused request must not have consumed or corrupted the lease.
-    const third = await gateHostedCall(run, "cus_other", cfg, "req-3", clock.now());
-    expect(third).toMatchObject({ ok: false, status: 402 }); // other user, no ent
-    // Two full windows later the trailing-60s weight of the earlier burst is
-    // gone (61s would still carry most of it; see the weighting test above).
-    const again = await gateHostedCall(run, CUSTOMER, cfg, "req-4", clock.now() + 121_000);
-    expect(again.ok).toBe(true);
   });
 });

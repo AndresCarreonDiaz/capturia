@@ -25,7 +25,12 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "Expected { refreshToken }." }, { status: 400 });
   }
 
-  const backend = await getHostedBackend(process.env);
+  let backend;
+  try {
+    backend = await getHostedBackend(process.env);
+  } catch {
+    return Response.json({ error: "Hosted tier state backend is not configured." }, { status: 503 });
+  }
   const record = await lookupRefreshToken(backend.run, body.refreshToken);
   if (!record) {
     return Response.json({ error: "Invalid refresh token." }, { status: 401 });

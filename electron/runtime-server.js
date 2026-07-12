@@ -231,4 +231,4 @@ async function startRuntimeServer({ keychain, isDev, env = process.env, host = "
   };
 }
 
-module.exports = { startRuntimeServer, BASE_PATH };
+module.exports = { startRuntimeServer, BASE_PATH, loadDevEnvFiles };

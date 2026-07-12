@@ -1,16 +1,22 @@
 // Pins the proxy planning surface (lib/hosted/proxy.ts): both accepted path
 // shapes (the /v1/generate alias and the raw @ai-sdk/google wire), the
-// server-side model allowlist, gateway-vs-direct upstream construction, and
-// SSE usage extraction.
+// server-side model allowlist, gateway-vs-direct upstream construction, SSE
+// usage extraction, and the settle/relay machinery the route builds its
+// streaming response from (lease release + usage accounting on every exit
+// path, including client aborts).
 
 import { describe, expect, it } from "vitest";
 import {
   allowedHostedModels,
+  createRelayStream,
+  createSettler,
   createSseUsageObserver,
   DEFAULT_HOSTED_MODEL_ID,
+  estimateTokensForRequest,
   planHostedCall,
   upstreamFor,
   usageFromJsonBody,
+  type UsageTotals,
 } from "./proxy";
 
 const GEMINI_BODY = { contents: [{ role: "user", parts: [{ text: "hi" }] }] };
@@ -55,12 +61,12 @@ describe("planHostedCall", () => {
 
   it("plans non-streaming :generateContent", () => {
     const res = planHostedCall(["v1beta", "models", "gemini-2.5-flash:generateContent"], GEMINI_BODY, {});
-    expect(res.ok && res.plan.stream).toBe(false);
+    expect(res).toMatchObject({ ok: true, plan: { stream: false } });
   });
 
   it("respects stream:false on the alias", () => {
     const res = planHostedCall(["v1", "generate"], { request: GEMINI_BODY, stream: false }, {});
-    expect(res.ok && res.plan.stream).toBe(false);
+    expect(res).toMatchObject({ ok: true, plan: { stream: false } });
   });
 
   it("403s a model outside the allowlist on BOTH shapes", () => {
@@ -175,5 +181,167 @@ describe("usage observation", () => {
     ).toEqual({ totalTokens: 7, promptTokens: 3, outputTokens: 4 });
     expect(usageFromJsonBody({})).toBeNull();
     expect(usageFromJsonBody(null)).toBeNull();
+  });
+});
+
+describe("estimateTokensForRequest", () => {
+  it("scales with the serialized request size and never returns 0", () => {
+    expect(estimateTokensForRequest({})).toBeGreaterThanOrEqual(1);
+    const big = { contents: [{ parts: [{ text: "x".repeat(40_000) }] }] };
+    expect(estimateTokensForRequest(big)).toBeGreaterThan(9_000);
+    // Unserializable input degrades to the 1-token floor, never a throw.
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(estimateTokensForRequest(cyclic)).toBe(1);
+  });
+});
+
+// A settler harness with observable side effects and no Redis or Stripe.
+function settlerWorld(over: { estimatedTokens?: number; failMeter?: boolean; failUsage?: boolean } = {}) {
+  const calls = { released: 0, recorded: [] as number[], metered: [] as number[] };
+  const settler = createSettler({
+    lease: {
+      async release() {
+        calls.released++;
+      },
+    },
+    recordUsage: async (tokens) => {
+      if (over.failUsage) throw new Error("redis down");
+      calls.recorded.push(tokens);
+    },
+    recordMeter: async (tokens) => {
+      if (over.failMeter) throw new Error("stripe down");
+      calls.metered.push(tokens);
+    },
+    estimatedTokens: over.estimatedTokens ?? 500,
+  });
+  return { settler, calls };
+}
+
+const USAGE: UsageTotals = { totalTokens: 42, promptTokens: 30, outputTokens: 12 };
+
+describe("createSettler", () => {
+  it("settles exactly once: later calls are no-ops", async () => {
+    const { settler, calls } = settlerWorld();
+    await settler.settle(USAGE);
+    await settler.settle(null);
+    await settler.settle(USAGE);
+    expect(calls.released).toBe(1);
+    expect(calls.recorded).toEqual([42]);
+    expect(calls.metered).toEqual([42]);
+    await settler.done; // resolved, not hanging
+  });
+
+  it("charges the request-size estimate when the client bailed before usage arrived", async () => {
+    const { settler, calls } = settlerWorld({ estimatedTokens: 777 });
+    await settler.settle(null);
+    expect(calls.released).toBe(1);
+    expect(calls.recorded).toEqual([777]);
+    expect(calls.metered).toEqual([777]);
+  });
+
+  it("releases the lease but records and meters NOTHING on failure settles", async () => {
+    const { settler, calls } = settlerWorld();
+    await settler.settle(null, { metered: false });
+    expect(calls.released).toBe(1);
+    expect(calls.recorded).toEqual([]);
+    expect(calls.metered).toEqual([]);
+    await settler.done;
+  });
+
+  it("swallows meter failures (Redis kept the count) and never rejects", async () => {
+    const { settler, calls } = settlerWorld({ failMeter: true });
+    await expect(settler.settle(USAGE)).resolves.toBeUndefined();
+    expect(calls.recorded).toEqual([42]);
+    await settler.done;
+  });
+
+  it("resolves the done barrier even when accounting itself throws", async () => {
+    const { settler, calls } = settlerWorld({ failUsage: true });
+    await expect(settler.settle(USAGE)).resolves.toBeUndefined();
+    expect(calls.released).toBe(1);
+    await settler.done;
+    void calls;
+  });
+});
+
+function sseBytes(text: string): Uint8Array {
+  return new TextEncoder().encode(text);
+}
+
+function upstreamOf(...chunks: Uint8Array[]): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk);
+      controller.close();
+    },
+  });
+}
+
+describe("createRelayStream", () => {
+  const USAGE_FRAME = `data: ${JSON.stringify({
+    usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 6, totalTokenCount: 11 },
+  })}\n\n`;
+
+  it("relays bytes untouched and settles once with the observed usage BEFORE closing", async () => {
+    const { settler, calls } = settlerWorld();
+    const events: string[] = [];
+    const originalSettle = settler.settle;
+    const relay = createRelayStream(
+      upstreamOf(sseBytes("data: {}\n\n"), sseBytes(USAGE_FRAME)),
+      createSseUsageObserver(),
+      async (usage, opts) => {
+        events.push("settle");
+        await originalSettle(usage, opts);
+      }
+    );
+    const reader = relay.getReader();
+    let out = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        events.push("closed");
+        break;
+      }
+      out += new TextDecoder().decode(value);
+    }
+    expect(out).toBe("data: {}\n\n" + USAGE_FRAME);
+    // The accounting landed before the stream reported done to the consumer.
+    expect(events).toEqual(["settle", "closed"]);
+    expect(calls.released).toBe(1);
+    expect(calls.recorded).toEqual([11]);
+  });
+
+  it("cancel mid-stream releases the lease and records exactly once (abort brake)", async () => {
+    const { settler, calls } = settlerWorld({ estimatedTokens: 321 });
+    // An endless upstream that never sends usageMetadata.
+    const upstream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(sseBytes("data: {\"candidates\":[]}\n\n"));
+      },
+    });
+    const relay = createRelayStream(upstream, createSseUsageObserver(), settler.settle);
+    const reader = relay.getReader();
+    await reader.read();
+    await reader.cancel("client went away");
+    await settler.done;
+    expect(calls.released).toBe(1);
+    // No usage frame ever arrived: the estimate is charged, not ~0.
+    expect(calls.recorded).toEqual([321]);
+  });
+
+  it("an upstream read error settles once and surfaces the error", async () => {
+    const { settler, calls } = settlerWorld();
+    const upstream = new ReadableStream<Uint8Array>({
+      pull() {
+        throw new Error("upstream reset");
+      },
+    });
+    const relay = createRelayStream(upstream, createSseUsageObserver(), settler.settle);
+    const reader = relay.getReader();
+    await expect(reader.read()).rejects.toThrow("upstream reset");
+    await settler.done;
+    expect(calls.released).toBe(1);
+    expect(calls.recorded).toHaveLength(1);
   });
 });

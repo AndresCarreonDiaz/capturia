@@ -20,7 +20,7 @@ const path = require("path");
 const { transcribeWav } = require("./whisper");
 const keychain = require("./keychain");
 const deckGen = require("./deck-generate");
-const { startRuntimeServer } = require("./runtime-server");
+const { startRuntimeServer, loadDevEnvFiles } = require("./runtime-server");
 const { createTray } = require("./tray");
 const { maybeOfferMoveToApplications, offerMoveToApplications } = require("./first-run");
 const speechHelper = require("./speech-helper");
@@ -159,12 +159,25 @@ function registerIpc() {
 
   // Deck codegen on the user's key, in main. Returns raw model text (JSON the
   // renderer validates). The prompt is built in the renderer (lib/deck/prompt).
+  // Codegen sees the SAME effective env as the runtime server (dev .env files
+  // merged under the OS environment), so a dev CAPTURIA_HOSTED_URL override
+  // applies to both hosted call paths and the vault token can never be sent
+  // to production by only one of them.
+  let deckEnvCache = null;
+  const deckCodegenEnv = () => {
+    if (!deckEnvCache) {
+      deckEnvCache = isDev
+        ? { ...loadDevEnvFiles(path.join(__dirname, "..")), ...process.env }
+        : process.env;
+    }
+    return deckEnvCache;
+  };
   ipcMain.handle(
     "deck:generate",
     guarded((_event, payload) => {
       const provider = assertProvider(payload && payload.provider);
       const prompt = assertNonEmptyString(payload && payload.prompt, "Prompt");
-      return deckGen.generateCues(prompt, provider);
+      return deckGen.generateCues(prompt, provider, deckCodegenEnv());
     })
   );
 

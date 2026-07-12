@@ -38,8 +38,18 @@ export function gateConfigFromEnv(env: Env = process.env): GateConfig {
 }
 
 function positiveInt(raw: string | undefined, fallback: number): number {
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+  // Floor BEFORE the > 0 check so "0.5" falls back instead of becoming 0.
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+// For per-IP rate limiting on the anonymous billing endpoints: first hop of
+// x-forwarded-for (Vercel sets it; spoofing only lets an attacker throttle
+// the identity they made up, not anyone else).
+export function clientIpFrom(request: Request): string {
+  const forwarded = request.headers.get("x-forwarded-for");
+  const first = forwarded?.split(",")[0]?.trim();
+  return first || "unknown";
 }
 
 const KILL_KEY = "hosted:kill";
@@ -53,6 +63,12 @@ export interface Entitlement {
   plan: string;
   subscription: string | null;
   updatedAt: number;
+  /**
+   * Stripe event timestamp (ms) that produced this record; the ordering
+   * watermark that stops an out-of-order webhook overwriting a newer state.
+   * Absent on records written before ordering was guarded.
+   */
+  eventAt?: number;
 }
 
 export function entitlementKey(customer: string): string {
@@ -94,10 +110,29 @@ function usageKey(customer: string, nowMs: number): string {
   return `hosted:usage:${customer}:${monthKey(nowMs)}`;
 }
 
+// When a request is refused, the honest retry-after is the earliest instant
+// a NEW attempt would be admitted. Attempts INCR before the check, so the
+// next attempt at elapsed e is admitted when previous*(1-e) + current + 1 <=
+// limit; when even current + 1 exceeds the limit, no instant in this window
+// works and the wait extends into the next window, where today's current
+// bucket becomes the decaying previous one.
+function refusalRetryMs(previous: number, current: number, limit: number, nowMs: number): number {
+  const intoWindow = nowMs % RATE_WINDOW_MS;
+  const headroom = limit - current - 1;
+  if (headroom >= 0) {
+    if (previous <= 0) return 0;
+    const needElapsed = Math.max(0, 1 - headroom / previous);
+    return Math.max(0, needElapsed * RATE_WINDOW_MS - intoWindow);
+  }
+  const nextElapsed = current > 0 ? Math.max(0, 1 - (limit - 1) / current) : 0;
+  return RATE_WINDOW_MS - intoWindow + nextElapsed * RATE_WINDOW_MS;
+}
+
 // Sliding window as two weighted fixed windows (the @upstash/ratelimit
 // "sliding window" algorithm): INCR the current minute bucket, weight the
 // previous bucket by how much of it still overlaps the trailing 60s. Refused
-// attempts still count, so hammering a 429 never makes it clear faster.
+// attempts still count, so hammering a 429 never makes it clear faster; the
+// retry-after hint accounts for that, so honoring it actually succeeds.
 export async function checkRateLimit(
   run: RedisRunner,
   customer: string,
@@ -114,9 +149,12 @@ export async function checkRateLimit(
   const previous = Number(prevRaw) || 0;
   const elapsed = (nowMs % RATE_WINDOW_MS) / RATE_WINDOW_MS;
   const weighted = previous * (1 - elapsed) + current;
+  const allowed = weighted <= limit;
   return {
-    allowed: weighted <= limit,
-    retryAfterSec: Math.max(1, Math.ceil((RATE_WINDOW_MS - (nowMs % RATE_WINDOW_MS)) / 1000)),
+    allowed,
+    retryAfterSec: allowed
+      ? 1
+      : Math.max(1, Math.ceil(refusalRetryMs(previous, current, limit, nowMs) / 1000)),
   };
 }
 
@@ -149,18 +187,26 @@ export interface Lease {
   release(): Promise<void>;
 }
 
-// One concurrent generation per user: a human cannot present two meetings at
-// once, so a second parallel stream is either a bug or shared credentials.
-// SET NX PX acquires; release deletes only when the value is still ours
-// (GET+DEL rather than Lua for memory-mode parity; the worst case of the
-// non-atomic window is deleting a lease the TTL was about to reap anyway).
+// The desktop app legitimately runs two hosted call classes at once: the live
+// overlay stream and a one-shot deck-codegen :generateContent. Each lane gets
+// its own lease so they never 409 each other, while two concurrent calls in
+// the SAME lane still read as a bug or shared credentials.
+export type LeaseLane = "stream" | "batch";
+
+// One concurrent generation per user per lane: a human cannot present two
+// meetings at once, so a second parallel stream is either a bug or shared
+// credentials. SET NX PX acquires; release deletes only when the value is
+// still ours (GET+DEL rather than Lua for memory-mode parity; the worst case
+// of the non-atomic window is deleting a lease the TTL was about to reap
+// anyway).
 export async function acquireLease(
   run: RedisRunner,
   customer: string,
   ttlMs: number,
-  requestId: string
+  requestId: string,
+  lane: LeaseLane = "stream"
 ): Promise<Lease | null> {
-  const key = `hosted:lease:${customer}`;
+  const key = `hosted:lease:${customer}:${lane}`;
   const reply = await run(["SET", key, requestId, "NX", "PX", ttlMs]);
   if (reply !== "OK") return null;
   return {
@@ -172,16 +218,17 @@ export async function acquireLease(
 }
 
 export type GateDecision =
-  | { ok: true; lease: Lease }
+  | { ok: true }
   | { ok: false; status: number; error: string; retryAfterSec?: number };
 
-// The full brake stack in gate order. Cheapest and most global first; the
-// lease is last so a refused request never leaves a stale lock behind.
+// The brake stack in gate order, cheapest and most global first. None of
+// these need the request body, so the route runs them BEFORE parsing it;
+// the per-lane lease is acquired separately once the call is planned, so a
+// refused or malformed request never leaves a stale lock behind.
 export async function gateHostedCall(
   run: RedisRunner,
   customer: string,
   cfg: GateConfig,
-  requestId: string,
   nowMs = Date.now()
 ): Promise<GateDecision> {
   if (await isKillSwitchOn(run)) {
@@ -208,13 +255,5 @@ export async function gateHostedCall(
       error: "Monthly included usage exhausted; hosted generation resumes next cycle.",
     };
   }
-  const lease = await acquireLease(run, customer, cfg.leaseTtlMs, requestId);
-  if (!lease) {
-    return {
-      ok: false,
-      status: 409,
-      error: "Another generation is already streaming for this account.",
-    };
-  }
-  return { ok: true, lease };
+  return { ok: true };
 }

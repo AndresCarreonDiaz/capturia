@@ -1,12 +1,15 @@
 // Stripe webhook receiver (M11 slice 1). Signature-verified against
 // STRIPE_WEBHOOK_SECRET, then applied to the Redis entitlement cache by
 // lib/hosted/entitlements.ts:
-//   checkout.session.completed        -> entitlement active + activation code
-//   customer.subscription.updated     -> entitlement cache follows status
-//   customer.subscription.deleted     -> entitlement revoked
-// Stripe stays the source of truth; Redis is the runtime cache the proxy
-// and token endpoints consult. Unhandled event types are acked with 200 so
-// the endpoint can be subscribed broadly without retry storms.
+//   checkout.session.completed /
+//   checkout.session.async_payment_succeeded -> entitlement + activation code
+//   customer.subscription.updated            -> entitlement cache follows status
+//   customer.subscription.deleted            -> entitlement revoked
+// Deliveries are deduplicated on event.id and ordered by event.created in
+// applyStripeEvent, because Stripe is at-least-once and unordered. Stripe
+// stays the source of truth; Redis is the runtime cache the proxy and token
+// endpoints consult. Unhandled event types are acked with 200 so the
+// endpoint can be subscribed broadly without retry storms.
 
 import { verifyStripeSignature } from "@/lib/billing/stripe";
 import { applyStripeEvent } from "@/lib/hosted/entitlements";
@@ -37,7 +40,15 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "invalid payload" }, { status: 400 });
   }
 
-  const backend = await getHostedBackend(process.env);
+  // A misconfigured backend (in-memory in production) must NOT 200-ack:
+  // Stripe keeps retrying until real Redis env exists, so no paid checkout
+  // is ever acknowledged into a store that forgets it.
+  let backend;
+  try {
+    backend = await getHostedBackend(process.env);
+  } catch {
+    return Response.json({ error: "Billing state backend is not configured." }, { status: 503 });
+  }
   const outcome = await applyStripeEvent(
     backend.run,
     event as Parameters<typeof applyStripeEvent>[1],
@@ -45,7 +56,7 @@ export async function POST(request: Request): Promise<Response> {
   );
   // ids only; never codes, tokens, or full event payloads.
   if (outcome.handled) {
-    console.log(`capturia billing: ${outcome.action} for ${outcome.customer}`);
+    console.log(`capturia billing: ${outcome.action} for ${outcome.customer ?? "unknown"}`);
   }
   return Response.json({ received: true });
 }

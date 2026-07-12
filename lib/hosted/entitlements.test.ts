@@ -1,7 +1,7 @@
 // Pins the hosted entitlement lifecycle (lib/hosted/entitlements.ts) against
-// the in-memory runner: activation code mint/one-time-use/expiry, the
-// 3-device cap, refresh-token storage-as-hash, and the Stripe webhook ->
-// entitlement cache transitions.
+// the in-memory runner: activation code mint/one-time-use/expiry/redemption,
+// the 3-device cap, refresh-token storage-as-hash, and the Stripe webhook ->
+// entitlement cache transitions including delivery dedup and event ordering.
 
 import { describe, expect, it } from "vitest";
 import { createMemoryRedis } from "./memory-redis";
@@ -16,6 +16,7 @@ import {
   MAX_DEVICES,
   mintActivationCode,
   mintRefreshToken,
+  redeemActivationCode,
   registerDevice,
   storeActivation,
   storeActivationBySession,
@@ -64,14 +65,70 @@ describe("activation codes", () => {
     expect(await consumeActivationCode(run, code)).toBeNull();
   });
 
-  it("hands the session-filed code over exactly once", async () => {
+  it("hands the session-filed code over exactly once, only with the pickup nonce", async () => {
     const { run } = world();
-    await storeActivationBySession(run, "cs_test_123", "CAPTURIA-AAAA-BBBB-CCCC-DDDD");
-    expect(await takeActivationCodeForSession(run, "cs_test_123")).toBe(
+    const NONCE = "pickupnonce0123456789";
+    await storeActivationBySession(run, "cs_test_123", NONCE, "CAPTURIA-AAAA-BBBB-CCCC-DDDD");
+    // A wrong or missing nonce is a plain miss AND must not destroy the
+    // record: the session id alone (visible in a forwarded checkout URL) is
+    // not enough to steal the payer's code.
+    expect(await takeActivationCodeForSession(run, "cs_test_123", "wrongnonce0123456789")).toBeNull();
+    expect(await takeActivationCodeForSession(run, "cs_test_123", undefined)).toBeNull();
+    expect(await takeActivationCodeForSession(run, "cs_test_123", NONCE)).toBe(
       "CAPTURIA-AAAA-BBBB-CCCC-DDDD"
     );
-    expect(await takeActivationCodeForSession(run, "cs_test_123")).toBeNull();
-    expect(await takeActivationCodeForSession(run, "cs_/../weird")).toBeNull();
+    expect(await takeActivationCodeForSession(run, "cs_test_123", NONCE)).toBeNull();
+    expect(await takeActivationCodeForSession(run, "cs_/../weird", NONCE)).toBeNull();
+  });
+});
+
+describe("redeemActivationCode (the full activation decision)", () => {
+  const DEVICE = "device-redeem-1";
+
+  async function seeded() {
+    const w = world();
+    const code = mintActivationCode();
+    await storeActivation(w.run, code, { customer: CUSTOMER, subscription: "sub_1" });
+    return { ...w, code };
+  }
+
+  it("succeeds for an entitled customer and consumes the code for good", async () => {
+    const { run, code } = await seeded();
+    await writeEntitlement(run, CUSTOMER, "active", "sub_1", T0);
+    const res = await redeemActivationCode(run, code, DEVICE);
+    expect(res).toEqual({ ok: true, customer: CUSTOMER, plan: "pro", devices: 1 });
+    expect(await isDeviceRegistered(run, CUSTOMER, DEVICE)).toBe(true);
+    // Success never re-stores: the code is spent.
+    expect(await redeemActivationCode(run, code, DEVICE)).toMatchObject({ ok: false, status: 404 });
+  });
+
+  it("404s unknown codes without leaking whether they ever existed", async () => {
+    const { run } = world();
+    expect(await redeemActivationCode(run, mintActivationCode(), DEVICE)).toMatchObject({
+      ok: false,
+      status: 404,
+    });
+  });
+
+  it("puts the code back on a lapsed subscription so the buyer can retry", async () => {
+    const { run, code } = await seeded();
+    await writeEntitlement(run, CUSTOMER, "canceled", "sub_1", T0);
+    expect(await redeemActivationCode(run, code, DEVICE)).toMatchObject({ ok: false, status: 402 });
+    // Fix the subscription, retry the SAME code: it must still work.
+    await writeEntitlement(run, CUSTOMER, "active", "sub_1", T0);
+    expect(await redeemActivationCode(run, code, DEVICE)).toMatchObject({ ok: true });
+  });
+
+  it("puts the code back on the device limit so freeing a seat unblocks it", async () => {
+    const { run, code } = await seeded();
+    await writeEntitlement(run, CUSTOMER, "active", "sub_1", T0);
+    for (let i = 1; i <= MAX_DEVICES; i++) await registerDevice(run, CUSTOMER, `device-${i}`);
+    expect(await redeemActivationCode(run, code, "device-4th-seat")).toMatchObject({
+      ok: false,
+      status: 403,
+    });
+    // An already-registered device redeeming the same code still succeeds.
+    expect(await redeemActivationCode(run, code, "device-2")).toMatchObject({ ok: true });
   });
 });
 
@@ -93,10 +150,26 @@ describe("device registration", () => {
       ok: false,
       error: "device_limit",
     });
+    // The refused device must not linger in the set (add-then-rollback).
+    expect(await isDeviceRegistered(run, CUSTOMER, "device-4")).toBe(false);
     // Re-registering an existing device is not a new seat.
     expect(await registerDevice(run, CUSTOMER, "device-2")).toEqual({ ok: true, devices: 3 });
     expect(await isDeviceRegistered(run, CUSTOMER, "device-2")).toBe(true);
-    expect(await isDeviceRegistered(run, CUSTOMER, "device-4")).toBe(false);
+  });
+
+  it("self-corrects an over-cap set instead of letting racers keep extra seats", async () => {
+    const { run } = world();
+    // Simulate the worst race outcome: two concurrent activations both got
+    // their SADD in past the cap before either could check.
+    for (let i = 1; i <= MAX_DEVICES + 1; i++) await run(["SADD", `hosted:devices:${CUSTOMER}`, `device-${i}`]);
+    // A NEW device is refused and rolled back while the set is over cap.
+    expect(await registerDevice(run, CUSTOMER, "device-9")).toEqual({
+      ok: false,
+      error: "device_limit",
+    });
+    expect(await isDeviceRegistered(run, CUSTOMER, "device-9")).toBe(false);
+    // An EXISTING member stays registered (token refresh must keep working).
+    expect(await registerDevice(run, CUSTOMER, "device-1")).toMatchObject({ ok: true });
   });
 });
 
@@ -122,8 +195,10 @@ describe("refresh tokens", () => {
 });
 
 describe("applyStripeEvent (webhook -> cache transitions)", () => {
-  const checkoutEvent = (over: Record<string, unknown> = {}) => ({
+  const PICKUP = "pickupnonce0123456789";
+  const checkoutEvent = (over: Record<string, unknown> = {}, event: Record<string, unknown> = {}) => ({
     type: "checkout.session.completed",
+    ...event,
     data: {
       object: {
         id: "cs_test_abc",
@@ -131,6 +206,7 @@ describe("applyStripeEvent (webhook -> cache transitions)", () => {
         subscription: "sub_9",
         mode: "subscription",
         payment_status: "paid",
+        metadata: { pickup: PICKUP },
         ...over,
       },
     },
@@ -148,7 +224,7 @@ describe("applyStripeEvent (webhook -> cache transitions)", () => {
     expect(isEntitled(await readEntitlement(run, CUSTOMER))).toBe(true);
     expect(codes).toHaveLength(1);
     expect(await consumeActivationCode(run, codes[0])).toMatchObject({ customer: CUSTOMER });
-    expect(await takeActivationCodeForSession(run, "cs_test_abc")).toBe(codes[0]);
+    expect(await takeActivationCodeForSession(run, "cs_test_abc", PICKUP)).toBe(codes[0]);
   });
 
   it("ignores unpaid or non-subscription checkouts", async () => {
@@ -158,7 +234,61 @@ describe("applyStripeEvent (webhook -> cache transitions)", () => {
     expect(await readEntitlement(run, CUSTOMER)).toBeNull();
   });
 
-  it("subscription.updated follows Stripe's status, unknown statuses fail closed", async () => {
+  it("mints on async_payment_succeeded and still refuses its unpaid sibling", async () => {
+    const { run } = world();
+    const codes: string[] = [];
+    const mint = () => {
+      const code = mintActivationCode();
+      codes.push(code);
+      return code;
+    };
+    // Async flows: completed arrives unpaid first, the paid signal later.
+    const unpaidCompleted = checkoutEvent({ payment_status: "unpaid" }, { id: "evt_1" });
+    expect((await applyStripeEvent(run, unpaidCompleted, T0, mint)).handled).toBe(false);
+    const paidAsync = checkoutEvent({}, {
+      id: "evt_2",
+      type: "checkout.session.async_payment_succeeded",
+    });
+    const outcome = await applyStripeEvent(run, paidAsync, T0, mint);
+    expect(outcome).toEqual({ handled: true, action: "activation_minted", customer: CUSTOMER });
+    expect(codes).toHaveLength(1);
+  });
+
+  it("deduplicates redelivered events by event id: one delivery, one code", async () => {
+    const { run } = world();
+    const codes: string[] = [];
+    const mint = () => {
+      const code = mintActivationCode();
+      codes.push(code);
+      return code;
+    };
+    const event = checkoutEvent({}, { id: "evt_replay_1" });
+    expect((await applyStripeEvent(run, event, T0, mint)).action).toBe("activation_minted");
+    // Stripe retries carry the SAME event id (re-signed, same payload).
+    expect((await applyStripeEvent(run, event, T0, mint)).action).toBe("duplicate_ignored");
+    expect(codes).toHaveLength(1);
+    expect(await consumeActivationCode(run, codes[0])).toMatchObject({ customer: CUSTOMER });
+    expect(await consumeActivationCode(run, codes[0])).toBeNull();
+  });
+
+  it("mints at most one code per checkout session across DISTINCT event ids", async () => {
+    const { run } = world();
+    const codes: string[] = [];
+    const mint = () => {
+      const code = mintActivationCode();
+      codes.push(code);
+      return code;
+    };
+    expect((await applyStripeEvent(run, checkoutEvent({}, { id: "evt_a" }), T0, mint)).action).toBe(
+      "activation_minted"
+    );
+    expect((await applyStripeEvent(run, checkoutEvent({}, { id: "evt_b" }), T0, mint)).action).toBe(
+      "duplicate_ignored"
+    );
+    expect(codes).toHaveLength(1);
+  });
+
+  it("subscription.updated follows Stripe's status; revoking states fail closed, limbo states are no-ops", async () => {
     const { run } = world();
     const sub = (status: string) => ({
       type: "customer.subscription.updated",
@@ -170,6 +300,12 @@ describe("applyStripeEvent (webhook -> cache transitions)", () => {
     expect((await readEntitlement(run, CUSTOMER))?.status).toBe("past_due");
     await applyStripeEvent(run, sub("unpaid"), T0);
     expect(isEntitled(await readEntitlement(run, CUSTOMER))).toBe(false);
+    // "incomplete" never granted anything and resolves on its own; writing
+    // "canceled" for it could only clobber a healthy record.
+    await applyStripeEvent(run, sub("active"), T0);
+    const limbo = await applyStripeEvent(run, sub("incomplete"), T0);
+    expect(limbo).toEqual({ handled: true, action: "status_ignored", customer: CUSTOMER });
+    expect((await readEntitlement(run, CUSTOMER))?.status).toBe("active");
   });
 
   it("subscription.deleted revokes the entitlement", async () => {
@@ -182,6 +318,35 @@ describe("applyStripeEvent (webhook -> cache transitions)", () => {
     );
     expect(outcome).toEqual({ handled: true, action: "entitlement_revoked", customer: CUSTOMER });
     expect(isEntitled(await readEntitlement(run, CUSTOMER))).toBe(false);
+  });
+
+  it("ignores an out-of-order older event instead of resurrecting a canceled customer", async () => {
+    const { run } = world();
+    const CREATED_T1 = Math.floor(T0 / 1000);
+    const CREATED_T2 = CREATED_T1 + 60;
+    const sub = (type: string, status: string, created: number) => ({
+      type,
+      created,
+      data: { object: { id: "sub_9", customer: CUSTOMER, status } },
+    });
+    // The cancellation lands first (delivery order is not guaranteed) ...
+    await applyStripeEvent(run, sub("customer.subscription.deleted", "canceled", CREATED_T2), T0);
+    expect(isEntitled(await readEntitlement(run, CUSTOMER))).toBe(false);
+    // ... then the OLDER "active" update arrives late: it must not win.
+    const stale = await applyStripeEvent(
+      run,
+      sub("customer.subscription.updated", "active", CREATED_T1),
+      T0
+    );
+    expect(stale).toEqual({ handled: true, action: "stale_ignored", customer: CUSTOMER });
+    expect(isEntitled(await readEntitlement(run, CUSTOMER))).toBe(false);
+    // A genuinely NEWER event still flows through.
+    await applyStripeEvent(
+      run,
+      sub("customer.subscription.updated", "active", CREATED_T2 + 60),
+      T0
+    );
+    expect(isEntitled(await readEntitlement(run, CUSTOMER))).toBe(true);
   });
 
   it("acks unknown event types untouched", async () => {

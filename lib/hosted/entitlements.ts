@@ -15,7 +15,13 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import type { RedisRunner } from "../upstash";
-import { entitlementKey, type Entitlement, type EntitlementStatus } from "./gate";
+import {
+  entitlementKey,
+  isEntitled,
+  readEntitlement,
+  type Entitlement,
+  type EntitlementStatus,
+} from "./gate";
 
 const ACTIVATION_TTL_S = 30 * 24 * 60 * 60; // unredeemed purchases surface via Stripe anyway
 const SESSION_TTL_S = ACTIVATION_TTL_S;
@@ -31,10 +37,6 @@ const REFRESH_PREFIX = "crt_";
 
 function activationKey(code: string): string {
   return `hosted:act:${code}`;
-}
-
-function sessionKey(sessionId: string): string {
-  return `hosted:session:${sessionId}`;
 }
 
 function devicesKey(customer: string): string {
@@ -67,9 +69,11 @@ export async function writeEntitlement(
   customer: string,
   status: EntitlementStatus,
   subscription: string | null,
-  nowMs: number
+  nowMs: number,
+  eventAtMs?: number
 ): Promise<Entitlement> {
   const ent: Entitlement = { status, plan: "pro", subscription, updatedAt: nowMs };
+  if (eventAtMs !== undefined) ent.eventAt = eventAtMs;
   await run(["SET", entitlementKey(customer), JSON.stringify(ent)]);
   return ent;
 }
@@ -104,23 +108,40 @@ export async function consumeActivationCode(
   }
 }
 
-// Checkout success pages only know their session id, so the webhook also
-// files the code under the session for one one-time pickup. Session ids are
-// unguessable and known only to the buyer's browser and Stripe.
+// Checkout success pages only know their session id plus the pickup nonce
+// the checkout endpoint embedded in their success URL, so the webhook files
+// the code under a hash of BOTH for one one-time pickup. Binding the pickup
+// to the nonce means a third party who initiated the checkout and only
+// learned the session id (it is visible in the checkout URL they forwarded)
+// still cannot poll the code out from under the payer; and hashing keeps the
+// raw session id out of the keyspace.
+export const PICKUP_NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;
+
+function pickupKey(sessionId: string, pickupNonce: string): string {
+  const digest = createHash("sha256").update(`${sessionId}:${pickupNonce}`).digest("hex");
+  return `hosted:pickup:${digest}`;
+}
+
 export async function storeActivationBySession(
   run: RedisRunner,
   sessionId: string,
+  pickupNonce: string,
   code: string
 ): Promise<void> {
-  await run(["SET", sessionKey(sessionId), code, "EX", SESSION_TTL_S]);
+  await run(["SET", pickupKey(sessionId, pickupNonce), code, "EX", SESSION_TTL_S]);
 }
 
+// GETDEL on the hashed key: a wrong nonce is a plain miss, so probing can
+// never destroy the real record, and the first correct pickup wins exactly
+// once.
 export async function takeActivationCodeForSession(
   run: RedisRunner,
-  sessionId: unknown
+  sessionId: unknown,
+  pickupNonce: unknown
 ): Promise<string | null> {
   if (typeof sessionId !== "string" || !/^cs_[A-Za-z0-9_]{8,200}$/.test(sessionId)) return null;
-  const raw = await run(["GETDEL", sessionKey(sessionId)]);
+  if (typeof pickupNonce !== "string" || !PICKUP_NONCE_RE.test(pickupNonce)) return null;
+  const raw = await run(["GETDEL", pickupKey(sessionId, pickupNonce)]);
   return typeof raw === "string" ? raw : null;
 }
 
@@ -130,20 +151,70 @@ export type DeviceRegistration =
 
 // Idempotent per device id; refuses the 4th distinct device. (The proposal's
 // auto-deactivate-oldest UX belongs to the desktop entitlement slice; the
-// hard cap is what protects the metered backend today.)
+// hard cap is what protects the metered backend today.) Add-first then
+// self-correct: two racing activations can both SADD past the cap for a
+// moment, but each rolls back its own overflow, so the set converges to at
+// most MAX_DEVICES under any interleaving without needing Lua.
 export async function registerDevice(
   run: RedisRunner,
   customer: string,
   deviceId: string
 ): Promise<DeviceRegistration> {
   const key = devicesKey(customer);
-  const already = Number(await run(["SISMEMBER", key, deviceId])) === 1;
-  if (!already) {
-    const count = Number(await run(["SCARD", key])) || 0;
-    if (count >= MAX_DEVICES) return { ok: false, error: "device_limit" };
-    await run(["SADD", key, deviceId]);
+  const added = Number(await run(["SADD", key, deviceId])) === 1;
+  const count = Number(await run(["SCARD", key])) || 1;
+  if (added && count > MAX_DEVICES) {
+    await run(["SREM", key, deviceId]);
+    return { ok: false, error: "device_limit" };
   }
-  return { ok: true, devices: Number(await run(["SCARD", key])) || 1 };
+  return { ok: true, devices: Math.min(count, MAX_DEVICES) };
+}
+
+export type ActivationRedemption =
+  | { ok: true; customer: string; plan: string; devices: number }
+  | { ok: false; status: 402 | 403 | 404; error: string };
+
+// The full code-redemption decision: consume the one-time code, then check
+// entitlement and the device cap. The consuming GETDEL still guarantees
+// exactly one concurrent winner, but a winner who fails a RECOVERABLE check
+// (subscription lapsed, device limit) puts the record back before returning,
+// so the customer can retry after fixing the condition instead of being
+// permanently locked out of a code they paid for. Success never re-stores,
+// so double redemption stays impossible.
+export async function redeemActivationCode(
+  run: RedisRunner,
+  code: unknown,
+  deviceId: string
+): Promise<ActivationRedemption> {
+  const activation = await consumeActivationCode(run, code);
+  if (!activation) {
+    // Unknown, malformed, expired, and already-used all read the same:
+    // nothing here confirms whether a guessed code ever existed.
+    return { ok: false, status: 404, error: "Invalid or already used activation code." };
+  }
+
+  const entitlement = await readEntitlement(run, activation.customer);
+  if (!isEntitled(entitlement)) {
+    await storeActivation(run, code as string, activation);
+    return { ok: false, status: 402, error: "No active subscription for this activation code." };
+  }
+
+  const device = await registerDevice(run, activation.customer, deviceId);
+  if (!device.ok) {
+    await storeActivation(run, code as string, activation);
+    return {
+      ok: false,
+      status: 403,
+      error: "Device limit reached (3). Deactivate another device first.",
+    };
+  }
+
+  return {
+    ok: true,
+    customer: activation.customer,
+    plan: entitlement?.plan ?? "pro",
+    devices: device.devices,
+  };
 }
 
 export async function isDeviceRegistered(
@@ -194,29 +265,70 @@ export async function lookupRefreshToken(
 
 // --- Stripe webhook -> entitlement cache -------------------------------
 
-// Subscription statuses that keep the hosted tier on. incomplete/unpaid/
-// canceled/incomplete_expired/paused all read as "not entitled"; see
-// isEntitled in gate.ts for why past_due stays on.
+// Subscription statuses that keep the hosted tier on; see isEntitled in
+// gate.ts for why past_due stays on.
 const STATUS_MAP: Record<string, EntitlementStatus> = {
   active: "active",
   trialing: "trialing",
   past_due: "past_due",
 };
 
+// Statuses that positively end access. "incomplete" is deliberately absent
+// from both maps: an incomplete subscription never granted anything and
+// resolves to active or incomplete_expired on its own, so writing "canceled"
+// for it could only clobber a healthy record from another subscription.
+const REVOKED_STATUSES = new Set(["canceled", "unpaid", "paused", "incomplete_expired"]);
+
 interface StripeEventLike {
+  id?: unknown;
   type?: unknown;
+  /** Stripe event creation time, unix SECONDS. */
+  created?: unknown;
   data?: { object?: Record<string, unknown> };
 }
 
 export interface WebhookOutcome {
   handled: boolean;
-  action?: "activation_minted" | "entitlement_updated" | "entitlement_revoked";
+  action?:
+    | "activation_minted"
+    | "entitlement_updated"
+    | "entitlement_revoked"
+    | "duplicate_ignored"
+    | "stale_ignored"
+    | "status_ignored";
   customer?: string;
+}
+
+const EVENT_DEDUP_TTL_S = 3 * 24 * 60 * 60; // covers Stripe's 3-day retry schedule
+
+function eventDedupKey(eventId: string): string {
+  return `hosted:evt:${eventId}`;
+}
+
+function mintMarkerKey(sessionId: string): string {
+  return `hosted:act-minted:${sessionId}`;
+}
+
+// Skip a subscription-state write when the stored record came from a NEWER
+// Stripe event: delivery order is explicitly not guaranteed, and without the
+// watermark a delayed "active" could resurrect a canceled customer (or a
+// delayed "canceled" lock out a paying one) until the next event, which for
+// a resurrected cancellation never comes.
+async function isStaleEvent(
+  run: RedisRunner,
+  customer: string,
+  eventAtMs: number | null
+): Promise<boolean> {
+  if (eventAtMs === null) return false;
+  const current = await readEntitlement(run, customer);
+  return typeof current?.eventAt === "number" && current.eventAt > eventAtMs;
 }
 
 // Applies one verified Stripe event to the Redis cache. Returns a description
 // safe to log (ids only, never codes or tokens). Unknown event types are
 // acknowledged untouched so the webhook endpoint can subscribe broadly.
+// Deliveries are deduplicated on event.id (Stripe retries re-sign the same
+// event) and ordered by event.created (Stripe does not guarantee order).
 export async function applyStripeEvent(
   run: RedisRunner,
   event: StripeEventLike,
@@ -226,16 +338,39 @@ export async function applyStripeEvent(
   const type = typeof event?.type === "string" ? event.type : "";
   const object = event?.data?.object ?? {};
   const customer = typeof object.customer === "string" ? object.customer : null;
+  const eventAtMs =
+    typeof event?.created === "number" && Number.isFinite(event.created)
+      ? Math.floor(event.created * 1000)
+      : null;
 
-  if (type === "checkout.session.completed") {
+  const eventId = typeof event?.id === "string" && event.id ? event.id : null;
+  if (eventId) {
+    const fresh = await run(["SET", eventDedupKey(eventId), "1", "NX", "EX", EVENT_DEDUP_TTL_S]);
+    if (fresh !== "OK") return { handled: true, action: "duplicate_ignored" };
+  }
+
+  if (type === "checkout.session.completed" || type === "checkout.session.async_payment_succeeded") {
     const paid = object.payment_status === "paid" || object.payment_status === "no_payment_required";
     if (!customer || object.mode !== "subscription" || !paid) return { handled: false };
+    const sessionId = typeof object.id === "string" && object.id.startsWith("cs_") ? object.id : null;
+    // One activation code per checkout session, even if Stripe delivers the
+    // paid state through several distinct events (completed + async variants
+    // carry different event ids, so the event dedup alone would not stop a
+    // second mint).
+    if (sessionId) {
+      const first = await run(["SET", mintMarkerKey(sessionId), "1", "NX", "EX", ACTIVATION_TTL_S]);
+      if (first !== "OK") return { handled: true, action: "duplicate_ignored", customer };
+    }
     const subscription = typeof object.subscription === "string" ? object.subscription : null;
-    await writeEntitlement(run, customer, "active", subscription, nowMs);
+    if (!(await isStaleEvent(run, customer, eventAtMs))) {
+      await writeEntitlement(run, customer, "active", subscription, nowMs, eventAtMs ?? undefined);
+    }
     const code = mintCode();
     await storeActivation(run, code, { customer, subscription });
-    if (typeof object.id === "string" && object.id.startsWith("cs_")) {
-      await storeActivationBySession(run, object.id, code);
+    const metadata = object.metadata as Record<string, unknown> | undefined;
+    const pickup = typeof metadata?.pickup === "string" ? metadata.pickup : null;
+    if (sessionId && pickup && PICKUP_NONCE_RE.test(pickup)) {
+      await storeActivationBySession(run, sessionId, pickup, code);
     }
     return { handled: true, action: "activation_minted", customer };
   }
@@ -243,9 +378,17 @@ export async function applyStripeEvent(
   if (type === "customer.subscription.updated" || type === "customer.subscription.created") {
     if (!customer) return { handled: false };
     const raw = typeof object.status === "string" ? object.status : "";
-    const status = Object.hasOwn(STATUS_MAP, raw) ? STATUS_MAP[raw] : "canceled";
+    const status = Object.hasOwn(STATUS_MAP, raw)
+      ? STATUS_MAP[raw]
+      : REVOKED_STATUSES.has(raw)
+        ? "canceled"
+        : null;
+    if (status === null) return { handled: true, action: "status_ignored", customer };
+    if (await isStaleEvent(run, customer, eventAtMs)) {
+      return { handled: true, action: "stale_ignored", customer };
+    }
     const subscription = typeof object.id === "string" ? object.id : null;
-    await writeEntitlement(run, customer, status, subscription, nowMs);
+    await writeEntitlement(run, customer, status, subscription, nowMs, eventAtMs ?? undefined);
     return {
       handled: true,
       action: status === "canceled" ? "entitlement_revoked" : "entitlement_updated",
@@ -255,8 +398,11 @@ export async function applyStripeEvent(
 
   if (type === "customer.subscription.deleted") {
     if (!customer) return { handled: false };
+    if (await isStaleEvent(run, customer, eventAtMs)) {
+      return { handled: true, action: "stale_ignored", customer };
+    }
     const subscription = typeof object.id === "string" ? object.id : null;
-    await writeEntitlement(run, customer, "canceled", subscription, nowMs);
+    await writeEntitlement(run, customer, "canceled", subscription, nowMs, eventAtMs ?? undefined);
     return { handled: true, action: "entitlement_revoked", customer };
   }
 

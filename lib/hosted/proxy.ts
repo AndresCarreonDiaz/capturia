@@ -228,3 +228,122 @@ export function createSseUsageObserver(): UsageObserver {
 export function usageFromJsonBody(body: unknown): UsageTotals | null {
   return usageFrom(body);
 }
+
+// Conservative prompt-token estimate from the serialized request (the usual
+// ~4 chars/token heuristic). This is the abort brake: a client that opens a
+// stream with a huge prompt and bails before Gemini's final usageMetadata
+// frame still gets charged roughly what the input cost, instead of the
+// 1-token floor that made the monthly budget bypassable.
+export function estimateTokensForRequest(request: unknown): number {
+  try {
+    return Math.max(1, Math.ceil(JSON.stringify(request).length / 4));
+  } catch {
+    return 1;
+  }
+}
+
+export interface SettleOptions {
+  /**
+   * false on failure paths (upstream fetch threw, non-2xx, missing body):
+   * the lease is released but nothing is recorded or metered, because a call
+   * that produced no model work must not cost the customer anything.
+   */
+  metered?: boolean;
+}
+
+export interface Settler {
+  /** Idempotent: the first call wins; clean end, error, and cancel can race to it. */
+  settle(usage: UsageTotals | null, options?: SettleOptions): Promise<void>;
+  /**
+   * Resolves once the first settle() has run to completion (never rejects).
+   * The route parks this on next/server's after() so a serverless runtime
+   * cannot freeze the invocation before accounting lands.
+   */
+  done: Promise<void>;
+}
+
+export interface SettlerInput {
+  lease: { release(): Promise<void> };
+  /** Records tokens to the usage counter (Redis). */
+  recordUsage(tokens: number): Promise<unknown>;
+  /** Records tokens to the billing meter (Stripe); null when unconfigured. */
+  recordMeter: ((tokens: number) => Promise<unknown>) | null;
+  /** Fallback charge when a metered settle has no observed usage. */
+  estimatedTokens: number;
+}
+
+// One settle path for lease release + usage accounting. Metering is awaited
+// but failure-tolerant: billing lag must never break a response the user
+// already saw. When observed usage is missing on a metered settle (client
+// aborted before the usageMetadata frame), the request-size estimate is
+// charged instead.
+export function createSettler(input: SettlerInput): Settler {
+  let settled = false;
+  let resolveDone!: () => void;
+  const done = new Promise<void>((resolve) => {
+    resolveDone = resolve;
+  });
+  return {
+    done,
+    async settle(usage, options = {}) {
+      if (settled) return;
+      settled = true;
+      try {
+        await input.lease.release();
+        if (options.metered !== false) {
+          const observed = usage?.totalTokens ?? 0;
+          const tokens = observed > 0 ? observed : input.estimatedTokens;
+          await input.recordUsage(tokens);
+          if (input.recordMeter) {
+            await input.recordMeter(tokens).catch(() => {
+              // Redis kept the count; Stripe meters are reconciled, not load-bearing.
+            });
+          }
+        }
+      } catch {
+        // The lease TTL is the backstop; never surface accounting errors.
+      } finally {
+        resolveDone();
+      }
+    },
+  };
+}
+
+// Relays the upstream SSE bytes untouched while the observer watches for the
+// final usageMetadata frame. Settling happens exactly once, on clean end,
+// error, or client cancel, and the clean-end settle completes BEFORE the
+// stream closes so the response cannot finish (and the serverless invocation
+// suspend) with accounting still in flight.
+export function createRelayStream(
+  upstreamBody: ReadableStream<Uint8Array>,
+  observer: UsageObserver,
+  settle: Settler["settle"]
+): ReadableStream<Uint8Array> {
+  const reader = upstreamBody.getReader();
+  const decoder = new TextDecoder();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          await settle(observer.usage());
+          controller.close();
+          return;
+        }
+        observer.write(decoder.decode(value, { stream: true }));
+        controller.enqueue(value);
+      } catch (err) {
+        await settle(observer.usage());
+        controller.error(err);
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } catch {
+        // upstream already gone
+      }
+      await settle(observer.usage());
+    },
+  });
+}

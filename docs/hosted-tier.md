@@ -27,13 +27,20 @@ Desktop app (Capturia JWT from keychain)
             entitlement cache          hosted:ent:<customer>
             rate limit                 ~10/min sliding window
             monthly token budget       hosted:usage:<customer>:<YYYY-MM>
-            concurrent-stream lease    hosted:lease:<customer>
+            per-lane lease             hosted:lease:<customer>:<stream|batch>
+                                       (live overlay stream and deck codegen
+                                       never 409 each other)
        3. forward Gemini wire body
             CAPTURIA_AI_GATEWAY_URL    Cloudflare AI Gateway (per-user $ caps,
                                        Gemini key in gateway secret store)
             else                       direct Gemini with server GOOGLE_API_KEY
        4. stream SSE back; on end: release lease, record one usage event to
-          Redis and (when configured) Stripe Billing Meters
+          Redis and (when configured) Stripe Billing Meters. A client abort
+          before Gemini's usageMetadata frame is charged the request-size
+          estimate (~4 chars/token), so bailing early cannot dodge the
+          budget; upstream failures release the lease and charge nothing.
+          Settlement is parked on next/server's after() so a serverless
+          suspend cannot lose it.
 ```
 
 Entitlement flow (no accounts):
@@ -59,10 +66,10 @@ Stripe Checkout (test mode)
 | `POST /api/hosted/v1beta/models/<id>:streamGenerateContent` | The exact wire shape `@ai-sdk/google` emits; lets the desktop runtime point at the proxy by swapping `baseURL` + key slot only |
 | `POST /api/hosted/v1beta/models/<id>:generateContent` | Non-streaming variant |
 | `POST /api/billing/checkout` | Creates the Stripe Checkout session (subscription, `STRIPE_PRICE_ID`) |
-| `POST /api/billing/webhook` | Stripe events -> Redis entitlement cache + activation codes |
+| `POST /api/billing/webhook` | Stripe events -> Redis entitlement cache + activation codes (deduplicated on event.id, ordered by event.created, one code per checkout session) |
 | `POST /api/billing/activate` | `{ code, deviceId }` -> `{ refreshToken, token, expiresAt, devices }` |
 | `POST /api/billing/token` | `{ refreshToken }` -> `{ token, expiresAt }` |
-| `GET /api/billing/activation-code?session_id=cs_...` | One-time code pickup for the checkout success page |
+| `GET /api/billing/activation-code?session_id=cs_...&pickup=...` | One-time code pickup for the checkout success page; the pickup nonce is minted per checkout, travels only in the success URL, and the code is filed under hash(session, nonce), so a bare session id retrieves nothing |
 
 The JWT rides in `x-goog-api-key` (what `@ai-sdk/google` sends) or a
 standard `Authorization: Bearer`. The proxy enforces a server-side model
@@ -77,7 +84,7 @@ valid token cannot pick an expensive model on Capturia's key.
 | `STRIPE_WEBHOOK_SECRET` | server | Webhook signature secret (whsec_...) |
 | `STRIPE_PRICE_ID` | server | Pro monthly price, printed by `scripts/hosted-setup-stripe.mjs` |
 | `STRIPE_API_BASE` | dev only | Point at stripe-mock (`http://localhost:12111`) |
-| `UPSTASH_REDIS_REST_URL` / `_TOKEN` | server | Runtime state. Absent: in-memory single-process fallback (dev) |
+| `UPSTASH_REDIS_REST_URL` / `_TOKEN` | server | Runtime state. Absent: in-memory single-process fallback in dev; PRODUCTION REFUSES to boot the hosted/billing endpoints without it (503, Stripe keeps retrying) so paid activations can never be acked into a store that forgets them |
 | `CAPTURIA_AI_GATEWAY_URL` | server | Cloudflare AI Gateway base (`https://gateway.ai.cloudflare.com/v1/<acct>/<gw>/google-ai-studio`). Absent: direct Gemini fallback |
 | `CAPTURIA_AI_GATEWAY_TOKEN` | server | Optional `cf-aig-authorization` token for an authenticated gateway |
 | `GOOGLE_API_KEY` (or `GOOGLE_GENERATIVE_AI_API_KEY`) | server | Gemini key for the direct fallback; with gateway-side BYOK neither is needed here |
@@ -85,7 +92,7 @@ valid token cannot pick an expensive model on Capturia's key.
 | `CAPTURIA_JWT_PUBLIC_KEY` | server | base64 SPKI DER. Verifies JWTs at the proxy |
 | `CAPTURIA_HOSTED_MODELS` | server | Optional csv override of the model allowlist |
 | `CAPTURIA_HOSTED_RATE_LIMIT` / `_MONTHLY_TOKENS` / `_LEASE_TTL_MS` | server | Brake tuning (defaults 10/min, 5M tokens, 120s) |
-| `CAPTURIA_HOSTED_DEV_ENTITLEMENT` | dev only | Seeds an active entitlement + the fixed dev activation code for that customer id. Ignored in production builds |
+| `CAPTURIA_HOSTED_DEV_ENTITLEMENT` | dev only | Seeds an active entitlement + the fixed dev activation code for that customer id. Seeded only into the in-memory backend: ignored in production builds AND whenever real Upstash env is present |
 | `CAPTURIA_HOSTED_URL` | desktop | Proxy origin override for the desktop runtime (dev: `http://localhost:3000/api/hosted`) |
 | `CAPTURIA_HOSTED_MODEL` | desktop | Hosted model id override (must be on the server allowlist) |
 
@@ -143,10 +150,12 @@ When the Stripe sk_test key lands:
    put the printed `STRIPE_PRICE_ID` in the env.
 2. `stripe listen --forward-to localhost:3000/api/billing/webhook`
    (Stripe CLI), put the printed `whsec_...` in `STRIPE_WEBHOOK_SECRET`.
-3. Drive a test checkout: `curl -X POST .../api/billing/checkout`, pay with
-   `4242 4242 4242 4242`, watch the webhook log `activation_minted`, fetch
-   the code via `/api/billing/activation-code?session_id=...`, then run the
-   activate -> token -> generate chain above with the real code.
+3. Drive a test checkout: `curl -X POST .../api/billing/checkout`, open the
+   returned URL, pay with `4242 4242 4242 4242`, watch the webhook log
+   `activation_minted`, land on the success URL and fetch the code via
+   `/api/billing/activation-code?session_id=...&pickup=...` (both come from
+   the success redirect), then run the activate -> token -> generate chain
+   above with the real code.
 4. Cancel the subscription in the test dashboard and confirm the next
    `/api/billing/token` call answers 402 and the proxy rejects new calls.
 5. Confirm meter events in the dashboard (Billing -> Meters ->
