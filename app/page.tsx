@@ -4,6 +4,7 @@ import LiveDemo from "@/components/landing/LiveDemo";
 import SlotPreview, { type SlotCode } from "@/components/landing/SlotPreview";
 import DeckPrime from "@/components/landing/DeckPrime";
 import VotePreview from "@/components/landing/VotePreview";
+import DownloadLink from "@/components/landing/DownloadLink";
 import { CapturiaLogo, CapturiaMark } from "@/components/landing/Brand";
 import styles from "@/components/landing/relaunch.module.css";
 
@@ -192,7 +193,7 @@ function Hero() {
           </Link>
         </div>
         <p className="mt-4 font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)] reveal-up [animation-delay:300ms]">
-          macOS 13+ · Apple Silicon · signed and notarized by Apple · free &amp; open source
+          macOS 13+ · Apple Silicon · notarized by Apple · free &amp; open source
         </p>
 
         {/* The live demo, framed as a Mac screen: menu bar on top */}
@@ -1110,9 +1111,15 @@ function SiteFooter() {
           <a href={GITHUB} target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
             GitHub
           </a>
-          <a href={RELEASES} target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
+          <DownloadLink
+            location="footer"
+            href={RELEASES}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-white transition-colors"
+          >
             Releases
-          </a>
+          </DownloadLink>
         </nav>
       </div>
 

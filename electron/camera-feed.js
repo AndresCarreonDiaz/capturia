@@ -27,6 +27,20 @@
 // a state flag plus bounded retries (loads keep retrying in the background
 // while wanted), never exceptions.
 //
+// Privacy posture (issue #38): the offscreen page captures the PHYSICAL
+// webcam, and a green camera LED with no visible app reads as spyware. The
+// extension publishes how many call apps are consuming its source stream
+// (custom 'ccon' device property; addon sinkConsumers()); after
+// WEBCAM_IDLE_AFTER_SECONDS with zero consumers the page is told (via
+// executeJavaScript, since it has no preload) to release getUserMedia and
+// render a branded standing-by card the pump keeps delivering, and a
+// WEBCAM_RESUME_POLL_MS poll brings live video back the moment a call app
+// attaches. Unknown consumer counts (an extension predating the property)
+// never pause: fail-safe live. This deliberately does NOT reuse the
+// queue-full stall signal below, which means "the extension stopped
+// draining OUR sink" and triggers a reconnect; overloading it would make
+// "nobody is watching" and "the sink is broken" indistinguishable.
+//
 // The offscreen window deliberately gets NO preload: without window.capturia
 // the page behaves like the web studio, so it cannot state:report (which
 // would fight the visible window's tray state), never joins the loopback
@@ -48,11 +62,15 @@ const {
   LOAD_RETRY_MAX_DELAY_MS,
   FROZEN_AFTER_SECONDS,
   SINK_STALL_SECONDS,
+  WEBCAM_IDLE_INITIAL,
+  WEBCAM_RESUME_POLL_MS,
   findCameraDevice,
   programOutputUrl,
+  reduceWebcamIdleSecond,
   shouldRecreateAfterCrash,
   sinkStalledSecond,
   cameraToggleAction,
+  webcamControlScript,
 } = require("./gen/camera-feed");
 
 // Where the addon lives per layout. Dev: the node-gyp output inside the
@@ -126,6 +144,16 @@ function createCameraFeed({ studioUrl, isAllowedNavigation, onStateChange, log =
   let stallSeconds = 0;
   let pushErrors = 0;
   const crashTimes = [];
+  // Webcam idle machine (issue #38): while the pump runs, the extension's
+  // consumer count ('ccon' device property, read through the addon) says
+  // whether ANY call app is consuming the Capturia camera. After
+  // WEBCAM_IDLE_AFTER_SECONDS without one, the offscreen page is told to
+  // release its physical-webcam capture (green LED off) and it renders a
+  // branded "standing by" card the pump keeps delivering; a fast poll
+  // (WEBCAM_RESUME_POLL_MS) resumes live video the moment a consumer
+  // attaches. Unknown counts (old extension) never pause: fail-safe live.
+  let webcamIdle = WEBCAM_IDLE_INITIAL;
+  let webcamPollTimer = null;
 
   function notify() {
     if (typeof onStateChange !== "function") return;
@@ -154,8 +182,53 @@ function createCameraFeed({ studioUrl, isAllowedNavigation, onStateChange, log =
       lastPaintAt,
       pumped: sink.pumped,
       droppedQueueFull: sink.droppedQueueFull,
+      webcamIdle: webcamIdle.paused,
       error,
     };
+  }
+
+  // Read the extension's source-consumer count through the sink device.
+  // Negative = unknown (addon predates sinkConsumers, sink not connected, or
+  // the enabled extension has no 'ccon' property yet), which the reducer
+  // treats as "assume watched".
+  function readConsumers(native) {
+    if (!native || typeof native.sinkConsumers !== "function") return -1;
+    try {
+      return native.sinkConsumers();
+    } catch {
+      return -1;
+    }
+  }
+
+  // Push the current desired webcam state into the offscreen page. The page
+  // has no preload by design, so this rides executeJavaScript: a sticky
+  // window flag (read at WebcamFeed mount) plus a DOM event (flips a mounted
+  // page live). Safe to call whenever; failures (page mid-navigation,
+  // renderer gone) are non-fatal and the state is re-applied on the next
+  // load and on every idle transition.
+  function applyWebcamControl() {
+    if (!win || win.isDestroyed()) return;
+    win.webContents.executeJavaScript(webcamControlScript(webcamIdle.paused)).catch(() => {});
+  }
+
+  // Keep the fast resume poll running exactly while it can do something:
+  // webcam paused AND a connected sink to read the consumer count through.
+  function syncWebcamResumePoll() {
+    const want = webcamIdle.paused && sinkConnected;
+    if (want && !webcamPollTimer) {
+      webcamPollTimer = setInterval(() => {
+        const next = reduceWebcamIdleSecond(webcamIdle, readConsumers(loadAddon()));
+        if (next.paused) return; // still unwatched
+        webcamIdle = next;
+        log.log("[camera] call app attached; resuming the webcam capture");
+        applyWebcamControl();
+        syncWebcamResumePoll();
+        notify();
+      }, WEBCAM_RESUME_POLL_MS);
+    } else if (!want && webcamPollTimer) {
+      clearInterval(webcamPollTimer);
+      webcamPollTimer = null;
+    }
   }
 
   // Paint handler, straight from the proven spike: the IOSurface handle is
@@ -203,6 +276,10 @@ function createCameraFeed({ studioUrl, isAllowedNavigation, onStateChange, log =
     if (loadFailedThisAttempt) return;
     pageReady = true;
     loadAttempt = 0;
+    // A fresh page defaults to a live webcam; re-assert a standing pause so
+    // a reload (load retry, crash recovery) cannot relight the LED while
+    // nobody is watching. The injected flag lands before React mounts.
+    if (webcamIdle.paused) applyWebcamControl();
     const hadLoadError = error !== null && error.startsWith("Program Output");
     if (hadLoadError) {
       error = null;
@@ -322,6 +399,8 @@ function createCameraFeed({ studioUrl, isAllowedNavigation, onStateChange, log =
     zeroPaintSeconds = 0;
     frozen = false;
     stallSeconds = 0;
+    // A standing webcam pause re-arms its resume poll on (re)connect.
+    syncWebcamResumePoll();
     pumpTimer = setInterval(() => {
       try {
         if (native.pumpFrame()) pumpedThisSecond++;
@@ -338,10 +417,39 @@ function createCameraFeed({ studioUrl, isAllowedNavigation, onStateChange, log =
       paintsThisSecond = 0;
       const sink = native.sinkStats();
 
+      // Webcam idle: one 1Hz step of the consumer-count machine. Pausing
+      // releases the page's physical webcam (LED off) and arms the fast
+      // resume poll; resuming here covers the slow path (the poll usually
+      // wins the race by design).
+      const wasPaused = webcamIdle.paused;
+      webcamIdle = reduceWebcamIdleSecond(webcamIdle, readConsumers(native));
+      if (webcamIdle.paused !== wasPaused) {
+        log.log(
+          `[camera] ${
+            webcamIdle.paused
+              ? "no call app is consuming the camera; releasing the webcam capture"
+              : "call app attached; resuming the webcam capture"
+          }`
+        );
+        applyWebcamControl();
+        syncWebcamResumePoll();
+        notify();
+      } else if (webcamIdle.paused) {
+        // Re-assert a standing pause once a second: the transition-time
+        // injection is fire-and-forget into a page whose React listener may
+        // not have mounted yet. The page reconciles from the sticky flag on
+        // mount, so this is belt and braces for the dangerous direction (a
+        // lit LED while the machine believes the webcam is idle), and it is
+        // idempotent on a page already paused.
+        applyWebcamControl();
+      }
+
       // Frozen: the pump is healthy but the page stopped painting, so the
       // camera is repeating one frame. Surfaced (state flag + tray label),
-      // not auto-stopped: a static scene is sometimes intentional.
-      zeroPaintSeconds = lastPaintFps === 0 ? zeroPaintSeconds + 1 : 0;
+      // not auto-stopped: a static scene is sometimes intentional. While the
+      // webcam is idled the page is EXPECTED to go quiet (the standing-by
+      // card animates only subtly), so paused seconds never count as frozen.
+      zeroPaintSeconds = lastPaintFps === 0 && !webcamIdle.paused ? zeroPaintSeconds + 1 : 0;
       const nowFrozen = zeroPaintSeconds >= FROZEN_AFTER_SECONDS;
       if (nowFrozen !== frozen) {
         frozen = nowFrozen;
@@ -384,7 +492,9 @@ function createCameraFeed({ studioUrl, isAllowedNavigation, onStateChange, log =
 
   // Stop pumping and hand the sink stream back to the extension (its splash
   // resumes). Keeps the window and the wanted flag: callers decide whether
-  // this is a full stop or a reconnect/retry.
+  // this is a full stop or a reconnect/retry. The webcam idle state also
+  // survives on purpose: a reconnect while nobody watches must not relight
+  // the LED (the resume poll pauses with the sink and re-arms on reconnect).
   function releaseSink() {
     stopPump();
     if (!sinkConnected) return;
@@ -395,6 +505,7 @@ function createCameraFeed({ studioUrl, isAllowedNavigation, onStateChange, log =
       log.error("[camera] disconnectSink failed:", err);
     }
     sinkConnected = false;
+    syncWebcamResumePoll();
     log.log("[camera] disconnected from the camera sink");
   }
 
@@ -481,6 +592,10 @@ function createCameraFeed({ studioUrl, isAllowedNavigation, onStateChange, log =
     }
     releaseSink();
     destroyWindow();
+    // The page holding the capture is gone with the window (Chromium drops
+    // getUserMedia with the renderer), so the idle machine starts over.
+    webcamIdle = WEBCAM_IDLE_INITIAL;
+    syncWebcamResumePoll();
     if (!keepError) error = null;
     notify();
     return getState();

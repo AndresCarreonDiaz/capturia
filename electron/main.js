@@ -23,6 +23,7 @@ const deckGen = require("./deck-generate");
 const { startRuntimeServer } = require("./runtime-server");
 const { createTray } = require("./tray");
 const { maybeOfferMoveToApplications, offerMoveToApplications } = require("./first-run");
+const { createTelemetry } = require("./telemetry");
 const speechHelper = require("./speech-helper");
 const {
   isTrustedSender,
@@ -32,6 +33,16 @@ const {
   assertBytes,
   assertStateReport,
 } = require("./ipc-schemas");
+
+// Webcam control script for the hidden Control Room (see below). Same
+// degrade-not-crash posture as the other electron/gen consumers: without the
+// gen build the hidden window simply keeps its capture (the old behavior).
+let webcamControlScript = null;
+try {
+  ({ webcamControlScript } = require("./gen/camera-feed"));
+} catch {
+  // electron/gen not built; camera-feed.js will log the actionable message.
+}
 
 // Push-to-talk hotkey. Cmd+Alt+Space on Mac, Ctrl+Alt+Space elsewhere.
 // Chosen to avoid Spotlight (Cmd+Space) and the macOS character viewer.
@@ -106,6 +117,12 @@ let rendererState = { reported: false, listening: false, voiceSupported: false, 
 // it parks here and flushes on the next state:report, which can only come
 // from a mounted page.
 let pendingRendererAction = null;
+// Anonymous usage beacon (electron/telemetry.js, docs/telemetry.md): four
+// fields, opt-out, fire-and-forget. Hard-disabled in smoke mode so
+// unattended gate runs never pollute production counters. Created after the
+// CAPTURIA_USER_DATA override above so the settings store lands in the same
+// profile the run uses.
+const telemetry = createTelemetry({ disabled: isSmoke });
 
 // Wrap every privileged IPC handler so it first rejects calls from an
 // untrusted sender (a navigated-away or injected renderer), then runs the
@@ -219,6 +236,25 @@ function registerIpc() {
   );
   ipcMain.handle("sysext:install", guarded(() => (sysext ? sysext.install() : null)));
 
+  // Telemetry toggle for the Settings modal and onboarding: read the current
+  // state, or set it. The renderer only ever sees the boolean; the installId
+  // and the sending itself stay in main (electron/telemetry.js).
+  ipcMain.handle("telemetry:get", guarded(() => ({ enabled: telemetry.isEnabled() })));
+  ipcMain.handle(
+    "telemetry:set",
+    guarded((_event, enabled) => {
+      if (typeof enabled !== "boolean") {
+        throw new Error("Capturia: telemetry:set expects a boolean.");
+      }
+      return { enabled: telemetry.setEnabled(enabled) };
+    })
+  );
+  // Renderer -> main: the onboarding disclosure was resolved (welcome step
+  // dismissed with the toggle state known, or onboarding already completed
+  // in an earlier session). Releases the first-run consent gate holding the
+  // launch ping (electron/telemetry.js); idempotent on later runs.
+  ipcMain.handle("telemetry:ack", guarded(() => ({ enabled: telemetry.ackDisclosure() })));
+
   // Renderer -> main: voice state for the tray (listening on/off, whether the
   // speech engine exists) plus the loaded deck size for the cue hotkeys.
   // Fire-and-forget from the renderer's point of view.
@@ -326,6 +362,29 @@ function createWindow() {
       mainWindow.setFullScreen(false);
     } else {
       mainWindow.hide();
+    }
+  });
+
+  // Privacy: the Control Room's webcam preview (components/WebcamFeed.tsx)
+  // holds the PHYSICAL webcam, and close-to-tray hides the window without
+  // unmounting the page, so without this the green camera LED stays lit for
+  // an app nobody can see (issue #38). backgroundThrottling:false keeps the
+  // hidden page's visibilityState "visible", so the page cannot detect the
+  // hide itself; main tells it through the same executeJavaScript contract
+  // the offscreen camera window uses. The offscreen feed is independent: it
+  // idles on the extension's consumer count (electron/camera-feed.js), so
+  // hiding the window never blanks a live call.
+  const sendWebcamControl = (paused) => {
+    if (!webcamControlScript || !mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.executeJavaScript(webcamControlScript(paused)).catch(() => {});
+  };
+  mainWindow.on("hide", () => sendWebcamControl(true));
+  mainWindow.on("show", () => sendWebcamControl(false));
+  // A page (re)loaded while the window is hidden must not relight the LED;
+  // the injected flag lands before React mounts the preview.
+  mainWindow.webContents.on("did-finish-load", () => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      sendWebcamControl(true);
     }
   });
 
@@ -594,9 +653,14 @@ if (!gotTheLock) {
         },
         // The install completed: the extension can enumerate now, so nudge
         // the feed to (re)connect. Not in smoke mode, whose camera lifecycle
-        // must stay owned by the smoke gate.
+        // must stay owned by the smoke gate. Also the activation step of the
+        // funnel: one anonymous camera-installed ping, reported at most once
+        // per install (telemetry dedupes, and covers the out-of-band
+        // System Settings approval landing later because this callback fires
+        // on the list poll's enabled flip too).
         onInstalled: () => {
           if (!isSmoke) cameraFeed?.start();
+          telemetry.send("camera-installed");
         },
         // Never a dialog in smoke mode: unattended runs must stay unattended
         // (the forced sysext smoke leg can hit the needs-move preempt when
@@ -619,6 +683,14 @@ if (!gotTheLock) {
 
     registerIpc();
     createWindow();
+
+    // One anonymous launch ping per run (the DAU/MAU signal). Async and
+    // fire-and-forget: a dead or unreachable endpoint costs one swallowed
+    // fetch, never a slower start. On a FIRST run this parks behind the
+    // consent gate until the renderer acks the onboarding disclosure
+    // (telemetry:ack above); it is dropped silently if the user opts out
+    // there, and every later run sends immediately.
+    telemetry.send("launch");
 
     // Menu-bar tray: live status plus the same actions the window offers, so
     // the shell stays usable while hidden behind a call. Voice toggling rides

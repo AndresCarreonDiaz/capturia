@@ -85,6 +85,16 @@ interface CapturiaBridge {
     install: () => Promise<SysextStateReport | null>;
     onState: (handler: (state: SysextStateReport) => void) => () => void;
   };
+  // Anonymous usage beacon toggle (electron/telemetry.js); optional for the
+  // same stale-preload reason. Only the boolean crosses the bridge: the
+  // installId and the sending live in main. ackDisclosure (optional again,
+  // it shipped later than get/set) releases the first-run consent gate once
+  // the onboarding disclosure is resolved.
+  telemetry?: {
+    get: () => Promise<{ enabled: boolean } | null>;
+    set: (enabled: boolean) => Promise<{ enabled: boolean } | null>;
+    ackDisclosure?: () => Promise<{ enabled: boolean } | null>;
+  };
   // On-device streaming speech (macOS 26+ helper); optional for the same
   // stale-preload reason. Events: ready | downloading-model | interim |
   // final | error | done.

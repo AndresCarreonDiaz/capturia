@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 
 namespace {
@@ -511,6 +512,27 @@ Napi::Value DisconnectSink(const Napi::CallbackInfo& info) {
   return env.Undefined();
 }
 
+// sinkConsumers() -> number. How many source-stream clients (call apps) are
+// consuming the Capturia camera right now, read from the extension's custom
+// consumer-count device property (fourcc 'ccon', published by
+// CapturiaCameraExtension.swift as "4cc_ccon_glob_0000" since 0.1.1). The
+// read rides the same CMIOObjectGetPropertyData path as the standard string
+// properties above; extensions marshal custom NSString property states to
+// the client as CFStringRef. Returns -1 for "unknown": sink not connected,
+// or the enabled extension predates the property. Callers must treat unknown
+// as "assume watched" and keep the physical webcam live (fail-safe: wrongly
+// idling would blank the presenter out of a live call).
+Napi::Value SinkConsumers(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (!g_sinkDevice) return Napi::Number::New(env, -1);
+  const std::string text = GetObjectString(g_sinkDevice, 'ccon');
+  if (text.empty()) return Napi::Number::New(env, -1);
+  char* end = nullptr;
+  const long value = strtol(text.c_str(), &end, 10);
+  if (end == text.c_str() || value < 0) return Napi::Number::New(env, -1);
+  return Napi::Number::New(env, static_cast<double>(value));
+}
+
 Napi::Value SinkStats(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   Napi::Object out = Napi::Object::New(env);
@@ -537,6 +559,7 @@ Napi::Object InitModule(Napi::Env env, Napi::Object exports) {
   exports.Set("pumpFrame", Napi::Function::New(env, PumpFrame));
   exports.Set("disconnectSink", Napi::Function::New(env, DisconnectSink));
   exports.Set("sinkStats", Napi::Function::New(env, SinkStats));
+  exports.Set("sinkConsumers", Napi::Function::New(env, SinkConsumers));
   return exports;
 }
 
