@@ -29,9 +29,13 @@ const REFRESH_TTL_S = 400 * 24 * 60 * 60; // "long-lived": beyond a yearly cycle
 export const MAX_DEVICES = 3;
 
 // Crockford base32 without lookalikes; 16 chars = 80 random bits, far beyond
-// online-guessing reach even without endpoint rate limits.
+// online-guessing reach even without endpoint rate limits. The code SHAPE
+// lives in lib/hosted-billing.ts so the desktop client validates paste
+// input against the exact same regex; re-exported here for the server-side
+// callers and tests that always imported it from this module.
 const CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-export const ACTIVATION_CODE_RE = /^CAPTURIA(-[0-9A-HJKMNP-TV-Z]{4}){4}$/;
+import { ACTIVATION_CODE_RE } from "../hosted-billing";
+export { ACTIVATION_CODE_RE };
 const DEVICE_ID_RE = /^[A-Za-z0-9_-]{6,128}$/;
 const REFRESH_PREFIX = "crt_";
 

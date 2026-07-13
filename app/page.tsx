@@ -7,6 +7,8 @@ import VotePreview from "@/components/landing/VotePreview";
 import DownloadLink from "@/components/landing/DownloadLink";
 import { CapturiaLogo, CapturiaMark } from "@/components/landing/Brand";
 import styles from "@/components/landing/relaunch.module.css";
+import CheckoutSuccess from "@/components/landing/CheckoutSuccess";
+import { Suspense } from "react";
 
 /* ─────────────────────────────────────────────────────────────
    Capturia landing, the native camera era. Capturia is a real,
@@ -36,6 +38,12 @@ export const metadata: Metadata = {
 export default function Landing() {
   return (
     <main className="min-h-screen bg-[var(--studio-black)] text-[var(--studio-ink)] selection:bg-[var(--phosphor)]/30 selection:text-white">
+      {/* Stripe redirects paid checkouts back here with the code-pickup
+          params; the overlay renders nothing otherwise. Suspense because
+          useSearchParams opts the boundary out of prerendering. */}
+      <Suspense fallback={null}>
+        <CheckoutSuccess />
+      </Suspense>
       <TopNav />
       <Hero />
       <HumanCaption />

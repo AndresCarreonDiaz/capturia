@@ -79,6 +79,23 @@ text-only: `fileData`/`inlineData` parts are refused with 400 (their token
 cost is decoupled from request size, which would defeat the budget brakes),
 and `generationConfig.maxOutputTokens` is clamped server-side.
 
+## Upgrade UX (M11 slice 2)
+
+The guided flow, end to end: the Settings Capturia Pro row shows "Upgrade to
+Pro" (desktop builds with the billing bridge); main POSTs /api/billing/checkout
+and opens the Stripe page in the OS browser; Stripe redirects the paid session
+to /?checkout=success&session_id=...&pickup=..., where the landing overlay
+(components/landing/CheckoutSuccess.tsx) collects the one-time code from
+/api/billing/activation-code, tolerating webhook lag; the buyer pastes the
+code back into Settings, main trades it via /api/billing/activate for a
+refresh token + first JWT (both in the OS-keychain vault, the refresh token
+in the renderer-invisible capturia-hosted-refresh slot), and
+electron/hosted-billing.js keeps the JWT fresh from then on (80% of lifetime,
+clamped; 401/403 drop credentials, 402 retries hourly, transient errors every
+5 minutes). Clearing the Pro row in Settings clears BOTH slots and the timer.
+Decision logic lives in lib/hosted-billing.ts and lib/checkout-success.ts,
+fully unit-tested; Electron consumes the gen build.
+
 ## Env contract
 
 | Variable | Where | Meaning |

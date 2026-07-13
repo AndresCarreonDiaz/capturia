@@ -12,6 +12,16 @@ interface Props {
   clear: (provider: KeyProvider) => Promise<void>;
   activeProvider: KeyProvider;
   onSelectProvider: (provider: KeyProvider) => void;
+  /** Re-pulls the vault list; activation stores tokens in MAIN, so the modal
+   *  cannot learn about them from save()'s return value. */
+  onRefreshKeys?: () => Promise<void>;
+}
+
+// Electron wraps rejected invokes as "Error invoking remote method 'x':
+// Error: <message>"; the user only needs the message.
+function ipcErrorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  return raw.replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
 }
 
 const PROVIDER_META: Record<
@@ -36,16 +46,18 @@ const PROVIDER_META: Record<
     url: "https://platform.openai.com",
     placeholder: "sk-... key",
   },
-  // Hosted-tier stub (M11 slice 1): paste-a-token wiring only; the guided
-  // upgrade and automatic token refresh land with the next slice. The note
-  // keeps the section's "never sent to a Capturia server" promise honest:
-  // this row is the one non-BYOK slot and its token DOES go to Capturia.
+  // Hosted tier (M11 slice 2): on a desktop build with the billing bridge,
+  // this row renders the guided upgrade (checkout in the browser, paste the
+  // activation code back); on web or a stale preload it stays the slice-1
+  // paste-a-token input. The note keeps the section's "never sent to a
+  // Capturia server" promise honest: this row is the one non-BYOK slot and
+  // its credentials DO go to Capturia.
   "capturia-hosted": {
     name: "Capturia Pro",
     tagline: "hosted, no API key needed",
     url: "https://capturia.app",
     placeholder: "Paste your Capturia access token",
-    note: "Not BYOK: this access token is stored encrypted locally and sent to the Capturia hosted proxy with each request to authenticate your plan.",
+    note: "Not BYOK: your Capturia Pro credentials are stored encrypted locally and sent to the Capturia hosted proxy with each request to authenticate your plan.",
   },
 };
 
@@ -60,13 +72,57 @@ export default function SettingsModal({
   clear,
   activeProvider,
   onSelectProvider,
+  onRefreshKeys,
 }: Props) {
   const [drafts, setDrafts] = useState<Partial<Record<KeyProvider, string>>>({});
   const [busy, setBusy] = useState<KeyProvider | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Upgrade-flow feedback: "checkout opened" hint and the activate spinner.
+  const [billingInfo, setBillingInfo] = useState<string | null>(null);
+  const [upgradeBusy, setUpgradeBusy] = useState(false);
   // Desktop-only anonymous beacon toggle; unsupported (web, stale preload)
   // hides the whole Privacy section.
   const telemetry = useTelemetry();
+  // Guided upgrade needs the desktop billing bridge; without it (web, stale
+  // preload) the Pro row keeps the paste-a-token input.
+  const billing = typeof window !== "undefined" ? window.capturia?.billing : undefined;
+
+  const handleUpgrade = async () => {
+    if (!billing) return;
+    setUpgradeBusy(true);
+    setError(null);
+    setBillingInfo(null);
+    try {
+      await billing.checkout();
+      setBillingInfo(
+        "Checkout opened in your browser. After paying, copy the activation code from the success page and paste it below."
+      );
+    } catch (err) {
+      setError(ipcErrorMessage(err));
+    } finally {
+      setUpgradeBusy(false);
+    }
+  };
+
+  const handleActivate = async () => {
+    const code = drafts["capturia-hosted"]?.trim();
+    if (!billing || !code) return;
+    setBusy("capturia-hosted");
+    setError(null);
+    try {
+      const res = await billing.activate(code);
+      if (res?.ok) {
+        setDrafts((d) => ({ ...d, "capturia-hosted": "" }));
+        setBillingInfo("Capturia Pro is active on this Mac.");
+        await onRefreshKeys?.();
+        onSelectProvider("capturia-hosted");
+      }
+    } catch (err) {
+      setError(ipcErrorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -210,6 +266,44 @@ export default function SettingsModal({
                       >
                         Clear
                       </button>
+                    </div>
+                  ) : provider === "capturia-hosted" && billing ? (
+                    <div>
+                      <button
+                        onClick={handleUpgrade}
+                        disabled={upgradeBusy || isBusy}
+                        className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-medium px-4 py-2.5 rounded-lg transition-colors"
+                      >
+                        {upgradeBusy ? "Opening checkout…" : "Upgrade to Pro · $19/mo"}
+                      </button>
+                      <div className="mt-2 flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={draft}
+                          onChange={(e) =>
+                            setDrafts((d) => ({ ...d, [provider]: e.target.value }))
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleActivate();
+                          }}
+                          placeholder="CAPTURIA-XXXX-XXXX-XXXX-XXXX"
+                          disabled={isBusy}
+                          spellCheck={false}
+                          className="flex-1 bg-white/5 border border-white/10 focus:border-white/30 rounded-lg px-3 py-2 font-mono text-xs text-white outline-none placeholder:text-white/20 transition-colors uppercase"
+                        />
+                        <button
+                          onClick={handleActivate}
+                          disabled={!draft.trim() || isBusy}
+                          className="bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white text-xs font-medium px-4 py-2 rounded-lg transition-colors"
+                        >
+                          {isBusy ? "Activating…" : "Activate"}
+                        </button>
+                      </div>
+                      {billingInfo && (
+                        <p className="mt-1.5 text-emerald-300/80 text-[11px] leading-relaxed">
+                          {billingInfo}
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <div className="flex items-center gap-2">

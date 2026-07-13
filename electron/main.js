@@ -21,6 +21,7 @@ const { transcribeWav } = require("./whisper");
 const keychain = require("./keychain");
 const deckGen = require("./deck-generate");
 const { startRuntimeServer, loadDevEnvFiles } = require("./runtime-server");
+const { createHostedBilling } = require("./hosted-billing");
 const { createTray } = require("./tray");
 const { maybeOfferMoveToApplications, offerMoveToApplications } = require("./first-run");
 const { createTelemetry } = require("./telemetry");
@@ -117,6 +118,10 @@ let rendererState = { reported: false, listening: false, voiceSupported: false, 
 // it parks here and flushes on the next state:report, which can only come
 // from a mounted page.
 let pendingRendererAction = null;
+// Capturia Pro billing (electron/hosted-billing.js): checkout, activation,
+// and the JWT refresh loop. Created in registerIpc (it shares the deck
+// codegen effective env) and started after boot.
+let hostedBilling = null;
 // Anonymous usage beacon (electron/telemetry.js, docs/telemetry.md): four
 // fields, opt-out, fire-and-forget. Hard-disabled in smoke mode so
 // unattended gate runs never pollute production counters. Created after the
@@ -158,7 +163,15 @@ function registerIpc() {
   ipcMain.handle(
     "keys:clear",
     guarded((_event, provider) => {
-      keychain.clearKey(assertProvider(provider));
+      const named = assertProvider(provider);
+      // Clearing the Pro row is a local deactivation: the refresh token and
+      // its pending timer must go with the JWT, or the refresh loop would
+      // quietly re-mint what the user just cleared.
+      if (named === "capturia-hosted" && hostedBilling) {
+        hostedBilling.deactivateLocal();
+      } else {
+        keychain.clearKey(named);
+      }
       return keychain.listKeys();
     })
   );
@@ -195,6 +208,29 @@ function registerIpc() {
       const provider = assertProvider(payload && payload.provider);
       const prompt = assertNonEmptyString(payload && payload.prompt, "Prompt");
       return deckGen.generateCues(prompt, provider, deckCodegenEnv());
+    })
+  );
+
+  // Capturia Pro upgrade flow (M11 slice 2). Billing shares the deck
+  // codegen effective env so a dev CAPTURIA_HOSTED_URL override points
+  // checkout, activation, and token refresh at the same server as the
+  // proxy. The renderer only ever sees { ok, devices } or an error message;
+  // tokens live in the keychain and travel main -> proxy only.
+  hostedBilling = createHostedBilling({ keychain, env: deckCodegenEnv() });
+  hostedBilling.start();
+  ipcMain.handle(
+    "billing:checkout",
+    guarded(async () => {
+      const url = await hostedBilling.startCheckout();
+      await shell.openExternal(url);
+      return { ok: true };
+    })
+  );
+  ipcMain.handle(
+    "billing:activate",
+    guarded((_event, payload) => {
+      const code = assertNonEmptyString(payload && payload.code, "Activation code");
+      return hostedBilling.activate(code);
     })
   );
 
@@ -816,6 +852,7 @@ app.on("before-quit", () => {
 // sink stream, handing the extension back to its splash) and before the tray
 // so its final state change updates a live menu.
 app.on("will-quit", () => {
+  hostedBilling?.stop();
   globalShortcut.unregisterAll();
   speechHelper.stopAllSpeechSessions();
   cameraFeed?.dispose();

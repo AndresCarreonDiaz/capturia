@@ -1438,6 +1438,7 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
             clear={vault.clear}
             activeProvider={activeProvider}
             onSelectProvider={setActiveProvider}
+            onRefreshKeys={vault.refresh}
           />
         </>
       )}
