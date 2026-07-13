@@ -9,24 +9,26 @@ import { CapturiaLogo, CapturiaMark } from "@/components/landing/Brand";
 import styles from "@/components/landing/relaunch.module.css";
 
 /* ─────────────────────────────────────────────────────────────
-   Capturia landing, the M12 relaunch. Desktop-first positioning:
-   a macOS menu bar app whose camera you use in Zoom, Meet, and
-   Slack. Written for people who talk for a living, not developers.
+   Capturia landing, the native camera era. Capturia is a real,
+   downloadable macOS app: install it once and "Capturia" shows
+   up as a camera in Zoom, Meet, and Slack. The page sells the
+   download. Written for people who talk for a living.
    Server component, no CopilotKit import (bundle contract).
    ───────────────────────────────────────────────────────────── */
 
 const GITHUB = "https://github.com/AndresCarreonDiaz/capturia";
 const RELEASES = "https://github.com/AndresCarreonDiaz/capturia/releases";
+const DOWNLOAD = "https://github.com/AndresCarreonDiaz/capturia/releases/latest";
 const LICENSE = "https://github.com/AndresCarreonDiaz/capturia/blob/main/LICENSE";
 
 export const metadata: Metadata = {
   title: "Capturia · The AI producer inside your camera",
   description:
-    "Capturia is a macOS menu bar app for people who talk for a living. Speak normally on Zoom, Meet, or Slack and it renders your numbers, charts, and audience votes over your live camera feed. Free with your own AI key. Open source, MIT.",
+    "Capturia installs as a real camera on your Mac. Select it in Zoom, Meet, or Slack and talk: it renders your numbers, charts, and audience votes over your live feed as you say them. On-device speech, free with your own AI key. Open source, MIT.",
   openGraph: {
     title: "Capturia · The AI producer inside your camera",
     description:
-      "Talk normally on a call. Capturia listens on your Mac and renders your numbers, charts, and audience votes over your live camera feed.",
+      "A real camera on your Mac. Select Capturia in Zoom, Meet, or Slack and talk: your numbers, charts, and audience votes land on your live feed as you say them.",
     type: "website",
   },
 };
@@ -41,6 +43,7 @@ export default function Landing() {
       <DeckSection />
       <OnScreen />
       <VotingSection />
+      <PrivacySection />
       <Differentiators />
       <UseCases />
       <Pricing />
@@ -67,6 +70,21 @@ function StarIcon({ className = "" }: { className?: string }) {
   );
 }
 
+function DownloadIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg aria-hidden width="15" height="15" viewBox="0 0 16 16" className={className}>
+      <path
+        d="M8 1.8v8.4M4.6 7l3.4 3.4L11.4 7M2.5 13.6h11"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 /* ───── 1. Slim sticky nav ───── */
 
 function TopNav() {
@@ -87,6 +105,7 @@ function TopNav() {
         <nav className="hidden md:flex items-center gap-7 text-[13px] text-[var(--studio-graphite)]">
           <a href="#how" className="hover:text-white transition-colors">How it works</a>
           <a href="#voting" className="hover:text-white transition-colors">Audience voting</a>
+          <a href="#privacy" className="hover:text-white transition-colors">Privacy</a>
           <a href="#pricing" className="hover:text-white transition-colors">Pricing</a>
           <a href="#faq" className="hover:text-white transition-colors">FAQ</a>
         </nav>
@@ -101,13 +120,16 @@ function TopNav() {
             <StarIcon />
             GitHub
           </a>
-          <Link
-            href="/studio"
+          <DownloadLink
+            location="nav"
+            href={DOWNLOAD}
+            target="_blank"
+            rel="noopener noreferrer"
             className="cta-solid inline-flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-medium"
           >
-            Try the demo
-            <span aria-hidden>→</span>
-          </Link>
+            <DownloadIcon />
+            Download
+          </DownloadLink>
         </div>
       </div>
     </header>
@@ -128,11 +150,11 @@ function Hero() {
       />
 
       <div className="mx-auto max-w-6xl px-4 sm:px-6 pt-16 sm:pt-24 lg:pt-28 pb-12 sm:pb-16 relative text-center">
-        {/* Eyebrow: the relaunch announcement */}
+        {/* Eyebrow: the native camera announcement */}
         <div className="inline-flex items-center gap-2 rounded-full studio-pill px-3.5 py-1.5 reveal-up">
           <span className="w-1.5 h-1.5 rounded-full bg-[var(--phosphor)]" />
           <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-graphite)]">
-            Now a macOS menu bar app
+            Now a real camera on your Mac
           </span>
         </div>
 
@@ -146,41 +168,34 @@ function Hero() {
 
         {/* Subhead */}
         <p className="mx-auto mt-6 max-w-2xl text-[var(--studio-graphite)] text-base sm:text-lg leading-relaxed reveal-up [animation-delay:160ms]">
-          Capturia is the AI producer inside your camera. Talk normally on Zoom,
-          Meet, or Slack, and it renders your numbers, your charts, and your
-          audience&rsquo;s votes over your live camera feed, right as you say them.
+          Capturia is the AI producer inside your camera. Download it, select
+          Capturia in Zoom, Meet, or Slack like any webcam, and talk. Your
+          numbers, your charts, and your audience&rsquo;s votes land on your
+          live feed, right as you say them.
         </p>
 
         {/* CTAs */}
         <div className="mt-9 flex flex-col sm:flex-row items-center justify-center gap-3 reveal-up [animation-delay:240ms]">
-          <Link
-            href="/studio"
-            className="cta-solid inline-flex items-center gap-2.5 rounded-full px-7 py-3.5 text-[15px] font-semibold w-full sm:w-auto justify-center"
-          >
-            Try the live demo
-            <span aria-hidden>→</span>
-          </Link>
-          <a
-            href={GITHUB}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="ghost-btn inline-flex items-center gap-2.5 rounded-full px-7 py-3.5 text-[15px] font-medium w-full sm:w-auto justify-center"
-          >
-            <StarIcon />
-            Star on GitHub
-          </a>
-        </div>
-        <p className="mt-4 font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)] reveal-up [animation-delay:300ms]">
-          Free · open source · app release coming ·{" "}
           <DownloadLink
             location="hero"
-            href={RELEASES}
+            href={DOWNLOAD}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-[var(--studio-graphite)] hover:text-white transition-colors underline decoration-dotted underline-offset-4"
+            className="cta-solid inline-flex items-center gap-2.5 rounded-full px-7 py-3.5 text-[15px] font-semibold w-full sm:w-auto justify-center"
           >
-            get notified
+            <DownloadIcon />
+            Download for macOS
           </DownloadLink>
+          <Link
+            href="/studio"
+            className="ghost-btn inline-flex items-center gap-2.5 rounded-full px-7 py-3.5 text-[15px] font-medium w-full sm:w-auto justify-center"
+          >
+            Try the browser demo
+            <span aria-hidden>→</span>
+          </Link>
+        </div>
+        <p className="mt-4 font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)] reveal-up [animation-delay:300ms]">
+          macOS 13+ · Apple Silicon · notarized by Apple · free &amp; open source
         </p>
 
         {/* The live demo, framed as a Mac screen: menu bar on top */}
@@ -197,7 +212,7 @@ function Hero() {
           <span aria-hidden className="trust-pip" />
           <span>One camera for every call app</span>
           <span aria-hidden className="trust-pip" />
-          <span>macOS app: on-device speech · nothing recorded</span>
+          <span>On-device speech · nothing recorded</span>
         </div>
       </div>
     </section>
@@ -223,7 +238,7 @@ function MenuBarStrip() {
         >
           <CapturiaMark style={{ height: 13, width: "auto" }} className="text-[var(--studio-ink)]" />
           <span className="hidden sm:inline font-mono text-[8px] tracking-[0.2em] uppercase text-[var(--phosphor)]">
-            listening
+            camera: on
           </span>
         </span>
         <span aria-hidden className="h-3 w-px bg-white/[0.12]" />
@@ -235,7 +250,7 @@ function MenuBarStrip() {
   );
 }
 
-/* ───── 3. Human caption tying the demo to the desktop app ───── */
+/* ───── 3. Human caption tying the demo to the camera ───── */
 
 function HumanCaption() {
   return (
@@ -243,40 +258,42 @@ function HumanCaption() {
       <div className="mx-auto max-w-4xl px-6 py-14 sm:py-20 text-center">
         <p className="display-serif text-[var(--studio-ink)] text-[clamp(1.7rem,4vw,3rem)] leading-[1.18]">
           Everything above is{" "}
-          <span className="italic text-[var(--phosphor)]">live</span>. No editing,
-          no cuts. You just talk.
+          <span className="italic text-[var(--phosphor)]">real</span>. The exact
+          overlays the engine renders, replayed on a loop. On a call, you just
+          talk.
         </p>
         <p className="mt-5 text-[var(--studio-graphite)] text-[15px] leading-relaxed max-w-xl mx-auto">
-          That is the browser demo, free at{" "}
+          Try it live in the browser demo, free at{" "}
           <Link href="/studio" className="cue-link">
             /studio
           </Link>
-          . The macOS app renders the same graphics over your real camera feed,
-          in every call you take.
+          . The macOS app is a real camera: select{" "}
+          <span className="text-[var(--studio-ink)]">Capturia</span> in your call
+          app and this, over your actual webcam, is what your audience sees.
         </p>
       </div>
     </section>
   );
 }
 
-/* ───── 4. How it works (desktop flow) ───── */
+/* ───── 4. How it works (download → install camera once → talk) ───── */
 
 function HowItWorks() {
   const steps: Array<{ n: string; title: string; body: string }> = [
     {
       n: "1",
-      title: "It lives in your menu bar",
-      body: "Capturia sits next to your clock. Open the Control Room and your camera comes up in a live preview, producer on standby.",
+      title: "Download and open",
+      body: "Grab the DMG, drag Capturia into Applications, and launch. It lives in your menu bar next to the clock, producer on standby.",
     },
     {
       n: "2",
-      title: "Talk like you always do",
-      body: "Say your numbers, your names, your point. Speech is understood on your Mac. No bot joins your call and nothing is recorded.",
+      title: "Install the camera, once",
+      body: "Click Install camera and flip the switch macOS shows you. One approval, about a minute. From then on Capturia sits in every call app's camera list, right next to your webcam.",
     },
     {
       n: "3",
-      title: "Your feed carries the graphics",
-      body: "Metrics, charts, lower thirds, and polls land over your live camera while you speak. Your audience sees a produced broadcast.",
+      title: "Pick Capturia and talk",
+      body: "Select it in Zoom, Meet, or Slack like any camera. Say your numbers, your names, your point, and the graphics land on your live feed while you speak.",
     },
   ];
 
@@ -311,24 +328,28 @@ function HowItWorks() {
         ))}
       </div>
 
-      {/* Honest note: how broadcasting works today */}
+      {/* First-run honesty: setup is guided, and the browser demo needs nothing */}
       <div className="mt-6 flex items-start gap-3 rounded-2xl border border-white/[0.06] bg-[var(--studio-mist)]/50 px-6 py-5 reveal-up [animation-delay:320ms]">
         <span aria-hidden className="mt-0.5 text-[var(--amber-cue)] text-lg leading-none">◈</span>
         <p className="text-[var(--studio-graphite)] text-[14.5px] leading-relaxed">
           <span className="text-[var(--studio-ink)] font-medium">
-            How it reaches your call today:
+            First run walks you through all of it:
           </span>{" "}
-          you share the Control Room window in Zoom, Meet, or Slack, or route it
-          through OBS. Your audience sees the same feed either way. A native
-          camera extension, where you pick Capturia like any webcam, is built; it
-          ships once Apple developer verification completes so it can be signed.
+          Capturia offers to move itself into Applications, files the camera
+          extension request, and points you at the exact System Settings switch.
+          Upgrades never re-ask. And if you want to try it with zero installs
+          first, the{" "}
+          <Link href="/studio" className="cue-link">
+            browser demo
+          </Link>{" "}
+          runs the same overlays right now.
         </p>
       </div>
     </section>
   );
 }
 
-/* ───── 5. Deck priming ───── */
+/* ───── 5. Deck priming: mid-sentence cues + silent hotkeys ───── */
 
 function DeckSection() {
   return (
@@ -342,11 +363,59 @@ function DeckSection() {
               <span className="italic text-[var(--signal)]">Your numbers stand by.</span>
             </>
           }
-          kicker="Give Capturia your PDF once. It reads every figure on your Mac and arms a cue card for each one. Mention your churn and the exact number from your deck lands on screen. Deck-primed cards render your file's values, not the model's guesses."
+          kicker="Give Capturia your PDF once. It arms a cue card for every figure, so when you mention your churn, the exact number from your deck lands on screen. Deck-primed cards render your file's values, not the model's guesses."
         />
 
         <div className="mt-12 sm:mt-16 reveal-up">
           <DeckPrime />
+        </div>
+
+        {/* Two ways a primed card fires: mid-sentence by voice, or in silence */}
+        <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6">
+          <div className="product-card rounded-2xl p-7 sm:p-8 reveal-up">
+            <div className="flex items-center gap-2.5">
+              <span
+                className="w-2 h-2 rounded-full"
+                style={{ background: "var(--signal)", boxShadow: "0 0 12px var(--signal)" }}
+              />
+              <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
+                By voice
+              </span>
+            </div>
+            <h3 className="display-serif mt-4 text-[var(--studio-ink)] text-2xl sm:text-3xl">
+              Cards fire mid-sentence.
+            </h3>
+            <p className="mt-3 text-[var(--studio-graphite)] text-[14.5px] leading-relaxed">
+              Capturia does not wait for you to finish. On macOS 26, Apple&rsquo;s
+              streaming speech engine matches the cue while the words are still
+              leaving your mouth. On macOS 13 to 15, the card lands at your next
+              breath.
+            </p>
+          </div>
+
+          <div className="product-card rounded-2xl p-7 sm:p-8 reveal-up [animation-delay:120ms]">
+            <div className="flex items-center gap-2.5">
+              <span
+                className="w-2 h-2 rounded-full"
+                style={{ background: "var(--amber-cue)", boxShadow: "0 0 12px var(--amber-cue)" }}
+              />
+              <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
+                In silence
+              </span>
+            </div>
+            <h3 className="display-serif mt-4 text-[var(--studio-ink)] text-2xl sm:text-3xl">
+              Or fire them without a word.
+            </h3>
+            <p className="mt-3 text-[var(--studio-graphite)] text-[14.5px] leading-relaxed">
+              Muted, or someone else has the floor?{" "}
+              <kbd className={styles.kbd}>⌘⌥1</kbd> through{" "}
+              <kbd className={styles.kbd}>⌘⌥9</kbd> fires the first nine cards
+              on the rail and <kbd className={styles.kbd}>⌘⌥→</kbd> walks the
+              whole rail in order,
+              from inside Zoom, without Capturia focused. Clear the deck and the
+              shortcuts release.
+            </p>
+          </div>
         </div>
       </div>
     </section>
@@ -492,54 +561,48 @@ function VotingSection() {
   );
 }
 
-/* ───── 8. Why it feels different ───── */
+/* ───── 8. Privacy ───── */
 
-function Differentiators() {
+function PrivacySection() {
   const points: Array<{ tag: string; title: string; body: string; accent: string }> = [
     {
-      tag: "Camera",
-      title: "Every call app at once",
-      body: "Capturia works at the camera level, not as a plugin. One setup covers Zoom, Meet, Slack, and whatever your next client uses.",
-      accent: "var(--phosphor)",
-    },
-    {
-      tag: "Privacy",
-      title: "No bot in your meeting",
-      body: "Speech is understood on your Mac. Your call audio never leaves it, nothing is recorded, and no extra participant joins your call.",
+      tag: "Speech",
+      title: "Your voice never leaves your Mac",
+      body: "Transcription is on-device: Apple's speech engine on macOS 26, a local Whisper model before that. No bot joins your meeting and nothing is recorded. Only the transcribed command, and the deck you choose to load, go to your own AI provider.",
       accent: "var(--signal)",
     },
     {
-      tag: "Truth",
-      title: "Real numbers only",
-      body: "Deck-primed figures render straight from your file, and without a deck the AI uses clearly illustrative demo numbers. Your real data comes from you, not a guess.",
-      accent: "var(--amber-cue)",
+      tag: "Keys",
+      title: "Your key stays in the Keychain",
+      body: "Bring your own AI key and it is encrypted on your Mac with a key held in the macOS Keychain. It travels to your model provider and nowhere else. There is no Capturia account and no Capturia server holding your credentials.",
+      accent: "var(--phosphor)",
     },
     {
-      tag: "Legibility",
-      title: "Readable after compression",
-      body: "Meeting apps crush pixels. Every overlay holds a minimum type size and contrast floor so the far end reads it, even on a bad connection.",
-      accent: "var(--magenta-sweep)",
+      tag: "Camera",
+      title: "The camera light tells the truth",
+      body: "Capturia reads your webcam through the same system camera APIs as every other app, so the light next to your lens is on whenever Capturia can see you. No light, no video. It is open source, so you can check.",
+      accent: "var(--amber-cue)",
     },
   ];
 
   return (
-    <section className="mx-auto max-w-7xl px-4 sm:px-6 py-20 sm:py-28">
+    <section id="privacy" className="mx-auto max-w-7xl px-4 sm:px-6 py-20 sm:py-28">
       <SectionHead
-        eyebrow="Why it feels different"
+        eyebrow="Privacy"
         title={
           <>
-            Built like a camera, <span className="italic text-[var(--phosphor)]">not a plugin</span>.
+            Private by architecture, <span className="italic text-[var(--phosphor)]">not by promise</span>.
           </>
         }
-        kicker="Four decisions we refuse to walk back."
+        kicker="You are on camera in rooms that matter. Here is exactly where your data goes, verifiable in the source."
       />
 
-      <div className="mt-12 sm:mt-16 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 sm:gap-6">
+      <div className="mt-12 sm:mt-16 grid grid-cols-1 md:grid-cols-3 gap-5 sm:gap-6">
         {points.map((p, i) => (
           <div
             key={p.tag}
-            className="product-card rounded-2xl p-6 sm:p-7 reveal-up"
-            style={{ animationDelay: `${i * 90}ms` }}
+            className="product-card rounded-2xl p-7 sm:p-8 reveal-up"
+            style={{ animationDelay: `${i * 100}ms` }}
           >
             <div className="flex items-center gap-2.5">
               <span
@@ -559,11 +622,99 @@ function Differentiators() {
           </div>
         ))}
       </div>
+
+      <p className="mt-8 text-center text-[13px] text-[var(--studio-graphite)] leading-relaxed max-w-2xl mx-auto">
+        The one thing the app does send: an anonymous launch ping, four fields
+        (a random install id connected to nothing, the event name, app version,
+        macOS version). The switch to turn it off is in Settings, and{" "}
+        <a
+          href="https://github.com/AndresCarreonDiaz/capturia/blob/main/docs/telemetry.md"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="cue-link"
+        >
+          docs/telemetry.md
+        </a>{" "}
+        shows the exact bytes.
+      </p>
     </section>
   );
 }
 
-/* ───── 9. Use cases ───── */
+/* ───── 9. Why it feels different ───── */
+
+function Differentiators() {
+  const points: Array<{ tag: string; title: string; body: string; accent: string }> = [
+    {
+      tag: "Camera",
+      title: "Every call app at once",
+      body: "Capturia is a system camera, not a plugin. One install covers Zoom, Meet, Slack, Teams, and whatever your next client uses: you just pick it in the camera dropdown.",
+      accent: "var(--phosphor)",
+    },
+    {
+      tag: "Native",
+      title: "Signed and notarized",
+      body: "A real macOS camera extension, Developer ID signed and notarized by Apple. Drag to Applications, approve once, done. No kernel hacks, no screen-share workarounds.",
+      accent: "var(--signal)",
+    },
+    {
+      tag: "Truth",
+      title: "Real numbers only",
+      body: "Deck-primed figures render straight from your file, and without a deck the AI uses clearly illustrative demo numbers. Your real data comes from you, not a guess.",
+      accent: "var(--amber-cue)",
+    },
+    {
+      tag: "Legibility",
+      title: "Readable after compression",
+      body: "Meeting apps crush pixels. Every overlay holds a minimum type size and contrast floor so the far end reads it, even on a bad connection.",
+      accent: "var(--magenta-sweep)",
+    },
+  ];
+
+  return (
+    <section className="border-y border-white/[0.06] bg-[var(--studio-mist)]">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 py-20 sm:py-28">
+        <SectionHead
+          eyebrow="Why it feels different"
+          title={
+            <>
+              Built like a camera, <span className="italic text-[var(--phosphor)]">not a plugin</span>.
+            </>
+          }
+          kicker="Four decisions we refuse to walk back."
+        />
+
+        <div className="mt-12 sm:mt-16 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 sm:gap-6">
+          {points.map((p, i) => (
+            <div
+              key={p.tag}
+              className="product-card rounded-2xl p-6 sm:p-7 reveal-up"
+              style={{ animationDelay: `${i * 90}ms` }}
+            >
+              <div className="flex items-center gap-2.5">
+                <span
+                  className="w-2 h-2 rounded-full"
+                  style={{ background: p.accent, boxShadow: `0 0 12px ${p.accent}` }}
+                />
+                <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
+                  {p.tag}
+                </span>
+              </div>
+              <h3 className="mt-4 text-[var(--studio-ink)] text-[17px] font-semibold tracking-tight">
+                {p.title}
+              </h3>
+              <p className="mt-2.5 text-[var(--studio-graphite)] text-[14px] leading-relaxed">
+                {p.body}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ───── 10. Use cases ───── */
 
 function UseCases() {
   const cases: Array<{ tag: string; title: string; body: string; accent: string }> = [
@@ -594,122 +745,137 @@ function UseCases() {
   ];
 
   return (
-    <section id="use-cases" className="border-y border-white/[0.06] bg-[var(--studio-mist)]">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 py-20 sm:py-28">
-        <SectionHead
-          eyebrow="Use cases"
-          title={
-            <>
-              Built for the people <span className="italic text-[var(--phosphor)]">on camera</span>.
-            </>
-          }
-          kicker="No crew, no graphics operator, no post-production. Just you and your voice."
-        />
+    <section id="use-cases" className="mx-auto max-w-7xl px-4 sm:px-6 py-20 sm:py-28">
+      <SectionHead
+        eyebrow="Use cases"
+        title={
+          <>
+            Built for the people <span className="italic text-[var(--phosphor)]">on camera</span>.
+          </>
+        }
+        kicker="No crew, no graphics operator, no post-production. Just you and your voice."
+      />
 
-        <div className="mt-12 sm:mt-16 grid grid-cols-1 sm:grid-cols-2 gap-5 sm:gap-6">
-          {cases.map((c, i) => (
-            <div
-              key={c.tag}
-              className="product-card rounded-2xl p-7 sm:p-8 reveal-up"
-              style={{ animationDelay: `${i * 90}ms` }}
-            >
-              <div className="flex items-center gap-2.5">
-                <span
-                  className="w-2 h-2 rounded-full"
-                  style={{ background: c.accent, boxShadow: `0 0 12px ${c.accent}` }}
-                />
-                <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
-                  {c.tag}
-                </span>
-              </div>
-              <h3 className="display-serif mt-4 text-[var(--studio-ink)] text-2xl sm:text-3xl">
-                {c.title}
-              </h3>
-              <p className="mt-3 text-[var(--studio-graphite)] text-[15px] leading-relaxed">
-                {c.body}
-              </p>
+      <div className="mt-12 sm:mt-16 grid grid-cols-1 sm:grid-cols-2 gap-5 sm:gap-6">
+        {cases.map((c, i) => (
+          <div
+            key={c.tag}
+            className="product-card rounded-2xl p-7 sm:p-8 reveal-up"
+            style={{ animationDelay: `${i * 90}ms` }}
+          >
+            <div className="flex items-center gap-2.5">
+              <span
+                className="w-2 h-2 rounded-full"
+                style={{ background: c.accent, boxShadow: `0 0 12px ${c.accent}` }}
+              />
+              <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
+                {c.tag}
+              </span>
             </div>
-          ))}
-        </div>
+            <h3 className="display-serif mt-4 text-[var(--studio-ink)] text-2xl sm:text-3xl">
+              {c.title}
+            </h3>
+            <p className="mt-3 text-[var(--studio-graphite)] text-[15px] leading-relaxed">
+              {c.body}
+            </p>
+          </div>
+        ))}
       </div>
     </section>
   );
 }
 
-/* ───── 10. Pricing ───── */
+/* ───── 11. Pricing ───── */
 
 function Pricing() {
   return (
-    <section id="pricing" className="mx-auto max-w-5xl px-4 sm:px-6 py-20 sm:py-28">
-      <SectionHead
-        eyebrow="Pricing"
-        title={
-          <>
-            Free with your key. <span className="italic text-[var(--phosphor)]">Pro when you want zero setup.</span>
-          </>
-        }
-        kicker="The free tier is the real product, not a trial. Pro adds hosted everything for people who never want to think about API keys."
-      />
+    <section id="pricing" className="border-y border-white/[0.06] bg-[var(--studio-mist)]">
+      <div className="mx-auto max-w-5xl px-4 sm:px-6 py-20 sm:py-28">
+        <SectionHead
+          eyebrow="Pricing"
+          title={
+            <>
+              Free with your key.{" "}
+              <span className="italic text-[var(--phosphor)]">Forever.</span>
+            </>
+          }
+          kicker="The free tier is the whole product, not a trial. Pro adds hosted everything for people who never want to think about API keys."
+        />
 
-      <div className="mt-12 sm:mt-16 grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6">
-        {/* Free */}
-        <div className="product-card rounded-2xl p-8 reveal-up flex flex-col">
-          <div className="flex items-center justify-between">
-            <h3 className="text-[var(--studio-ink)] text-xl font-semibold tracking-tight">Free</h3>
-            <span className="font-mono text-[9px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
-              Bring your own key
-            </span>
+        <div className="mt-12 sm:mt-16 grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6">
+          {/* Free */}
+          <div className="product-card rounded-2xl p-8 reveal-up flex flex-col">
+            <div className="flex items-center justify-between">
+              <h3 className="text-[var(--studio-ink)] text-xl font-semibold tracking-tight">Free</h3>
+              <span className="font-mono text-[9px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
+                Bring your own key
+              </span>
+            </div>
+            <p className="mt-2 text-[var(--studio-graphite)] text-[14px]">
+              Everything Capturia does, powered by your own AI key. Free forever.
+            </p>
+            <ul className="mt-7 space-y-3.5 text-[14.5px] text-[var(--studio-graphite)] flex-1">
+              <Feature>The native Capturia camera, deck priming, silent hotkeys, voice control</Feature>
+              <Feature>Your key is encrypted on your Mac with a key held in the macOS Keychain, never on our servers</Feature>
+              <Feature>The browser demo, free to try with zero installs</Feature>
+              <Feature>Open source under MIT</Feature>
+            </ul>
+            <DownloadLink
+              location="pricing"
+              href={DOWNLOAD}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="cta-solid mt-8 inline-flex items-center justify-center gap-2 rounded-full px-6 py-3.5 text-[15px] font-semibold"
+            >
+              <DownloadIcon />
+              Download for macOS
+            </DownloadLink>
           </div>
-          <p className="mt-2 text-[var(--studio-graphite)] text-[14px]">
-            Everything Capturia does, powered by your own AI key.
-          </p>
-          <ul className="mt-7 space-y-3.5 text-[14.5px] text-[var(--studio-graphite)] flex-1">
-            <Feature>Your key is encrypted on your Mac with a key held in the macOS Keychain, never on our servers</Feature>
-            <Feature>Full overlay library, voice control, deck priming</Feature>
-            <Feature>The browser studio, free to try right now</Feature>
-            <Feature>Open source under MIT</Feature>
-          </ul>
-          <Link
-            href="/studio"
-            className="cta-solid mt-8 inline-flex items-center justify-center gap-2 rounded-full px-6 py-3.5 text-[15px] font-semibold"
-          >
-            Try the live demo
-            <span aria-hidden>→</span>
-          </Link>
+
+          {/* Pro (coming soon) */}
+          <div className="pro-card rounded-2xl p-8 reveal-up [animation-delay:120ms] flex flex-col">
+            <div className="flex items-center justify-between">
+              <h3 className="text-[var(--studio-ink)] text-xl font-semibold tracking-tight">Pro</h3>
+              <span className="rounded-full border border-[var(--phosphor)]/40 px-2.5 py-1 font-mono text-[9px] tracking-[0.22em] uppercase text-[var(--phosphor)]">
+                Coming soon
+              </span>
+            </div>
+            <p className="mt-2 text-[var(--studio-graphite)] text-[14px]">
+              Hosted AI: sign in and talk. No key, no setup.
+            </p>
+            <ul className="mt-7 space-y-3.5 text-[14.5px] text-[var(--studio-graphite)]">
+              <Feature accent="var(--phosphor)">Hosted AI keys, no API setup at all</Feature>
+              <Feature accent="var(--phosphor)">Hosted audience voting for any crowd size</Feature>
+              <Feature accent="var(--phosphor)">Premium features as they ship</Feature>
+            </ul>
+            {/* PLACEHOLDER: Pro pricing is being decided. Replace this block
+                with the real price once it is locked. No numbers until then. */}
+            <div className="mt-7 flex-1 flex flex-col justify-end">
+              <div className="rounded-xl border border-dashed border-white/[0.16] px-5 py-4 text-center">
+                <p className="font-mono text-[9px] tracking-[0.24em] uppercase text-[var(--studio-fade)]">
+                  Placeholder · pricing not final
+                </p>
+                <p className="display-serif mt-1.5 text-2xl text-[var(--studio-graphite)]">
+                  To be announced
+                </p>
+              </div>
+            </div>
+            <a
+              href={RELEASES}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ghost-btn mt-6 inline-flex items-center justify-center gap-2 rounded-full px-6 py-3.5 text-[15px] font-medium"
+            >
+              Get notified on GitHub
+              <span aria-hidden>→</span>
+            </a>
+          </div>
         </div>
 
-        {/* Pro (coming) */}
-        <div className="pro-card rounded-2xl p-8 reveal-up [animation-delay:120ms] flex flex-col">
-          <div className="flex items-center justify-between">
-            <h3 className="text-[var(--studio-ink)] text-xl font-semibold tracking-tight">Pro</h3>
-            <span className="rounded-full border border-[var(--phosphor)]/40 px-2.5 py-1 font-mono text-[9px] tracking-[0.22em] uppercase text-[var(--phosphor)]">
-              Coming
-            </span>
-          </div>
-          <p className="mt-2 text-[var(--studio-graphite)] text-[14px]">
-            Sign in and talk. We handle the rest.
-          </p>
-          <ul className="mt-7 space-y-3.5 text-[14.5px] text-[var(--studio-graphite)] flex-1">
-            <Feature accent="var(--phosphor)">Hosted AI keys, no API setup at all</Feature>
-            <Feature accent="var(--phosphor)">Hosted audience voting for any crowd size</Feature>
-            <Feature accent="var(--phosphor)">Premium features as they ship</Feature>
-          </ul>
-          <DownloadLink
-            location="pricing"
-            href={RELEASES}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="ghost-btn mt-8 inline-flex items-center justify-center gap-2 rounded-full px-6 py-3.5 text-[15px] font-medium"
-          >
-            Get notified on GitHub
-            <span aria-hidden>→</span>
-          </DownloadLink>
-        </div>
+        <p className="mt-6 text-center font-mono text-[10px] tracking-[0.18em] uppercase text-[var(--studio-fade)]">
+          The free tier stays free when Pro lands
+        </p>
       </div>
-
-      <p className="mt-6 text-center font-mono text-[10px] tracking-[0.18em] uppercase text-[var(--studio-fade)]">
-        Pro pricing lands with the public release
-      </p>
     </section>
   );
 }
@@ -739,35 +905,48 @@ function Feature({ children, accent }: { children: React.ReactNode; accent?: str
   );
 }
 
-/* ───── 11. FAQ: the honest answers ───── */
+/* ───── 12. FAQ: the honest answers ───── */
 
 const FAQS: Array<{ q: string; a: React.ReactNode }> = [
   {
     q: "Can I download the app today?",
     a: (
       <>
-        Not yet. The build is not signed for distribution, and we will not hand
-        out an unsigned app. Watch releases on the{" "}
-        <a href={GITHUB} target="_blank" rel="noopener noreferrer" className="cue-link">
-          GitHub repo
-        </a>{" "}
-        and the release will find you the moment it is up. The{" "}
+        Yes. Grab the DMG from{" "}
+        <DownloadLink location="faq" href={DOWNLOAD} target="_blank" rel="noopener noreferrer" className="cue-link">
+          GitHub releases
+        </DownloadLink>
+        , drag Capturia into Applications, and launch. Builds are Developer ID
+        signed and notarized by Apple, so Gatekeeper opens them without
+        warnings. The{" "}
         <Link href="/studio" className="cue-link">
           browser demo
         </Link>{" "}
-        works right now.
+        needs no download at all.
       </>
     ),
   },
   {
-    q: "How does it get into my call right now?",
+    q: "What does it need to run?",
     a: (
       <>
-        You share the Control Room window in Zoom, Meet, or Slack, or route it
-        through OBS. Your audience sees the composed feed either way. The native
-        camera extension, where Capturia shows up as a webcam you pick inside the
-        call app, is built; it ships once Apple developer verification completes
-        so it can be signed.
+        macOS 13 or newer on Apple Silicon; the current build does not ship an
+        Intel binary. Mid-sentence cue matching uses Apple&rsquo;s streaming
+        speech engine on macOS 26; on macOS 13 to 15 a local Whisper model
+        transcribes instead and cue cards land at your next pause.
+      </>
+    ),
+  },
+  {
+    q: "How does it get into my call?",
+    a: (
+      <>
+        Capturia installs a macOS camera extension, so a camera named
+        &ldquo;Capturia&rdquo; appears in every call app&rsquo;s camera picker,
+        right next to your webcam. Select it in Zoom, Meet, Slack, or Teams and
+        your audience sees your camera with the live graphics on it. Prefer not
+        to install the extension? The OBS bridge documented in the repo still
+        works.
       </>
     ),
   },
@@ -775,8 +954,8 @@ const FAQS: Array<{ q: string; a: React.ReactNode }> = [
     q: "Does it record my calls?",
     a: (
       <>
-        No. Speech is transcribed on your Mac and your call audio never leaves it.
-        No bot joins the meeting, nothing is recorded, nothing is stored by
+        No. Speech is transcribed on your Mac and your call audio never leaves
+        it. No bot joins the meeting, nothing is recorded, nothing is stored by
         Capturia. Your transcribed commands, and the deck you load, go only to
         your own AI provider to decide what to render.
       </>
@@ -786,9 +965,10 @@ const FAQS: Array<{ q: string; a: React.ReactNode }> = [
     q: "What does free actually cost?",
     a: (
       <>
-        Capturia itself is free and open source under MIT. You bring your own AI
-        key, encrypted on your Mac with a key held in the macOS Keychain and never sent to our servers, and you
-        pay your model provider directly for what you use.
+        Capturia itself is free forever and open source under MIT. You bring
+        your own AI key, encrypted on your Mac with a key held in the macOS
+        Keychain and never sent to our servers, and you pay your model provider
+        directly for what you use.
       </>
     ),
   },
@@ -796,9 +976,8 @@ const FAQS: Array<{ q: string; a: React.ReactNode }> = [
     q: "Which call apps does it work with?",
     a: (
       <>
-        Any app that can show a shared window today, and any app that can pick a
-        camera once the extension ships. Zoom, Meet, Slack, Teams, Webex,
-        Discord: if it does video, it works.
+        Any app that lets you pick a camera: Zoom, Meet, Slack, Teams, Webex,
+        Discord, OBS itself. If it has a camera dropdown, Capturia is in it.
       </>
     ),
   },
@@ -806,7 +985,7 @@ const FAQS: Array<{ q: string; a: React.ReactNode }> = [
 
 function Faq() {
   return (
-    <section id="faq" className="border-y border-white/[0.06] bg-[var(--studio-mist)]">
+    <section id="faq" className="border-b border-white/[0.06] bg-[var(--studio-mist)]">
       <div className="mx-auto max-w-3xl px-4 sm:px-6 py-20 sm:py-28">
         <SectionHead
           eyebrow="FAQ"
@@ -850,7 +1029,7 @@ function Faq() {
   );
 }
 
-/* ───── 12. Final CTA ───── */
+/* ───── 13. Final CTA ───── */
 
 function FinalCta() {
   return (
@@ -873,48 +1052,39 @@ function FinalCta() {
           </span>
         </h2>
         <p className="mt-6 text-[var(--studio-graphite)] max-w-xl mx-auto text-base sm:text-lg leading-relaxed">
-          The fastest way to get it is to talk at the demo for thirty seconds.
-          Then watch releases on GitHub and the macOS build will land in your
-          feed the day it ships.
+          Download it before your next call. Install the camera once, pick
+          Capturia in Zoom, and talk. Or spend thirty seconds talking at the
+          browser demo first.
         </p>
 
         <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-3">
-          <Link
-            href="/studio"
-            className="cta-solid inline-flex items-center gap-2.5 rounded-full px-9 py-4 text-base font-semibold w-full sm:w-auto justify-center"
-          >
-            Try the live demo
-            <span aria-hidden>→</span>
-          </Link>
-          <a
-            href={GITHUB}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="ghost-btn inline-flex items-center gap-2.5 rounded-full px-9 py-4 text-base font-medium w-full sm:w-auto justify-center"
-          >
-            <StarIcon />
-            Star on GitHub
-          </a>
-        </div>
-        <p className="mt-5 font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
-          No email, no list ·{" "}
           <DownloadLink
             location="final-cta"
-            href={RELEASES}
+            href={DOWNLOAD}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-[var(--studio-graphite)] hover:text-white transition-colors underline decoration-dotted underline-offset-4"
+            className="cta-solid inline-flex items-center gap-2.5 rounded-full px-9 py-4 text-base font-semibold w-full sm:w-auto justify-center"
           >
-            watch releases
-          </DownloadLink>{" "}
-          to get notified
+            <DownloadIcon />
+            Download for macOS
+          </DownloadLink>
+          <Link
+            href="/studio"
+            className="ghost-btn inline-flex items-center gap-2.5 rounded-full px-9 py-4 text-base font-medium w-full sm:w-auto justify-center"
+          >
+            Try the browser demo
+            <span aria-hidden>→</span>
+          </Link>
+        </div>
+        <p className="mt-5 font-mono text-[10px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
+          No account, no email · macOS 13+ · Apple Silicon · notarized by Apple
         </p>
       </div>
     </section>
   );
 }
 
-/* ───── 13. Footer ───── */
+/* ───── 14. Footer ───── */
 
 function SiteFooter() {
   return (
@@ -929,8 +1099,9 @@ function SiteFooter() {
             <CapturiaLogo style={{ height: 34, width: "auto" }} />
           </Link>
           <p className="mt-4 text-[var(--studio-graphite)] text-[14px] leading-relaxed">
-            A macOS menu bar app that listens while you talk and renders visuals
-            over your live camera feed. Free with your own key. Open source.
+            A real camera on your Mac. Capturia listens while you talk and
+            renders your visuals over your live feed in Zoom, Meet, and Slack.
+            Free with your own key. Open source.
           </p>
           <p className="mt-3 text-[var(--studio-fade)] text-[12.5px] leading-relaxed">
             Built solo by Andres Carreon, founder of Bubblio. 1st place at the
@@ -950,8 +1121,11 @@ function SiteFooter() {
         </div>
 
         <nav className="flex flex-col sm:items-end gap-2.5 text-[13px] text-[var(--studio-graphite)]">
+          <DownloadLink location="footer" href={DOWNLOAD} target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
+            Download for macOS
+          </DownloadLink>
           <Link href="/studio" className="hover:text-white transition-colors">
-            Try the live demo
+            Try the browser demo
           </Link>
           <a href="#how" className="hover:text-white transition-colors">How it works</a>
           <a href="#pricing" className="hover:text-white transition-colors">Pricing</a>
