@@ -89,11 +89,24 @@ async function startRuntimeServer({ keychain, isDev, env = process.env, host = "
   const token = crypto.randomBytes(32).toString("hex");
 
   // Same agent shape as the web route (see that file for the reasoning behind
-  // maxSteps/temperature/thinkingBudget); only the key SOURCE differs.
-  function buildAgent(model, apiKey) {
+  // maxSteps/temperature/thinkingBudget); only the key SOURCE differs. For
+  // the hosted tier (spec.hosted set, M11 issue #10) the model is built here
+  // as a concrete @ai-sdk/google instance pointed at Capturia's proxy, with
+  // the vault's Capturia JWT in the key slot; resolveModel passes non-string
+  // models through untouched, so BuiltInAgent behaves identically. The spec
+  // string is still consulted for the thinking allowlist.
+  function buildAgent({ model, apiKey, hosted }) {
+    let resolvedModel = model;
+    if (hosted) {
+      const { createGoogleGenerativeAI } = require("@ai-sdk/google");
+      resolvedModel = createGoogleGenerativeAI({
+        baseURL: hosted.baseUrl,
+        apiKey,
+      })(hosted.modelId);
+    }
     return new BuiltInAgent({
-      model,
-      apiKey,
+      model: resolvedModel,
+      apiKey: hosted ? undefined : apiKey,
       prompt: SYSTEM_PROMPT,
       maxSteps: 1,
       temperature: 0,
@@ -118,12 +131,12 @@ async function startRuntimeServer({ keychain, isDev, env = process.env, host = "
   const runtime = new CopilotRuntime({
     agents: ({ request }) => {
       const provider = request.headers.get("x-capturia-provider");
-      const { model, apiKey } = resolveDesktopAgentSpec({
+      const spec = resolveDesktopAgentSpec({
         provider,
         storedKey: storedKeyFor(provider),
         env: effectiveEnv,
       });
-      return { default: buildAgent(model, apiKey) };
+      return { default: buildAgent(spec) };
     },
     runner: new InMemoryAgentRunner(),
   });
@@ -218,4 +231,4 @@ async function startRuntimeServer({ keychain, isDev, env = process.env, host = "
   };
 }
 
-module.exports = { startRuntimeServer, BASE_PATH };
+module.exports = { startRuntimeServer, BASE_PATH, loadDevEnvFiles };

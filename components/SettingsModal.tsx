@@ -16,7 +16,7 @@ interface Props {
 
 const PROVIDER_META: Record<
   KeyProvider,
-  { name: string; tagline: string; url: string; placeholder: string }
+  { name: string; tagline: string; url: string; placeholder: string; note?: string }
 > = {
   gemini: {
     name: "Google Gemini",
@@ -36,9 +36,20 @@ const PROVIDER_META: Record<
     url: "https://platform.openai.com",
     placeholder: "sk-... key",
   },
+  // Hosted-tier stub (M11 slice 1): paste-a-token wiring only; the guided
+  // upgrade and automatic token refresh land with the next slice. The note
+  // keeps the section's "never sent to a Capturia server" promise honest:
+  // this row is the one non-BYOK slot and its token DOES go to Capturia.
+  "capturia-hosted": {
+    name: "Capturia Pro",
+    tagline: "hosted, no API key needed",
+    url: "https://capturia.app",
+    placeholder: "Paste your Capturia access token",
+    note: "Not BYOK: this access token is stored encrypted locally and sent to the Capturia hosted proxy with each request to authenticate your plan.",
+  },
 };
 
-const PROVIDER_ORDER: KeyProvider[] = ["gemini", "claude", "openai"];
+const PROVIDER_ORDER: KeyProvider[] = ["gemini", "claude", "openai", "capturia-hosted"];
 
 export default function SettingsModal({
   open,
@@ -119,10 +130,10 @@ export default function SettingsModal({
 
         <div className="px-6 py-5">
           <div className="mb-1.5 text-white/40 text-[10px] font-mono uppercase tracking-[0.2em]">
-            BYOK API Keys
+            Model Access
           </div>
           <p className="text-white/50 text-xs mb-5 leading-relaxed">
-            Bring your own LLM keys. Stored locally and encrypted via OS Keychain. Never sent to a Capturia server.
+            Bring your own LLM keys (BYOK). Stored locally and encrypted via OS Keychain. BYOK keys are never sent to a Capturia server; Capturia Pro is the hosted exception, see its row below.
           </p>
 
           {isReady && keys.some((k) => k.has) && (
@@ -223,6 +234,11 @@ export default function SettingsModal({
                         {isBusy ? "Saving…" : "Save"}
                       </button>
                     </div>
+                  )}
+                  {meta.note && (
+                    <p className="mt-1.5 text-white/35 text-[11px] leading-relaxed">
+                      {meta.note}
+                    </p>
                   )}
                 </div>
               );

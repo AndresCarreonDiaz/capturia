@@ -8,6 +8,7 @@ import {
   resolveDesktopAgentSpec,
   desktopKeyError,
   isAllowedRuntimeOrigin,
+  HOSTED_PROVIDER,
 } from "./desktop-runtime";
 
 const NO_ENV = {} as Record<string, string | undefined>;
@@ -92,6 +93,48 @@ describe("resolveDesktopAgentSpec", () => {
     expect(spec.model).toBe("vertex/gemini-2.5-pro");
     expect(spec.apiKey).toBeUndefined();
   });
+
+  it("routes the hosted provider at Capturia's proxy with the vault token in the key slot", () => {
+    const spec = resolveDesktopAgentSpec({
+      provider: HOSTED_PROVIDER,
+      storedKey: "capturia-jwt",
+      env: NO_ENV,
+    });
+    expect(spec.model).toBe("google/gemini-2.5-flash-lite");
+    expect(spec.apiKey).toBe("capturia-jwt");
+    expect(spec.hosted).toEqual({
+      baseUrl: "https://capturia.app/api/hosted/v1beta",
+      modelId: "gemini-2.5-flash-lite",
+    });
+  });
+
+  it("honors the CAPTURIA_HOSTED_URL and CAPTURIA_HOSTED_MODEL env overrides", () => {
+    // The env override is the slice-1 test hook for hosted wiring: point the
+    // desktop runtime at a local dev proxy without touching the default.
+    const spec = resolveDesktopAgentSpec({
+      provider: HOSTED_PROVIDER,
+      storedKey: "capturia-jwt",
+      env: {
+        CAPTURIA_HOSTED_URL: "http://localhost:3000/api/hosted/",
+        CAPTURIA_HOSTED_MODEL: "gemini-2.5-flash",
+      },
+    });
+    expect(spec.hosted).toEqual({
+      baseUrl: "http://localhost:3000/api/hosted/v1beta",
+      modelId: "gemini-2.5-flash",
+    });
+    expect(spec.model).toBe("google/gemini-2.5-flash");
+  });
+
+  it("falls back to the env spec when the hosted slot has no token", () => {
+    const spec = resolveDesktopAgentSpec({
+      provider: HOSTED_PROVIDER,
+      storedKey: null,
+      env: { GOOGLE_API_KEY: "aistudio-key" },
+    });
+    expect(spec.hosted).toBeUndefined();
+    expect(spec.apiKey).toBe("aistudio-key");
+  });
 });
 
 describe("desktopKeyError", () => {
@@ -108,6 +151,24 @@ describe("desktopKeyError", () => {
     expect(
       desktopKeyError({ provider: null, storedKey: null, env: { GOOGLE_API_KEY: "k" } })
     ).toBeNull();
+  });
+
+  it("is null when the hosted slot holds a token", () => {
+    expect(desktopKeyError({ provider: HOSTED_PROVIDER, storedKey: "jwt", env: NO_ENV })).toBeNull();
+  });
+
+  it("stays null for hosted-without-token when the env fallback would run anyway", () => {
+    // Mirrors the agents factory: no token means the request falls through to
+    // the env spec, so a usable env key must not trip the fail-fast.
+    expect(
+      desktopKeyError({ provider: HOSTED_PROVIDER, storedKey: null, env: { GOOGLE_API_KEY: "k" } })
+    ).toBeNull();
+  });
+
+  it("names the missing Capturia token instead of suggesting env API keys", () => {
+    const err = desktopKeyError({ provider: HOSTED_PROVIDER, storedKey: null, env: NO_ENV });
+    expect(err).toMatch(/Capturia Pro/);
+    expect(err).not.toMatch(/GOOGLE_API_KEY/);
   });
 });
 

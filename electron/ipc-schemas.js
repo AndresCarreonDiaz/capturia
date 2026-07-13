@@ -5,7 +5,9 @@
 
 const { URL } = require("url");
 
-const PROVIDERS = ["gemini", "claude", "openai"];
+// Keep in sync with electron/keychain.js: "capturia-hosted" is the Pro
+// access-token slot, not an API-key vendor.
+const PROVIDERS = ["gemini", "claude", "openai", "capturia-hosted"];
 
 // Is this navigation/sender URL one we trust? Dev: the local Next server on
 // any localhost port. Prod: the bundled file:// app. Everything else (a page

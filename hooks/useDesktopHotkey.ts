@@ -10,7 +10,9 @@ type HotkeyPayload = { action: string; index?: number };
 // The full surface exposed by electron/preload.js via contextBridge. All
 // desktop hooks (hotkey, voice capture, key vault) reference this single
 // declaration so the global Window["capturia"] type stays in one place.
-export type KeyProvider = "gemini" | "claude" | "openai";
+// "capturia-hosted" holds the Capturia Pro access token (hosted tier, M11)
+// in the same vault slot shape as the BYOK vendor keys.
+export type KeyProvider = "gemini" | "claude" | "openai" | "capturia-hosted";
 export interface KeyEntry {
   provider: KeyProvider;
   has: boolean;
