@@ -8,6 +8,7 @@
 
 import {
   publishPoll as memPublishPoll,
+  unpublishPoll as memUnpublishPoll,
   castVote as memCastVote,
   getRoomState as memGetRoomState,
   subscribe as memSubscribe,
@@ -22,6 +23,10 @@ export interface VoteBackend {
   publishPoll(roomId: string, hostKey: string, poll: unknown): Promise<StoreResult>;
   castVote(roomId: string, viewerId: string, action: string): Promise<StoreResult>;
   getRoomState(roomId: string): Promise<VoteEvent>;
+  // Host teardown on the studio's voting toggle-off. Memory-only for now:
+  // Redis rooms just idle out on their TTL until the Durable Objects backend
+  // owns the room lifecycle (issue #12); the route answers 501 without it.
+  unpublishPoll?(roomId: string, hostKey: string): Promise<StoreResult>;
   // In-process push, only when the store lives in this process.
   subscribe?: typeof memSubscribe;
 }
@@ -45,6 +50,7 @@ export function getVoteBackend(env: Record<string, string | undefined> = process
     cached = {
       mode: "memory",
       publishPoll: async (roomId, hostKey, poll) => memPublishPoll(roomId, hostKey, poll),
+      unpublishPoll: async (roomId, hostKey) => memUnpublishPoll(roomId, hostKey),
       castVote: async (roomId, viewerId, action) => memCastVote(roomId, viewerId, action),
       getRoomState: async (roomId) => memGetRoomState(roomId),
       subscribe: memSubscribe,

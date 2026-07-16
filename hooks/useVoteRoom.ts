@@ -100,6 +100,32 @@ export function useVoteRoom({ enabled, poll, onCounts, onPublishError }: Args) {
     };
   }, [enabled, originUsable, poll, room, hostKey]);
 
+  // Unpublish on toggle-off: without this the room stays votable for the
+  // rest of the 4h TTL, and a later session in this tab (the room id is
+  // module-level) would inherit its stale counts and the phones' vote locks.
+  // The store deletes the room and ends every phone's stream (they fall back
+  // to their waiting screen); resetting lastPublishedRef makes re-enabling
+  // republish the same poll into a fresh room instead of skipping it as
+  // "already published". Keyed on the enabled TRANSITION rather than effect
+  // cleanup, because cleanup also runs when the provider remounts the studio
+  // subtree mid-show, which must not tear down a live room. Fire-and-forget:
+  // a failed unpublish just means the old TTL-only behavior.
+  const wasEnabledRef = useRef(false);
+  useEffect(() => {
+    if (enabled && originUsable) {
+      wasEnabledRef.current = true;
+      return;
+    }
+    if (!wasEnabledRef.current) return;
+    wasEnabledRef.current = false;
+    lastPublishedRef.current = "";
+    fetch(`/api/vote/${room}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "unpublish", hostKey }),
+    }).catch(() => {});
+  }, [enabled, originUsable, room, hostKey]);
+
   // Live counts. EventSource's native reconnect covers the window before the
   // first publish (the server closes streams for unknown rooms).
   useEffect(() => {
