@@ -6,6 +6,7 @@ import { getVoteBackend } from "@/lib/vote-backend";
 //   GET  /api/vote/:room?watch=1    -> SSE stream of state/vote events
 //   POST { type: "poll", hostKey, poll }      (studio publishes the live poll)
 //   POST { type: "vote", viewerId, action }   (a viewer's phone votes)
+//   POST { type: "unpublish", hostKey }       (studio's voting toggle turned off)
 //
 // Backend is picked by env (lib/vote-backend.ts): in-memory single-process by
 // default (operator's machine / self-host; see lib/vote-store.ts header), or
@@ -49,6 +50,18 @@ export async function GET(request: Request, { params }: Params): Promise<Respons
       start(controller) {
         const send = (e: VoteEvent) => {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(e)}\n\n`));
+          // "closed" is the store's terminal frame (TTL sweep or host
+          // unpublish): end the response after relaying it so the client's
+          // EventSource reconnects (back into the waiting-room loop) instead
+          // of hanging forever on a stream with no room behind it.
+          if (e.type === "closed") {
+            cleanup();
+            try {
+              controller.close();
+            } catch {
+              // already closed by the client
+            }
+          }
         };
         send(snapshot);
         const sub = subscribe(room, send);
@@ -164,6 +177,19 @@ export async function POST(request: Request, { params }: Params): Promise<Respon
 
   if (body?.type === "poll") {
     const result = await backend.publishPoll(room, String(body.hostKey ?? ""), body.poll);
+    return result.ok
+      ? Response.json(result.event)
+      : Response.json({ error: result.error }, { status: result.status });
+  }
+
+  if (body?.type === "unpublish") {
+    // Backend-optional (see VoteBackend.unpublishPoll): the studio fires this
+    // best-effort and ignores failures, so a backend without teardown keeps
+    // exactly its old TTL-only behavior.
+    if (!backend.unpublishPoll) {
+      return Response.json({ error: "unpublish unsupported on this backend" }, { status: 501 });
+    }
+    const result = await backend.unpublishPoll(room, String(body.hostKey ?? ""));
     return result.ok
       ? Response.json(result.event)
       : Response.json({ error: result.error }, { status: result.status });

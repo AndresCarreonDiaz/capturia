@@ -129,6 +129,47 @@ test("the waiting room turns into the poll once the host goes live", async ({
   await expect(page.getByText("Which demo next?")).toBeVisible({ timeout: 15_000 });
 });
 
+test("toggling voting off tears the room down; re-enabling starts a fresh tally with no phantom lock", async ({
+  page,
+  request,
+}) => {
+  const room = roomSlug();
+  const hostKey = key();
+  await publish(request, room, hostKey, POLL);
+
+  await page.goto(`/vote/${room}`);
+  await optionButton(page, "APIs").click();
+  await expect(page.getByText("Vote counted.", { exact: false })).toBeVisible();
+
+  // The host toggles voting off; useVoteRoom sends exactly this unpublish.
+  const closed = await request.post(`/api/vote/${room}`, {
+    data: { type: "unpublish", hostKey },
+  });
+  expect(closed.ok()).toBe(true);
+
+  // The phone's stream ends with a terminal frame and the waiting screen
+  // (the page's existing pre-publish state) comes back, no reload needed.
+  await expect(
+    page.getByText("Waiting for the host to start a poll.", { exact: false })
+  ).toBeVisible({ timeout: 10_000 });
+
+  // The room no longer accepts votes.
+  const rejected = await request.post(`/api/vote/${room}`, {
+    data: { type: "vote", viewerId: key(), action: "vote_apis" },
+  });
+  expect(rejected.status()).toBe(404);
+
+  // Toggling back on republishes the SAME options into a recreated room:
+  // round 1 again, like after a server restart. The fresh instance nonce
+  // must clear this phone's stored round-1 vote lock, so it sees an open
+  // poll instead of a phantom "already voted" state.
+  const republished = await publish(request, room, hostKey, POLL);
+  expect((await republished.json()).round).toBe(1);
+  await expect(page.getByText("Which demo next?")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("Tap an option to vote.", { exact: false })).toBeVisible();
+  await expect(optionButton(page, "APIs")).not.toContainText("%");
+});
+
 test("API guards: host auth, room shape, option validity, rate limit, repeats", async ({
   request,
 }) => {
@@ -146,6 +187,12 @@ test("API guards: host auth, room shape, option validity, rate limit, repeats", 
   // Only the claiming hostKey may re-publish.
   const stranger = await publish(request, room, key(), POLL);
   expect(stranger.status()).toBe(403);
+
+  // Only the claiming hostKey may unpublish, either.
+  const strangerClose = await request.post(`/api/vote/${room}`, {
+    data: { type: "unpublish", hostKey: key() },
+  });
+  expect(strangerClose.status()).toBe(403);
 
   // Malformed polls are rejected.
   const badPoll = await publish(request, room, hostKey, { title: "x", options: [] });

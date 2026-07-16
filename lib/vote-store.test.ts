@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   publishPoll,
+  unpublishPoll,
   castVote,
   getRoomState,
   subscribe,
@@ -211,6 +212,85 @@ describe("subscribe + events", () => {
   });
 });
 
+describe("unpublishPoll", () => {
+  beforeEach(() => {
+    publishPoll(ROOM, HOST, POLL, t);
+  });
+
+  it("only the host can unpublish; the room stays live after a rejected attempt", () => {
+    const stolen = unpublishPoll(ROOM, "evil-key-9999", (t += 1000));
+    expect(stolen.ok).toBe(false);
+    expect(stolen.ok === false && stolen.status).toBe(403);
+    expect(castVote(ROOM, "viewer-aaa-111", "poll-yes", (t += 1000)).ok).toBe(true);
+  });
+
+  it("stops accepting votes and sends listeners a terminal closed frame", () => {
+    const seen: VoteEvent[] = [];
+    subscribe(ROOM, (e) => seen.push(e), t);
+    const closed = unpublishPoll(ROOM, HOST, (t += 1000));
+    expect(closed.ok).toBe(true);
+    expect(closed.ok && closed.event.type).toBe("closed");
+    expect(closed.ok && closed.event.poll).toBeNull();
+    // Connected phones saw the terminal frame (their SSE stream ends on it).
+    expect(seen).toHaveLength(1);
+    expect(seen[0].type).toBe("closed");
+    expect(seen[0].poll).toBeNull();
+    // The room is gone: votes 404 and old listeners never hear again.
+    const late = castVote(ROOM, "viewer-aaa-111", "poll-yes", (t += 1000));
+    expect(late.ok === false && late.status).toBe(404);
+    expect(seen).toHaveLength(1);
+  });
+
+  it("is idempotent: unpublishing a missing or already-closed room succeeds", () => {
+    expect(unpublishPoll("neverclaimed1", HOST, t).ok).toBe(true);
+    expect(unpublishPoll(ROOM, HOST, (t += 1000)).ok).toBe(true);
+    expect(unpublishPoll(ROOM, HOST, (t += 1000)).ok).toBe(true);
+  });
+
+  it("a re-publish after unpublish starts a fresh room: new claim, round 1, zero counts", () => {
+    castVote(ROOM, "viewer-aaa-111", "poll-yes", (t += 1000));
+    unpublishPoll(ROOM, HOST, (t += 1000));
+    // Even a DIFFERENT host key may claim the freed id (same as after TTL).
+    const reclaimed = publishPoll(ROOM, "new-host-key-99", POLL, (t += 1000));
+    expect(reclaimed.ok).toBe(true);
+    expect(reclaimed.ok && reclaimed.event.round).toBe(1);
+    expect(reclaimed.ok && reclaimed.event.counts).toEqual({ "poll-yes": 0, "poll-no": 0 });
+  });
+});
+
+describe("room nonce", () => {
+  it("stamps every event with the room instance nonce, stable across rounds", () => {
+    const published = publishPoll(ROOM, HOST, POLL, t);
+    const nonce = published.ok ? published.event.nonce : undefined;
+    expect(nonce).toMatch(/^[0-9a-z]{12}$/);
+    const vote = castVote(ROOM, "viewer-aaa-111", "poll-yes", (t += 1000));
+    expect(vote.ok && vote.event.nonce).toBe(nonce);
+    // A new ROUND (different option set) keeps the same instance nonce; only
+    // recreating the room mints a new one.
+    publishPoll(
+      ROOM,
+      HOST,
+      { title: "Pick a color", options: [{ actionName: "c-red", label: "Red" }] },
+      (t += 1000)
+    );
+    expect(getRoomState(ROOM, t).nonce).toBe(nonce);
+    // Unknown rooms have no instance to identify.
+    expect(getRoomState("unknownroom1", t).nonce).toBeUndefined();
+  });
+
+  it("recreating a room mints a new nonce, so a restart cannot leave a phantom vote lock", () => {
+    const before = publishPoll(ROOM, HOST, POLL, t);
+    const oldNonce = before.ok ? before.event.nonce : undefined;
+    // Simulate a server restart: the in-memory table is wiped, the studio tab
+    // republishes the same poll into the same room id, and round is 1 again.
+    // The nonce is what tells a phone its stored (round 1) lock is stale.
+    _resetVoteStore();
+    const after = publishPoll(ROOM, HOST, POLL, (t += 1000));
+    expect(after.ok && after.event.round).toBe(1);
+    expect(after.ok && after.event.nonce).not.toBe(oldNonce);
+  });
+});
+
 describe("TTL", () => {
   it("expires idle rooms after the TTL window", () => {
     publishPoll(ROOM, HOST, POLL, t);
@@ -219,5 +299,23 @@ describe("TTL", () => {
     expect(state.poll).toBeNull();
     // The room is really gone: a new host can claim the id.
     expect(publishPoll(ROOM, "new-host-key-99", POLL, fourHoursAndChange).ok).toBe(true);
+  });
+
+  it("the sweep ENDS live subscriptions with a closed frame instead of leaving zombie streams", () => {
+    publishPoll(ROOM, HOST, POLL, t);
+    const seen: VoteEvent[] = [];
+    subscribe(ROOM, (e) => seen.push(e), t);
+    // Any store call past the TTL sweeps; a >4h-idle phone must get the
+    // terminal frame (the SSE route closes on it, so EventSource reconnects)
+    // rather than a silently dead stream that never updates again.
+    const fourHoursAndChange = t + 4 * 60 * 60 * 1000 + 60_000;
+    getRoomState("someotherroom", fourHoursAndChange);
+    expect(seen).toHaveLength(1);
+    expect(seen[0].type).toBe("closed");
+    expect(seen[0].poll).toBeNull();
+    // The old listener died with the room: a new claim does not revive it.
+    publishPoll(ROOM, "new-host-key-99", POLL, fourHoursAndChange);
+    castVote(ROOM, "viewer-aaa-111", "poll-yes", fourHoursAndChange + 1000);
+    expect(seen).toHaveLength(1);
   });
 });

@@ -12,6 +12,8 @@
 // All functions take an optional `now` so TTL / rate-limit behavior is
 // unit-testable without clock mocking.
 
+import { randomToken } from "./random-id";
+
 export interface PollOption {
   actionName: string;
   label: string;
@@ -22,16 +24,26 @@ export interface PollDef {
 }
 // Sent to every subscriber on state changes and votes, and returned by the
 // plain GET. `round` increments whenever the option set changes (a new poll),
-// so clients know to clear their local "already voted" state.
+// so clients know to clear their local "already voted" state. "closed" is a
+// terminal frame: the room is gone (TTL sweep or host unpublish) and the SSE
+// route ends the stream right after relaying it.
 export interface VoteEvent {
-  type: "state" | "vote";
+  type: "state" | "vote" | "closed";
   round: number;
+  // Random marker minted when the ROOM INSTANCE is created, absent only for
+  // unknown-room snapshots and the Redis backend (whose rooms survive
+  // restarts). Rounds restart at 1 whenever the room is recreated (server
+  // restart, TTL expiry, unpublish), so a phone that keys its local "already
+  // voted" lock on the round alone could see the same round number on a
+  // fresh tally and lock itself out; keying on (nonce, round) cannot.
+  nonce?: string;
   poll: PollDef | null;
   counts: Record<string, number>;
 }
 
 interface Room {
   hostKey: string;
+  nonce: string; // instance marker, see VoteEvent.nonce
   poll: PollDef | null;
   round: number;
   counts: Map<string, number>; // actionName -> votes
@@ -62,11 +74,23 @@ export const MIN_VOTE_INTERVAL_MS = 750;
 const g = globalThis as unknown as { __capturiaVoteRooms?: Map<string, Room> };
 const rooms: Map<string, Room> = (g.__capturiaVoteRooms ??= new Map());
 
+// Ends a room: broadcast a terminal "closed" frame FIRST (the SSE route
+// closes its response on it, so each phone's EventSource reconnects into the
+// waiting-room loop instead of hanging silently on a stream nothing will
+// ever write to again), then drop the room. Used by the TTL sweep and by
+// the host's unpublish.
+function closeRoom(id: string, room: Room) {
+  room.poll = null;
+  room.counts = new Map();
+  emit(room, "closed");
+  room.listeners.clear();
+  rooms.delete(id);
+}
+
 function sweep(now: number) {
   for (const [id, room] of rooms) {
     if (now - room.touchedAt > ROOM_TTL_MS) {
-      room.listeners.clear();
-      rooms.delete(id);
+      closeRoom(id, room);
     }
   }
 }
@@ -79,6 +103,7 @@ function emit(room: Room, type: VoteEvent["type"]) {
   const event: VoteEvent = {
     type,
     round: room.round,
+    nonce: room.nonce,
     poll: room.poll,
     counts: toCounts(room),
   };
@@ -154,6 +179,7 @@ export function publishPoll(
     if (rooms.size >= MAX_ROOMS) return { ok: false, status: 503, error: "room limit reached" };
     room = {
       hostKey,
+      nonce: randomToken(12),
       poll: null,
       round: 0,
       counts: new Map(),
@@ -176,7 +202,46 @@ export function publishPoll(
     room.voters.clear();
   }
   emit(room, "state");
-  return { ok: true, event: { type: "state", round: room.round, poll: room.poll, counts: toCounts(room) } };
+  return {
+    ok: true,
+    event: {
+      type: "state",
+      round: room.round,
+      nonce: room.nonce,
+      poll: room.poll,
+      counts: toCounts(room),
+    },
+  };
+}
+
+/**
+ * Host-initiated teardown: the studio's voting toggle turning OFF. Deletes
+ * the room outright (not just the poll) so it stops accepting votes at once
+ * and a later session reusing this tab's room id starts from a clean claim
+ * with a fresh nonce, instead of inheriting stale counts and vote locks for
+ * the rest of the TTL. Connected phones get the terminal "closed" frame and
+ * fall back to their waiting screen. Unpublishing a room that is already
+ * gone (double toggle, TTL race) succeeds so the caller stays quiet.
+ */
+export function unpublishPoll(roomId: string, hostKey: string, now = Date.now()): StoreResult {
+  sweep(now);
+  if (!ROOM_ID_RE.test(roomId) || !KEY_RE.test(hostKey)) {
+    return { ok: false, status: 422, error: "invalid room or key" };
+  }
+  const room = rooms.get(roomId);
+  if (!room) {
+    return { ok: true, event: { type: "closed", round: 0, poll: null, counts: {} } };
+  }
+  if (room.hostKey !== hostKey) return { ok: false, status: 403, error: "not the host" };
+  const event: VoteEvent = {
+    type: "closed",
+    round: room.round,
+    nonce: room.nonce,
+    poll: null,
+    counts: {},
+  };
+  closeRoom(roomId, room);
+  return { ok: true, event };
 }
 
 /**
@@ -201,6 +266,7 @@ export function castVote(
   const event = (): VoteEvent => ({
     type: "vote",
     round: room.round,
+    nonce: room.nonce,
     poll: room.poll,
     counts: toCounts(room),
   });
@@ -232,7 +298,13 @@ export function getRoomState(roomId: string, now = Date.now()): VoteEvent {
   const room = rooms.get(roomId);
   if (!room) return { type: "state", round: 0, poll: null, counts: {} };
   room.touchedAt = now;
-  return { type: "state", round: room.round, poll: room.poll, counts: toCounts(room) };
+  return {
+    type: "state",
+    round: room.round,
+    nonce: room.nonce,
+    poll: room.poll,
+    counts: toCounts(room),
+  };
 }
 
 /**

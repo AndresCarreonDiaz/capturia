@@ -22,7 +22,12 @@ export default function VotePage({ params }: { params: Promise<{ room: string }>
   const [votedAction, setVotedAction] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const viewerIdRef = useRef<string>("");
-  const roundRef = useRef(-1);
+  // The last seen round IDENTITY: the round number plus the room instance
+  // nonce. The nonce matters because rounds restart at 1 whenever the room
+  // is recreated (server restart, host toggled voting off and on), so the
+  // round alone would make a remembered vote from the previous instance look
+  // current and lock this phone out of a fresh tally.
+  const roundRef = useRef<{ nonce?: string; round: number }>({ round: -1 });
 
   // Stable anonymous viewer id (the server's vote-switch dedupe keys off it).
   useEffect(() => {
@@ -39,19 +44,29 @@ export default function VotePage({ params }: { params: Promise<{ room: string }>
   }, []);
 
   // Live state. Snapshot fetch for fast first paint, then SSE; on a new round
-  // (the host started a different poll) clear the local vote lock.
+  // identity (the host started a different poll, or the room was recreated)
+  // clear the local vote lock. A "closed" frame carries a null poll, so the
+  // waiting screen below doubles as the terminal state when the host turns
+  // voting off; the server ends the stream right after and EventSource's
+  // reconnect loop takes over, exactly like before the first publish.
   useEffect(() => {
     let disposed = false;
     const apply = (e: VoteEvent) => {
       if (disposed) return;
       setState(e);
-      if (e.round !== roundRef.current) {
-        roundRef.current = e.round;
+      if (e.round !== roundRef.current.round || e.nonce !== roundRef.current.nonce) {
+        roundRef.current = { nonce: e.nonce, round: e.round };
         let remembered: string | null = null;
         try {
           const raw = localStorage.getItem(voteMemoryKey(room));
-          const saved = raw ? (JSON.parse(raw) as { round: number; action: string }) : null;
-          if (saved && saved.round === e.round) remembered = saved.action;
+          const saved = raw
+            ? (JSON.parse(raw) as { nonce?: string; round: number; action: string })
+            : null;
+          // Restore only when the whole identity matches; a nonce mismatch
+          // means a different room instance, where this phone has NOT voted.
+          if (saved && saved.round === e.round && saved.nonce === e.nonce) {
+            remembered = saved.action;
+          }
         } catch {
           /* storage blocked: lock lives in memory only */
         }
@@ -95,7 +110,11 @@ export default function VotePage({ params }: { params: Promise<{ room: string }>
         try {
           localStorage.setItem(
             voteMemoryKey(room),
-            JSON.stringify({ round: event?.round ?? roundRef.current, action })
+            JSON.stringify({
+              nonce: event?.nonce ?? roundRef.current.nonce,
+              round: event?.round ?? roundRef.current.round,
+              action,
+            })
           );
         } catch {
           /* storage blocked */
