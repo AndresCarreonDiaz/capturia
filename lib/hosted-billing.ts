@@ -27,7 +27,7 @@ export function normalizeActivationCode(raw: unknown): string | null {
 // Deriving instead of adding a second env var means a dev override points
 // BOTH surfaces at the same server and the checkout success page always
 // lands on the deployment that minted the session.
-const DEFAULT_HOSTED_BASE = "https://capturia.app/api/hosted";
+const DEFAULT_HOSTED_BASE = "https://www.capturia.dev/api/hosted";
 
 export function billingOriginFromEnv(env: Record<string, string | undefined>): string {
   const base = (env.CAPTURIA_HOSTED_URL || DEFAULT_HOSTED_BASE).replace(/\/+$/, "");

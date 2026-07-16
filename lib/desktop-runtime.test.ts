@@ -103,7 +103,7 @@ describe("resolveDesktopAgentSpec", () => {
     expect(spec.model).toBe("google/gemini-2.5-flash-lite");
     expect(spec.apiKey).toBe("capturia-jwt");
     expect(spec.hosted).toEqual({
-      baseUrl: "https://capturia.app/api/hosted/v1beta",
+      baseUrl: "https://www.capturia.dev/api/hosted/v1beta",
       modelId: "gemini-2.5-flash-lite",
     });
   });
@@ -142,9 +142,14 @@ describe("desktopKeyError", () => {
     expect(desktopKeyError({ provider: "gemini", storedKey: "k", env: NO_ENV })).toBeNull();
   });
 
-  it("reports the missing env key when there is no stored key and no env key", () => {
+  it("points a keyless desktop at Settings, not at .env.local", () => {
+    // The shared web copy names env vars and .env.local; neither exists for
+    // a packaged-app user, so the desktop rewrite must route through
+    // Settings and the free-key path instead.
     const err = desktopKeyError({ provider: "gemini", storedKey: null, env: NO_ENV });
-    expect(err).toMatch(/GOOGLE_GENERATIVE_AI_API_KEY or GOOGLE_API_KEY/);
+    expect(err).toMatch(/Settings/);
+    expect(err).toMatch(/aistudio\.google\.com/);
+    expect(err).not.toMatch(/env\.local/);
   });
 
   it("is null when the env fallback has a usable key", () => {

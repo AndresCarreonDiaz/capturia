@@ -9,7 +9,7 @@ a four-field anonymous beacon in the desktop app.
 ## What the desktop app sends
 
 When telemetry is on (the default), the app POSTs this exact JSON to
-`https://capturia.app/api/beacon`, and nothing else, ever:
+`https://www.capturia.dev/api/beacon`, and nothing else, ever:
 
 ```json
 {
@@ -110,7 +110,7 @@ env var unset the endpoint answers 503 and exposes nothing):
 
 ```sh
 curl -H "Authorization: Bearer $CAPTURIA_METRICS_TOKEN" \
-  https://capturia.app/api/beacon/summary
+  https://www.capturia.dev/api/beacon/summary
 ```
 
 ```json
@@ -148,7 +148,7 @@ CTA). The Electron build ships none of it: `next.config.ts` aliases
 ## Operator setup
 
 - Vercel: enable Web Analytics on the project (dashboard toggle; already
-  done for capturia.app). Pageviews and `download_click` appear under
+  done for www.capturia.dev). Pageviews and `download_click` appear under
   Analytics after the next deploy.
 - Vercel env: set `CAPTURIA_METRICS_TOKEN` to a long random secret (this
   also arms `/api/beacon/summary`). The Upstash integration provides

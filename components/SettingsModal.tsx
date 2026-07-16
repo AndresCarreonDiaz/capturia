@@ -27,6 +27,7 @@ const PROVIDER_META: Record<
     tagline: "aistudio.google.com",
     url: "https://aistudio.google.com",
     placeholder: "AIza... or your Google AI Studio key",
+    note: "Free: open aistudio.google.com, hit Get API key, paste it here. About a minute, no card needed.",
   },
   claude: {
     name: "Anthropic Claude",
@@ -49,7 +50,7 @@ const PROVIDER_META: Record<
   "capturia-hosted": {
     name: "Capturia Pro",
     tagline: "hosted, no API key needed",
-    url: "https://capturia.app",
+    url: "https://www.capturia.dev",
     placeholder: "Paste your Capturia access token",
     note: "Not BYOK: your Capturia Pro credentials are stored encrypted locally and sent to the Capturia hosted proxy with each request to authenticate your plan.",
   },

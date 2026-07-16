@@ -39,12 +39,12 @@ describe("activation code shape", () => {
 
 describe("billingOriginFromEnv", () => {
   it("derives the origin from the hosted proxy URL", () => {
-    expect(billingOriginFromEnv({})).toBe("https://capturia.app");
+    expect(billingOriginFromEnv({})).toBe("https://www.capturia.dev");
     expect(billingOriginFromEnv({ CAPTURIA_HOSTED_URL: "http://localhost:3000/api/hosted" })).toBe(
       "http://localhost:3000"
     );
-    expect(billingOriginFromEnv({ CAPTURIA_HOSTED_URL: "https://staging.capturia.app/api/hosted/" })).toBe(
-      "https://staging.capturia.app"
+    expect(billingOriginFromEnv({ CAPTURIA_HOSTED_URL: "https://staging.capturia.dev/api/hosted/" })).toBe(
+      "https://staging.capturia.dev"
     );
   });
 });

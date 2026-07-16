@@ -3,7 +3,7 @@ import { getBeaconStore } from "@/lib/beacon-store";
 
 // Owner-only aggregate readout for the desktop beacon (docs/telemetry.md):
 //   curl -H "Authorization: Bearer $CAPTURIA_METRICS_TOKEN" \
-//     https://capturia.app/api/beacon/summary
+//     https://www.capturia.dev/api/beacon/summary
 // Returns { dau, wau, mau, activations, events, versions, ... }. Aggregates
 // only; there is nothing per-user to expose even to the owner. Guarded by
 // CAPTURIA_METRICS_TOKEN; with the env var unset the endpoint stays sealed

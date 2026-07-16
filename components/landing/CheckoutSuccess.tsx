@@ -116,8 +116,8 @@ export default function CheckoutSuccess() {
               It was either already collected (each purchase shows its code
               once, usually right after payment) or this link has expired. If
               you did not save it, write to{" "}
-              <a href="mailto:support@capturia.app" className="cue-link">
-                support@capturia.app
+              <a href="mailto:support@capturia.dev" className="cue-link">
+                support@capturia.dev
               </a>{" "}
               from your purchase email and we will sort it out.
             </p>
@@ -134,8 +134,8 @@ export default function CheckoutSuccess() {
                 Your payment went through and nothing is lost. Refresh this page
                 in a minute and the code will be waiting; if it still does not
                 appear, write to{" "}
-                <a href="mailto:support@capturia.app" className="cue-link">
-                  support@capturia.app
+                <a href="mailto:support@capturia.dev" className="cue-link">
+                  support@capturia.dev
                 </a>
                 .
               </p>

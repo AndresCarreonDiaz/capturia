@@ -86,7 +86,7 @@ export async function GET(request: Request): Promise<Response> {
     );
   }
   return Response.json(
-    { error: "This session's activation code expired. Write to support@capturia.app." },
+    { error: "This session's activation code expired. Write to support@capturia.dev." },
     { status: 410 }
   );
 }
