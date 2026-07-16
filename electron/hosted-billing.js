@@ -72,6 +72,12 @@ async function postJson(url, body) {
 function createHostedBilling({ keychain, env = process.env, log = console } = {}) {
   let refreshTimer = null;
   let stopped = false;
+  // Vault-write fence: activate() and deactivateLocal() bump it, and any
+  // refresh that started under an older epoch discards its result instead of
+  // touching the vault. Without this, an in-flight refresh could re-save the
+  // JWT the user just cleared (Clear during refresh) or a slow 401 could
+  // drop the credentials a NEWER activation just stored.
+  let epoch = 0;
 
   function scheduleRefresh(delayMs) {
     if (stopped) return;
@@ -91,7 +97,12 @@ function createHostedBilling({ keychain, env = process.env, log = console } = {}
 
   async function startCheckout() {
     const { status, ok, json } = await postJson(`${origin()}/api/billing/checkout`);
-    const url = json && typeof json.url === "string" ? json.url : null;
+    // The URL goes straight to shell.openExternal, so a compromised or
+    // misconfigured billing origin must not be able to hand the OS an
+    // arbitrary scheme (file:, javascript:, custom protocol handlers).
+    // Stripe Checkout URLs are always https.
+    const url =
+      json && typeof json.url === "string" && /^https:\/\//i.test(json.url) ? json.url : null;
     if (!ok || !url) {
       const detail = json && typeof json.error === "string" ? json.error : `HTTP ${status}`;
       throw new Error(`Could not start checkout: ${detail}`);
@@ -115,6 +126,12 @@ function createHostedBilling({ keychain, env = process.env, log = console } = {}
     }
     const result = parseActivateResponse(json);
     if (!result) throw new Error("Activation returned an unexpected response; try again.");
+    // Deliberately NOT fenced against a deactivateLocal that raced this
+    // request: by now the server has consumed the one-time code and minted
+    // these credentials, so discarding them would burn a paid code to honor
+    // a Clear click the user can simply repeat. A completed activation
+    // always installs; its epoch bump below invalidates any older refresh.
+    epoch += 1;
     // Refresh token first: if the second write fails the worst case is a
     // token refresh on next launch, never a stored JWT with no way to renew.
     keychain.saveKey(keychain.REFRESH_SLOT, result.refreshToken);
@@ -130,6 +147,7 @@ function createHostedBilling({ keychain, env = process.env, log = console } = {}
   // the refresh token and retries slowly (Stripe may recover the
   // subscription); anything else is transient and retries soon.
   async function refreshNow() {
+    const startedEpoch = epoch;
     const refreshToken = keychain.getKey(keychain.REFRESH_SLOT);
     if (!refreshToken) return { refreshed: false, reason: "no_refresh_token" };
     let status = 0;
@@ -137,9 +155,13 @@ function createHostedBilling({ keychain, env = process.env, log = console } = {}
     try {
       ({ status, json } = await postJson(`${origin()}/api/billing/token`, { refreshToken }));
     } catch {
-      scheduleRefresh(RETRY_TRANSIENT_MS);
+      if (epoch === startedEpoch) scheduleRefresh(RETRY_TRANSIENT_MS);
       return { refreshed: false, reason: "network" };
     }
+    // The vault changed hands while this request was in flight (Clear, or a
+    // fresh activation): whatever came back belongs to the old credentials.
+    // Touching nothing is always safe; the current epoch has its own timer.
+    if (epoch !== startedEpoch) return { refreshed: false, reason: "superseded" };
     const result = status === 200 ? parseTokenResponse(json) : null;
     if (result) {
       keychain.saveKey(HOSTED_SLOT, result.token);
@@ -168,6 +190,7 @@ function createHostedBilling({ keychain, env = process.env, log = console } = {}
   // The user cleared the Pro row: both slots go, and the pending refresh
   // with them.
   function deactivateLocal() {
+    epoch += 1;
     clearTimeout(refreshTimer);
     keychain.clearKey(keychain.REFRESH_SLOT);
     keychain.clearKey(HOSTED_SLOT);
