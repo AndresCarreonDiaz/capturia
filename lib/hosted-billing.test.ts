@@ -1,12 +1,14 @@
 // Pins the desktop upgrade-flow decisions (lib/hosted-billing.ts): billing
 // origin derivation, activation-code normalization, response validation,
-// refresh scheduling, and refresh-failure classification.
+// refresh scheduling, refresh-failure classification, and vault-clear
+// routing.
 
 import { describe, expect, it } from "vitest";
 import {
   ACTIVATION_CODE_RE,
   billingOriginFromEnv,
   classifyRefreshFailure,
+  classifyVaultClear,
   computeRefreshDelayMs,
   MAX_REFRESH_DELAY_MS,
   MIN_REFRESH_DELAY_MS,
@@ -85,5 +87,17 @@ describe("refresh scheduling", () => {
     expect(classifyRefreshFailure(402)).toBe("keep_and_retry_slowly");
     expect(classifyRefreshFailure(500)).toBe("keep_and_retry");
     expect(classifyRefreshFailure(0)).toBe("keep_and_retry");
+  });
+});
+
+describe("vault clear routing", () => {
+  it("routes the Pro row to local deactivation, never a bare key delete", () => {
+    expect(classifyVaultClear("capturia-hosted")).toBe("deactivate_hosted");
+  });
+
+  it("routes every BYOK provider to a plain keychain delete", () => {
+    expect(classifyVaultClear("gemini")).toBe("clear_key");
+    expect(classifyVaultClear("claude")).toBe("clear_key");
+    expect(classifyVaultClear("openai")).toBe("clear_key");
   });
 });

@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import type { KeyEntry, KeyProvider } from "@/hooks/useDesktopHotkey";
 import { useTelemetry } from "@/hooks/useTelemetry";
+import { ipcErrorMessage } from "@/lib/ipc-error";
 
 interface Props {
   open: boolean;
@@ -15,13 +16,6 @@ interface Props {
   /** Re-pulls the vault list; activation stores tokens in MAIN, so the modal
    *  cannot learn about them from save()'s return value. */
   onRefreshKeys?: () => Promise<void>;
-}
-
-// Electron wraps rejected invokes as "Error invoking remote method 'x':
-// Error: <message>"; the user only needs the message.
-function ipcErrorMessage(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err);
-  return raw.replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
 }
 
 const PROVIDER_META: Record<

@@ -22,6 +22,10 @@ const keychain = require("./keychain");
 const deckGen = require("./deck-generate");
 const { startRuntimeServer, loadDevEnvFiles } = require("./runtime-server");
 const { createHostedBilling } = require("./hosted-billing");
+// Vault-clear routing decision, pinned by lib/hosted-billing.test.ts. Plain
+// require (no degrade path): ./hosted-billing above already hard-requires
+// this same gen module.
+const { classifyVaultClear } = require("./gen/hosted-billing");
 const { createTray } = require("./tray");
 const { maybeOfferMoveToApplications, offerMoveToApplications } = require("./first-run");
 const { createTelemetry } = require("./telemetry");
@@ -166,8 +170,10 @@ function registerIpc() {
       const named = assertProvider(provider);
       // Clearing the Pro row is a local deactivation: the refresh token and
       // its pending timer must go with the JWT, or the refresh loop would
-      // quietly re-mint what the user just cleared.
-      if (named === "capturia-hosted" && hostedBilling) {
+      // quietly re-mint what the user just cleared (the why lives with
+      // classifyVaultClear in lib/hosted-billing.ts). With billing missing
+      // the row degrades to a plain key delete, as before.
+      if (classifyVaultClear(named) === "deactivate_hosted" && hostedBilling) {
         hostedBilling.deactivateLocal();
       } else {
         keychain.clearKey(named);

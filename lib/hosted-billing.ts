@@ -1,9 +1,12 @@
 // Pure decision logic for the desktop upgrade flow (M11 slice 2): where the
 // billing endpoints live, what a valid activation code looks like, how the
-// server's activate/token responses are validated, and when the next JWT
-// refresh should run. Framework-free so vitest covers it and Electron main
-// consumes the CJS build in electron/gen/ (scripts/build-electron-libs.mjs);
-// the fetching itself stays in electron/hosted-billing.js.
+// server's activate/token responses are validated, when the next JWT refresh
+// should run, and what clearing a vault row means. Framework-free so vitest
+// covers it and Electron main consumes the CJS build in electron/gen/
+// (scripts/build-electron-libs.mjs); the fetching itself stays in
+// electron/hosted-billing.js.
+
+import { HOSTED_PROVIDER } from "./desktop-runtime";
 
 // The one activation-code shape, shared by the server that mints codes
 // (lib/hosted/entitlements.ts re-exports this) and the desktop client that
@@ -110,4 +113,16 @@ export function classifyRefreshFailure(status: number): RefreshFailure {
   if (status === 401 || status === 403) return "drop_credentials";
   if (status === 402) return "keep_and_retry_slowly";
   return "keep_and_retry";
+}
+
+// What clearing a vault row means. The Pro row is not a plain key: behind
+// its JWT sit a refresh token and a pending re-mint timer, so it must go
+// through the billing module's local deactivation or the refresh loop would
+// quietly re-mint what the user just cleared. Every other row is a BYOK key
+// and a straight keychain delete. Pure so the routing is pinned by tests;
+// electron/main.js's keys:clear handler supplies the side effects.
+export type VaultClearAction = "deactivate_hosted" | "clear_key";
+
+export function classifyVaultClear(provider: string): VaultClearAction {
+  return provider === HOSTED_PROVIDER ? "deactivate_hosted" : "clear_key";
 }
