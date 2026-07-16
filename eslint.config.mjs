@@ -23,6 +23,8 @@ const eslintConfig = defineConfig([
     // the same problems as a clean checkout.
     "dist-app/**",
     ".whisper-stage/**",
+    // Agent tooling state (incl. throwaway git worktrees); never part of the app.
+    ".claude/**",
   ]),
 ]);
 
