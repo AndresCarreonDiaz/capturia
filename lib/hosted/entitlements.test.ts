@@ -21,6 +21,8 @@ import {
   storeActivation,
   storeActivationBySession,
   takeActivationCodeForSession,
+  wasActivationCollected,
+  wasActivationFiled,
   writeEntitlement,
 } from "./entitlements";
 
@@ -65,7 +67,7 @@ describe("activation codes", () => {
     expect(await consumeActivationCode(run, code)).toBeNull();
   });
 
-  it("hands the session-filed code over exactly once, only with the pickup nonce", async () => {
+  it("hands the session-filed code only to the pickup-nonce holder", async () => {
     const { run } = world();
     const NONCE = "pickupnonce0123456789";
     await storeActivationBySession(run, "cs_test_123", NONCE, "CAPTURIA-AAAA-BBBB-CCCC-DDDD");
@@ -77,8 +79,70 @@ describe("activation codes", () => {
     expect(await takeActivationCodeForSession(run, "cs_test_123", NONCE)).toBe(
       "CAPTURIA-AAAA-BBBB-CCCC-DDDD"
     );
-    expect(await takeActivationCodeForSession(run, "cs_test_123", NONCE)).toBeNull();
     expect(await takeActivationCodeForSession(run, "cs_/../weird", NONCE)).toBeNull();
+  });
+
+  it("re-serves a collected code within the grace window, then never again", async () => {
+    const { run, clock } = world();
+    const NONCE = "pickupnonce0123456789";
+    await storeActivationBySession(run, "cs_test_123", NONCE, "CAPTURIA-AAAA-BBBB-CCCC-DDDD");
+    expect(await takeActivationCodeForSession(run, "cs_test_123", NONCE)).toBe(
+      "CAPTURIA-AAAA-BBBB-CCCC-DDDD"
+    );
+    // A response lost in flight is recoverable: the same pair re-collects
+    // for a few minutes...
+    clock.tick(60 * 1000);
+    expect(await takeActivationCodeForSession(run, "cs_test_123", NONCE)).toBe(
+      "CAPTURIA-AAAA-BBBB-CCCC-DDDD"
+    );
+    // ...but the wrong nonce still gets nothing, even during grace.
+    expect(await takeActivationCodeForSession(run, "cs_test_123", "wrongnonce0123456789")).toBeNull();
+    // Once the grace lapses the pickup is gone for good, and the collected
+    // marker says why.
+    clock.tick(6 * 60 * 1000);
+    expect(await takeActivationCodeForSession(run, "cs_test_123", NONCE)).toBeNull();
+    expect(await wasActivationCollected(run, "cs_test_123", NONCE)).toBe(true);
+  });
+
+  it("keeps filed/collected markers nonce-bound so the session id alone reveals nothing", async () => {
+    const { run, clock } = world();
+    const NONCE = "pickupnonce0123456789";
+    const WRONG = "wrongnonce0123456789";
+    // Nothing filed yet: every probe reads false.
+    expect(await wasActivationFiled(run, "cs_test_123", NONCE)).toBe(false);
+    await storeActivationBySession(run, "cs_test_123", NONCE, "CAPTURIA-AAAA-BBBB-CCCC-DDDD");
+    // Filed is only visible to the exact session+nonce pair.
+    expect(await wasActivationFiled(run, "cs_test_123", NONCE)).toBe(true);
+    expect(await wasActivationFiled(run, "cs_test_123", WRONG)).toBe(false);
+    expect(await wasActivationFiled(run, "cs_test_123", undefined)).toBe(false);
+    expect(await wasActivationCollected(run, "cs_test_123", NONCE)).toBe(false);
+    await takeActivationCodeForSession(run, "cs_test_123", NONCE);
+    expect(await wasActivationCollected(run, "cs_test_123", NONCE)).toBe(true);
+    expect(await wasActivationCollected(run, "cs_test_123", WRONG)).toBe(false);
+    // The markers outlive the record (they answer "expired", not "pending")
+    // and then expire themselves.
+    clock.tick(61 * 24 * 60 * 60 * 1000);
+    expect(await wasActivationFiled(run, "cs_test_123", NONCE)).toBe(false);
+    expect(await wasActivationCollected(run, "cs_test_123", NONCE)).toBe(false);
+  });
+
+  it("marks an expired-but-never-collected pickup as filed, not collected", async () => {
+    const { run, clock } = world();
+    const NONCE = "pickupnonce0123456789";
+    await storeActivationBySession(run, "cs_test_123", NONCE, "CAPTURIA-AAAA-BBBB-CCCC-DDDD");
+    clock.tick(31 * 24 * 60 * 60 * 1000); // past the 30-day record TTL
+    expect(await takeActivationCodeForSession(run, "cs_test_123", NONCE)).toBeNull();
+    expect(await wasActivationFiled(run, "cs_test_123", NONCE)).toBe(true);
+    expect(await wasActivationCollected(run, "cs_test_123", NONCE)).toBe(false);
+  });
+
+  it("still consumes codes stored under the legacy plaintext key", async () => {
+    const { run } = world();
+    const code = mintActivationCode();
+    // A record written by a deploy that predates hashed activation keys.
+    await run(["SET", `hosted:act:${code}`, JSON.stringify({ customer: CUSTOMER, subscription: null })]);
+    expect(await consumeActivationCode(run, code)).toMatchObject({ customer: CUSTOMER });
+    expect(await consumeActivationCode(run, code)).toBeNull();
   });
 });
 
@@ -225,6 +289,18 @@ describe("applyStripeEvent (webhook -> cache transitions)", () => {
     expect(codes).toHaveLength(1);
     expect(await consumeActivationCode(run, codes[0])).toMatchObject({ customer: CUSTOMER });
     expect(await takeActivationCodeForSession(run, "cs_test_abc", PICKUP)).toBe(codes[0]);
+  });
+
+  it("files the pickup pair on completed checkout so the endpoint can tell lag from loss", async () => {
+    const { run } = world();
+    expect(await wasActivationFiled(run, "cs_test_abc", PICKUP)).toBe(false);
+    await applyStripeEvent(run, checkoutEvent(), T0);
+    expect(await wasActivationFiled(run, "cs_test_abc", PICKUP)).toBe(true);
+    expect(await wasActivationCollected(run, "cs_test_abc", PICKUP)).toBe(false);
+    // Collecting flips the marker a refreshed success page keys its
+    // "already collected" answer on.
+    await takeActivationCodeForSession(run, "cs_test_abc", PICKUP);
+    expect(await wasActivationCollected(run, "cs_test_abc", PICKUP)).toBe(true);
   });
 
   it("ignores unpaid or non-subscription checkouts", async () => {

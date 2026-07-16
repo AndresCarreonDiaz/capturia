@@ -15,6 +15,6 @@ export default defineConfig({
     // The libs under test are pure TS (no DOM, no Next runtime), so node is
     // both correct and fast. Browser/voice/render paths are out of scope here.
     environment: "node",
-    include: ["lib/**/*.test.ts"],
+    include: ["lib/**/*.test.ts", "app/**/*.test.ts"],
   },
 });

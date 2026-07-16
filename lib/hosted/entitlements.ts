@@ -39,7 +39,19 @@ export { ACTIVATION_CODE_RE };
 const DEVICE_ID_RE = /^[A-Za-z0-9_-]{6,128}$/;
 const REFRESH_PREFIX = "crt_";
 
+// Keyed by a hash of the code, mirroring refreshKey: an attacker who can
+// read the keyspace must not walk away with redeemable credentials. (The
+// session-pickup VALUE below still holds the raw code because the success
+// page has to display it; that copy lives at most one pickup + grace
+// window, this one lives up to 30 days.)
 function activationKey(code: string): string {
+  return `hosted:act:${createHash("sha256").update(code).digest("hex")}`;
+}
+
+// Records written before activation keys were hashed. Checked only as a
+// consume fallback so codes minted by an older deploy stay redeemable;
+// nothing writes this shape anymore.
+function legacyActivationKey(code: string): string {
   return `hosted:act:${code}`;
 }
 
@@ -102,7 +114,8 @@ export async function consumeActivationCode(
   code: unknown
 ): Promise<ActivationRecord | null> {
   if (typeof code !== "string" || !ACTIVATION_CODE_RE.test(code)) return null;
-  const raw = await run(["GETDEL", activationKey(code)]);
+  let raw = await run(["GETDEL", activationKey(code)]);
+  if (typeof raw !== "string") raw = await run(["GETDEL", legacyActivationKey(code)]);
   if (typeof raw !== "string") return null;
   try {
     const parsed = JSON.parse(raw) as ActivationRecord;
@@ -120,12 +133,53 @@ export async function consumeActivationCode(
 // still cannot poll the code out from under the payer; and hashing keeps the
 // raw session id out of the keyspace.
 export const PICKUP_NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;
+export const CHECKOUT_SESSION_ID_RE = /^cs_[A-Za-z0-9_]{8,200}$/;
 
-function pickupKey(sessionId: string, pickupNonce: string): string {
-  const digest = createHash("sha256").update(`${sessionId}:${pickupNonce}`).digest("hex");
-  return `hosted:pickup:${digest}`;
+// Once a pickup succeeds, the code is re-filed under the same key for this
+// long, so a response the buyer never saw (overlay dismissed mid-flight, tab
+// closed, body lost on the wire) cannot burn a paid code: the very next
+// request with the same session+nonce pair re-collects it. Only the nonce
+// holder can reach the key, so the grace window gives nothing to anyone
+// else, and after it lapses the pickup is as gone as plain GETDEL.
+const PICKUP_GRACE_TTL_S = 5 * 60;
+// The filed/collected markers outlive the pickup record itself so the
+// endpoint can answer honestly about a record that EXPIRED (410, stop
+// polling) instead of pretending it was never minted (404, poll forever).
+const PICKUP_MARKER_TTL_S = 2 * SESSION_TTL_S;
+
+function pickupDigest(sessionId: string, pickupNonce: string): string {
+  return createHash("sha256").update(`${sessionId}:${pickupNonce}`).digest("hex");
 }
 
+function pickupKey(sessionId: string, pickupNonce: string): string {
+  return `hosted:pickup:${pickupDigest(sessionId, pickupNonce)}`;
+}
+
+// Both markers are keyed by the SAME session+nonce digest as the record:
+// every state this module will admit to (filed, collected) requires
+// presenting the nonce, so a caller holding only the session id (visible in
+// a forwarded checkout URL) can never distinguish "paid and minted" from
+// "nothing here" no matter which state the pickup is in.
+function pickupFiledKey(sessionId: string, pickupNonce: string): string {
+  return `hosted:pickup-filed:${pickupDigest(sessionId, pickupNonce)}`;
+}
+
+function pickupCollectedKey(sessionId: string, pickupNonce: string): string {
+  return `hosted:pickup-done:${pickupDigest(sessionId, pickupNonce)}`;
+}
+
+function isValidPickupPair(sessionId: unknown, pickupNonce: unknown): boolean {
+  return (
+    typeof sessionId === "string" &&
+    CHECKOUT_SESSION_ID_RE.test(sessionId) &&
+    typeof pickupNonce === "string" &&
+    PICKUP_NONCE_RE.test(pickupNonce)
+  );
+}
+
+// Record first, then the filed marker: a marker with no record would read
+// as "expired" to the pickup endpoint, while a record with no marker only
+// costs one extra poll cycle. Crash between the two writes is the latter.
 export async function storeActivationBySession(
   run: RedisRunner,
   sessionId: string,
@@ -133,20 +187,48 @@ export async function storeActivationBySession(
   code: string
 ): Promise<void> {
   await run(["SET", pickupKey(sessionId, pickupNonce), code, "EX", SESSION_TTL_S]);
+  await run(["SET", pickupFiledKey(sessionId, pickupNonce), "1", "EX", PICKUP_MARKER_TTL_S]);
+}
+
+/** A code was filed for exactly this session+nonce pair (webhook landed). */
+export async function wasActivationFiled(
+  run: RedisRunner,
+  sessionId: unknown,
+  pickupNonce: unknown
+): Promise<boolean> {
+  if (!isValidPickupPair(sessionId, pickupNonce)) return false;
+  return (await run(["GET", pickupFiledKey(sessionId as string, pickupNonce as string)])) !== null;
+}
+
+/** The code for exactly this session+nonce pair was handed out at least once. */
+export async function wasActivationCollected(
+  run: RedisRunner,
+  sessionId: unknown,
+  pickupNonce: unknown
+): Promise<boolean> {
+  if (!isValidPickupPair(sessionId, pickupNonce)) return false;
+  return (await run(["GET", pickupCollectedKey(sessionId as string, pickupNonce as string)])) !== null;
 }
 
 // GETDEL on the hashed key: a wrong nonce is a plain miss, so probing can
-// never destroy the real record, and the first correct pickup wins exactly
-// once.
+// never destroy the real record, and only the nonce holder can collect.
+// A hit re-files the code for a short grace window (see PICKUP_GRACE_TTL_S)
+// and stamps the collected marker; "exactly once" therefore means exactly
+// one credential holder, not exactly one HTTP response, which is the version
+// of the guarantee that survives dropped responses.
 export async function takeActivationCodeForSession(
   run: RedisRunner,
   sessionId: unknown,
   pickupNonce: unknown
 ): Promise<string | null> {
-  if (typeof sessionId !== "string" || !/^cs_[A-Za-z0-9_]{8,200}$/.test(sessionId)) return null;
-  if (typeof pickupNonce !== "string" || !PICKUP_NONCE_RE.test(pickupNonce)) return null;
-  const raw = await run(["GETDEL", pickupKey(sessionId, pickupNonce)]);
-  return typeof raw === "string" ? raw : null;
+  if (!isValidPickupPair(sessionId, pickupNonce)) return null;
+  const sid = sessionId as string;
+  const nonce = pickupNonce as string;
+  const raw = await run(["GETDEL", pickupKey(sid, nonce)]);
+  if (typeof raw !== "string") return null;
+  await run(["SET", pickupKey(sid, nonce), raw, "EX", PICKUP_GRACE_TTL_S]);
+  await run(["SET", pickupCollectedKey(sid, nonce), "1", "EX", PICKUP_MARKER_TTL_S]);
+  return raw;
 }
 
 export type DeviceRegistration =

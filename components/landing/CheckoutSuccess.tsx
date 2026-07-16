@@ -27,13 +27,25 @@ export default function CheckoutSuccess() {
   // StrictMode's double-effect, and never let a late duplicate downgrade a
   // collected code.
   const started = useRef(false);
+  // Dismissing cancels the poll, including the request already in flight.
+  // The stakes are low either way (the server re-files a handed-out code
+  // for a grace window, so nothing a dying poll does can burn it); this is
+  // about not spending another minute of requests for an overlay nobody is
+  // looking at.
+  const abortRef = useRef<AbortController | null>(null);
 
   const sessionId = ret?.sessionId ?? null;
   const pickup = ret?.pickup ?? null;
   useEffect(() => {
     if (!sessionId || !pickup || started.current) return;
     started.current = true;
-    collectActivationCode({ sessionId, pickup }).then((outcome) => {
+    const controller = new AbortController();
+    abortRef.current = controller;
+    collectActivationCode(
+      { sessionId, pickup },
+      { shouldAbort: () => controller.signal.aborted, signal: controller.signal }
+    ).then((outcome) => {
+      if (outcome.status === "aborted") return;
       setPhase((prev) =>
         prev.kind === "done" && prev.outcome.status === "ok" ? prev : { kind: "done", outcome }
       );
@@ -42,7 +54,10 @@ export default function CheckoutSuccess() {
 
   if (!ret) return null;
 
-  const dismiss = () => router.replace("/", { scroll: false });
+  const dismiss = () => {
+    abortRef.current?.abort();
+    router.replace("/", { scroll: false });
+  };
   const copy = (code: string) => {
     navigator.clipboard
       .writeText(code)
@@ -95,11 +110,12 @@ export default function CheckoutSuccess() {
         {phase.kind === "done" && phase.outcome.status === "gone" && (
           <>
             <h2 className="display-serif mt-3 text-[var(--studio-ink)] text-2xl">
-              This code was already collected.
+              This code is no longer available here.
             </h2>
             <p className="mt-3 text-[var(--studio-graphite)] text-[14px] leading-relaxed">
-              Each purchase shows its activation code exactly once, usually on
-              this page right after payment. If you did not save it, write to{" "}
+              It was either already collected (each purchase shows its code
+              once, usually right after payment) or this link has expired. If
+              you did not save it, write to{" "}
               <a href="mailto:support@capturia.app" className="cue-link">
                 support@capturia.app
               </a>{" "}
@@ -108,21 +124,23 @@ export default function CheckoutSuccess() {
           </>
         )}
 
-        {phase.kind === "done" && phase.outcome.status === "error" && (
-          <>
-            <h2 className="display-serif mt-3 text-[var(--studio-ink)] text-2xl">
-              Paid, but the code is taking longer than it should.
-            </h2>
-            <p className="mt-3 text-[var(--studio-graphite)] text-[14px] leading-relaxed">
-              Your payment went through and nothing is lost. Refresh this page
-              in a minute; if the code still does not appear, write to{" "}
-              <a href="mailto:support@capturia.app" className="cue-link">
-                support@capturia.app
-              </a>
-              .
-            </p>
-          </>
-        )}
+        {phase.kind === "done" &&
+          (phase.outcome.status === "error" || phase.outcome.status === "pending") && (
+            <>
+              <h2 className="display-serif mt-3 text-[var(--studio-ink)] text-2xl">
+                Paid, but the code is taking longer than it should.
+              </h2>
+              <p className="mt-3 text-[var(--studio-graphite)] text-[14px] leading-relaxed">
+                Your payment went through and nothing is lost. Refresh this page
+                in a minute and the code will be waiting; if it still does not
+                appear, write to{" "}
+                <a href="mailto:support@capturia.app" className="cue-link">
+                  support@capturia.app
+                </a>
+                .
+              </p>
+            </>
+          )}
 
         <div className="mt-7 flex justify-end">
           <button
