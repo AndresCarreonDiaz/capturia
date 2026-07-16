@@ -116,11 +116,19 @@ async function startRuntimeServer({ keychain, isDev, env = process.env, host = "
     });
   }
 
-  // The provider header is client-supplied; keychain.getKey throws on unknown
-  // providers (assertProvider), which for a hostile header should mean "no
-  // stored key", not a 500.
+  // The provider header is client-supplied, so it is validated against the
+  // RENDERER-NAMEABLE provider list (electron/ipc-schemas.js), not against
+  // every slot the keychain can hold: the vault also stores main-internal
+  // slots (the capturia-hosted-refresh token), and a hostile header naming
+  // one of those must read as "no stored key", never as a key that
+  // resolveDesktopAgentSpec would then ship upstream. keychain.getKey still
+  // throws on unknown providers; that also maps to null, not a 500.
+  // Deliberately unmemoized even though a run request consults it twice
+  // (guard + agents factory): each check should see the live vault, and two
+  // keychain reads are noise next to a model call.
+  const { PROVIDERS: RENDERER_PROVIDERS } = require("./ipc-schemas");
   function storedKeyFor(provider) {
-    if (!provider) return null;
+    if (!provider || !RENDERER_PROVIDERS.includes(provider)) return null;
     try {
       return keychain.getKey(provider);
     } catch {
@@ -192,7 +200,10 @@ async function startRuntimeServer({ keychain, isDev, env = process.env, host = "
     try {
       method = (await request.clone().json())?.method;
     } catch {
-      method = undefined; // non-JSON body: let the runtime answer it
+      // Non-JSON body: not the info handshake, so it takes the key guard
+      // like any run request (503 fail-fast with no usable key); with a key
+      // present the runtime rejects the malformed body itself.
+      method = undefined;
     }
     if (method !== "info") {
       const provider = request.headers.get("x-capturia-provider");
@@ -213,7 +224,13 @@ async function startRuntimeServer({ keychain, isDev, env = process.env, host = "
   const server = http.createServer((req, res) => {
     listener(req, res).catch((err) => {
       console.error("Capturia runtime server error:", err);
-      if (!res.headersSent) res.writeHead(500, { "content-type": "application/json" });
+      if (res.headersSent) {
+        // Mid-stream failure: truncate hard so the client sees a broken
+        // stream, never trailing error JSON parsed as payload.
+        res.destroy();
+        return;
+      }
+      res.writeHead(500, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: "Capturia runtime server error." }));
     });
   });

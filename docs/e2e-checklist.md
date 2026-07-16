@@ -164,3 +164,34 @@ authenticated loopback keycheck). Then by hand:
    provisioning error from the mic path, and everything else keeps working.
 3. Keys saved in the packaged app persist across relaunches (safeStorage
    vault lives in the packaged app's userData, separate from dev's).
+
+## Capturia Pro upgrade flow (M11 slice 2)
+
+Local rails first: dev server on :3000 with the Stripe env (secret key,
+price id, webhook secret) plus the JWT keypair, a webhook route reachable by
+Stripe (tunnel or deployed), and the app launched with
+`CAPTURIA_HOSTED_URL=http://localhost:3000/api/hosted` so checkout,
+activation, token refresh, and the proxy all hit the same server.
+
+1. Settings (Cmd+,) > Capturia Pro row shows "Upgrade to Pro". Click: the
+   Stripe Checkout page opens in the default browser and the row reports
+   that checkout opened.
+2. Pay. Stripe redirects to the landing, which overlays "Payment received"
+   and then the activation code with a Copy button (webhook lag of a few
+   seconds is absorbed; the code appears without a refresh).
+3. Refresh that success page: the overlay now says the code was already
+   collected (pickup is exactly-once), with the support path spelled out.
+4. Paste the code in the Capturia Pro row and Activate: the row flips to
+   the stored-credential mask, Capturia Pro becomes the active model, and
+   no token was ever visible or pasted by hand.
+5. Talk to the camera: overlays render through the hosted proxy on
+   Capturia's key (no BYOK key stored for the session). The webhook log on
+   the dev server shows `activation_minted`; Stripe Dashboard > Billing >
+   Meters accumulates capturia_hosted_tokens after generations.
+6. Clear the Capturia Pro row: hosted calls stop within one JWT lifetime
+   (the refresh token and its timer are dropped with the JWT), and
+   re-activating requires a fresh code (402/403 responses put a still-valid
+   code back for retry).
+7. Relaunch the app: the JWT is refreshed from the stored refresh token at
+   boot with no user action (check the row is still active after a restart
+   that outlives the ~1h token).

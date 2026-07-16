@@ -29,7 +29,7 @@ const instrumentSerif = Instrument_Serif({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://capturia.app"),
+  metadataBase: new URL("https://www.capturia.dev"),
   title: "Capturia · Broadcast-grade graphics on your camera, just by talking",
   description:
     "Speak your numbers, your name, your headline, and Capturia puts broadcast-grade graphics on your camera instantly. For founders, speakers, and creators on Zoom, Teams, and Meet. Free to start.",

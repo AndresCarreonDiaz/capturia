@@ -57,6 +57,17 @@ contextBridge.exposeInMainWorld("capturia", {
   runtimeInfo() {
     return ipcRenderer.invoke("runtime:info");
   },
+  // Capturia Pro upgrade flow (M11 slice 2): checkout opens the OS browser
+  // from main; activate trades the pasted one-time code for keychain-held
+  // credentials. Only { ok, devices } or an error message ever crosses back.
+  billing: {
+    checkout() {
+      return ipcRenderer.invoke("billing:checkout");
+    },
+    activate(code) {
+      return ipcRenderer.invoke("billing:activate", { code: String(code ?? "") });
+    },
+  },
   // Deck codegen: run a prompt on the user's stored key in main, return raw
   // model text. Used by the deck dropzone to design overlays from a PDF.
   generateCues(prompt, provider) {

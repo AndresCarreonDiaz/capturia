@@ -35,7 +35,7 @@ const crypto = require("crypto");
 // http://localhost:3000/api/beacon to watch pings land in the local store
 // via the summary endpoint). In an unpackaged build the override is also the
 // opt-in: no CAPTURIA_BEACON_URL, no sending at all.
-const DEFAULT_BEACON_URL = "https://capturia.app/api/beacon";
+const DEFAULT_BEACON_URL = "https://www.capturia.dev/api/beacon";
 const SEND_TIMEOUT_MS = 3000;
 
 // Simple settings store in userData: read-modify-write of a small JSON

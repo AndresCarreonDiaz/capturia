@@ -64,6 +64,15 @@ interface CapturiaBridge {
   // null when the runtime server failed to start (renderer falls back to the
   // /api/copilotkit route, which works in dev).
   runtimeInfo: () => Promise<DesktopRuntimeInfo | null>;
+  // Capturia Pro upgrade flow (M11 slice 2); optional because a stale
+  // packaged preload may predate it. checkout() opens the Stripe page in
+  // the OS browser; activate() trades a pasted one-time code for
+  // keychain-held credentials, resolving { ok, devices } or rejecting with
+  // a human-readable message.
+  billing?: {
+    checkout: () => Promise<{ ok: boolean }>;
+    activate: (code: string) => Promise<{ ok: boolean; devices?: number }>;
+  };
   // Deck codegen: run a prompt on the stored key in main, return raw model text.
   generateCues: (prompt: string, provider: KeyProvider) => Promise<string>;
   // Optional: a stale packaged preload may predate this method; callers must

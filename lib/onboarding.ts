@@ -57,8 +57,9 @@ const ALL_STEPS: OnboardingStep[] = [
     id: "keys",
     title: "Connect your AI key",
     body:
-      "Capturia runs on your own key (free tier). It is stored encrypted in the macOS Keychain " +
-      "and never sent to a Capturia server.",
+      "Capturia runs on your own key (free tier): open aistudio.google.com, hit Get API key, " +
+      "paste it here. About a minute, no card needed. The key is stored encrypted in the " +
+      "macOS Keychain and never sent to a Capturia server.",
     cta: "Add a key",
     isSatisfied: (ctx) => ctx.hasKeys,
   },

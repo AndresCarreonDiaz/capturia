@@ -178,7 +178,7 @@ export default function VotePreview() {
       <div className="relative mx-auto -mt-9 w-[140px] sm:absolute sm:mx-0 sm:mt-0 sm:-bottom-2 sm:right-10 sm:w-[150px] rotate-2 idle-bob rounded-[1.4rem] border border-white/[0.14] bg-[#0f1216] p-2.5 sm:p-3 shadow-[0_18px_60px_rgba(0,0,0,0.65)]">
         <div className="mx-auto h-1 w-9 rounded-full bg-white/15" />
         <p className="mt-2 truncate font-mono text-[7.5px] sm:text-[8.5px] tracking-[0.08em] text-[var(--studio-fade)]">
-          capturia.app/vote/kj3p
+          capturia.dev/vote/kj3p
         </p>
         <p className="mt-1.5 text-[10px] sm:text-[11px] font-medium leading-snug text-[var(--studio-ink)]">
           What should we build next?

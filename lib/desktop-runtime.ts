@@ -24,7 +24,7 @@ import {
 // proxy speaks the exact @ai-sdk/google shape (see lib/hosted/proxy.ts), so
 // hosted mode is a baseURL + key swap, not a new client.
 export const HOSTED_PROVIDER = "capturia-hosted";
-const DEFAULT_HOSTED_BASE = "https://capturia.app/api/hosted";
+const DEFAULT_HOSTED_BASE = "https://www.capturia.dev/api/hosted";
 const DEFAULT_HOSTED_MODEL_ID = "gemini-2.5-flash-lite";
 
 export interface HostedRoute {
@@ -96,22 +96,29 @@ export function resolveDesktopAgentSpec({ provider, storedKey, env }: DesktopKey
   return { model, apiKey };
 }
 
-// Missing-key fail-fast with the same message source as the web route, so the
-// studio banner wording never forks between web and desktop. The hosted
-// provider gets its own message: telling a Pro user to go set GOOGLE_API_KEY
-// would be exactly the setup the hosted tier exists to remove.
+// Missing-key fail-fast sharing the DECISION with the web route (via
+// missingModelKeyError) but not the words: the web copy says "set X in
+// .env.local", which is meaningless inside a packaged app where the fix is
+// Settings. The hosted provider gets its own message: telling a Pro user to
+// go set GOOGLE_API_KEY would be exactly the setup the hosted tier exists
+// to remove.
 export function desktopKeyError({ provider, storedKey, env }: DesktopKeyInput): string | null {
   const error = missingModelKeyError({ byokProvider: provider, byokKey: storedKey, env });
+  if (!error) return null;
   // Only rewrite a REAL failure: with a usable env fallback the agents
   // factory would run anyway (hosted-without-token falls through to the env
   // spec), and blocking a run that would succeed forks keycheck from run.
-  if (error && provider === HOSTED_PROVIDER && !storedKey) {
+  if (provider === HOSTED_PROVIDER && !storedKey) {
     return (
       "Capturia Pro is selected but no access token is stored. " +
       "Paste your token in Settings, or switch to a BYOK provider."
     );
   }
-  return error;
+  return (
+    "Capturia has no AI key yet. Open Settings (⌘,), pick Google Gemini, " +
+    "and paste a free key from https://aistudio.google.com (about a minute), " +
+    "or upgrade to Capturia Pro for hosted keys."
+  );
 }
 
 // Browser origins allowed to call the loopback runtime. The packaged renderer

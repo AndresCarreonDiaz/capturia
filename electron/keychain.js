@@ -11,8 +11,12 @@ const { app, safeStorage } = require("electron");
 // "capturia-hosted" is not an API-key vendor: its slot stores the Capturia
 // Pro access token (M11 hosted tier), which routes through the same vault so
 // the token gets the exact keychain treatment keys do and never touches a
-// renderer process.
-const PROVIDERS = ["gemini", "claude", "openai", "capturia-hosted"];
+// renderer process. Its companion "capturia-hosted-refresh" slot holds the
+// long-lived refresh token (electron/hosted-billing.js); it is main-process
+// internal: never named over IPC (electron/ipc-schemas.js does not allow
+// it) and never listed to the renderer.
+const REFRESH_SLOT = "capturia-hosted-refresh";
+const PROVIDERS = ["gemini", "claude", "openai", "capturia-hosted", REFRESH_SLOT];
 
 function vaultPath() {
   return path.join(app.getPath("userData"), "keys.json");
@@ -88,7 +92,7 @@ function getKey(provider) {
 // Public summary for the renderer: presence + a 4-char tail for visual
 // confirmation. Never returns the actual key bytes.
 function listKeys() {
-  return PROVIDERS.map((provider) => {
+  return PROVIDERS.filter((provider) => provider !== REFRESH_SLOT).map((provider) => {
     const key = getKey(provider);
     if (!key) {
       return { provider, has: false, mask: null };
@@ -98,4 +102,4 @@ function listKeys() {
   });
 }
 
-module.exports = { saveKey, clearKey, listKeys, getKey, PROVIDERS };
+module.exports = { saveKey, clearKey, listKeys, getKey, PROVIDERS, REFRESH_SLOT };
