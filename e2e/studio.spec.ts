@@ -36,6 +36,18 @@ test("the studio loads: webcam layer, command bar, quick actions", async ({ page
   await expect(page.getByText("Progress 73%")).toBeVisible();
 });
 
+test("the stage video carries real frames, not just a lit LED", async ({ page }) => {
+  // Pins the stream ATTACH, not just element presence: a stream parked in a
+  // ref with no re-render leaves a black stage while the camera runs (the
+  // 0.1.1 packaged-app bug; WebcamFeed.tsx documents the render fence). The
+  // fake device from playwright.config supplies the frames here.
+  await page.goto("/studio");
+  await page.waitForFunction(() => {
+    const v = document.querySelector("video");
+    return !!v && v.videoWidth > 0 && !v.paused;
+  });
+});
+
 test("program output (?out=1) is chrome-free: webcam only, no operator UI", async ({
   page,
 }) => {
