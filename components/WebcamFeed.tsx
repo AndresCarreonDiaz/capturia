@@ -103,6 +103,13 @@ export default function WebcamFeed() {
   // exhausted, the next consumer attach (a pause/resume transition from
   // main) starts a fresh series instead of leaving a terminal error card.
   const [acquireRequest, setAcquireRequest] = useState(0);
+  // Render fence for acquisition success. The stream lands in a REF, and
+  // setError(null) while error is ALREADY null is a same-value update React
+  // bails out of: no render, so the per-render attach effect below never
+  // runs, and a first-try success on an otherwise quiet page (the packaged
+  // app's studio) leaves the stage black with the camera LED lit. Dev never
+  // showed it because surrounding re-renders always arrived in time.
+  const [, setStreamVersion] = useState(0);
 
   useEffect(() => {
     const onControl = (event: Event) => {
@@ -129,6 +136,7 @@ export default function WebcamFeed() {
           }
           streamRef.current = s;
           setError(null);
+          setStreamVersion((n) => n + 1);
         })
         .catch((e) => {
           if (cancelled) return;
