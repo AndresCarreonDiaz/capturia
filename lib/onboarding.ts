@@ -112,7 +112,8 @@ const ALL_STEPS: OnboardingStep[] = [
     id: "golive",
     title: "Use it in a call",
     body:
-      "In Zoom or Meet, pick “Capturia” as your camera, or share this " +
+      "Hit “Go on camera” on the stage to see yourself, then in Zoom or " +
+      "Meet, pick “Capturia” as your camera, or share this " +
       "window, to broadcast the stage. Closing this window keeps Capturia " +
       "running in the menu bar so the camera stays live; quit it fully from " +
       "the menu bar icon. And if your own Zoom preview shows text backwards, " +

@@ -28,24 +28,38 @@ const LOWER_THIRD = [
   },
 ];
 
-test("the studio loads: webcam layer, command bar, quick actions", async ({ page }) => {
+test("the studio loads camera-OFF: standby stage, command bar, quick actions", async ({
+  page,
+}) => {
+  // Launch is not camera intent: the visible stage starts dark with an
+  // explicit way on, so opening the app to prep a deck or buy Pro never
+  // lights the LED or fires the OS permission prompt.
   await page.goto("/studio");
-  await expect(page.locator("video").first()).toBeVisible();
+  await expect(page.getByText("Your camera is off")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Go on camera" })).toBeVisible();
+  await expect(page.locator("video")).toHaveCount(0);
   await expect(page.getByPlaceholder(/Add a lower third/)).toBeVisible();
   // Quick-action chips show on an empty stage.
   await expect(page.getByText("Progress 73%")).toBeVisible();
 });
 
-test("the stage video carries real frames, not just a lit LED", async ({ page }) => {
+test("Go on camera attaches real frames, and camera off ends the capture", async ({
+  page,
+}) => {
   // Pins the stream ATTACH, not just element presence: a stream parked in a
   // ref with no re-render leaves a black stage while the camera runs (the
   // 0.1.1 packaged-app bug; WebcamFeed.tsx documents the render fence). The
   // fake device from playwright.config supplies the frames here.
   await page.goto("/studio");
+  await page.getByRole("button", { name: "Go on camera" }).click();
   await page.waitForFunction(() => {
     const v = document.querySelector("video");
     return !!v && v.videoWidth > 0 && !v.paused;
   });
+  // The way off the air: video unmounts and the standby card returns.
+  await page.getByRole("button", { name: "camera off" }).click();
+  await expect(page.locator("video")).toHaveCount(0);
+  await expect(page.getByText("Your camera is off")).toBeVisible();
 });
 
 test("program output (?out=1) is chrome-free: webcam only, no operator UI", async ({

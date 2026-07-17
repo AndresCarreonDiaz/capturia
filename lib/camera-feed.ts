@@ -234,6 +234,17 @@ export interface WebcamIdleState {
 
 export const WEBCAM_IDLE_INITIAL: WebcamIdleState = { idleSeconds: 0, paused: false };
 
+// Boot and teardown state: PAUSED, so a mere app launch never lights the
+// camera LED. The webcam engages only when something real happens: a call
+// app attaches to the virtual camera (the resume poll sees consumers > 0,
+// or an unknown count from an old extension, and flips live within
+// WEBCAM_RESUME_POLL_MS). idleSeconds sits pre-saturated because this state
+// IS the idle steady-state, just reached without the 10s grace.
+export const WEBCAM_IDLE_BOOT: WebcamIdleState = {
+  idleSeconds: WEBCAM_IDLE_AFTER_SECONDS,
+  paused: true,
+};
+
 // One 1Hz step of the webcam idle machine. `consumers` is the extension's
 // source-client count (the addon's sinkConsumers()): 0 means no call app is
 // consuming the virtual camera right now; NEGATIVE means unknown (the enabled

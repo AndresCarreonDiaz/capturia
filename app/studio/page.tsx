@@ -1131,8 +1131,12 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
         isListening && !outputMode ? "mic-glow" : ""
       }`}
     >
-      {/* Layer 0: webcam */}
-      <WebcamFeed />
+      {/* Layer 0: webcam. Receivers (the desktop app's offscreen camera
+          window, a ?out=1 mirror tab) capture the moment main allows it; the
+          visible Control Room starts with the camera OFF so launching the
+          app to prep a deck or buy Pro never lights the LED (the stage's
+          "Go on camera" is the intent signal). */}
+      <WebcamFeed autoStart={isMirrorReceiver} />
 
       {/* Layer 0.4: audio-reactive vignette. Breathes with --mic-energy (set by
           useSpeechEnergy from speech results, or from mirrored speak pings on

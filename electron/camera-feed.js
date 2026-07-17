@@ -62,7 +62,7 @@ const {
   LOAD_RETRY_MAX_DELAY_MS,
   FROZEN_AFTER_SECONDS,
   SINK_STALL_SECONDS,
-  WEBCAM_IDLE_INITIAL,
+  WEBCAM_IDLE_BOOT,
   WEBCAM_RESUME_POLL_MS,
   findCameraDevice,
   programOutputUrl,
@@ -152,7 +152,9 @@ function createCameraFeed({ studioUrl, isAllowedNavigation, onStateChange, log =
   // branded "standing by" card the pump keeps delivering; a fast poll
   // (WEBCAM_RESUME_POLL_MS) resumes live video the moment a consumer
   // attaches. Unknown counts (old extension) never pause: fail-safe live.
-  let webcamIdle = WEBCAM_IDLE_INITIAL;
+  // Boots PAUSED: launching the app must never light the camera LED. The
+  // resume poll flips it live the moment a call app actually attaches.
+  let webcamIdle = WEBCAM_IDLE_BOOT;
   let webcamPollTimer = null;
 
   function notify() {
@@ -593,8 +595,9 @@ function createCameraFeed({ studioUrl, isAllowedNavigation, onStateChange, log =
     releaseSink();
     destroyWindow();
     // The page holding the capture is gone with the window (Chromium drops
-    // getUserMedia with the renderer), so the idle machine starts over.
-    webcamIdle = WEBCAM_IDLE_INITIAL;
+    // getUserMedia with the renderer), so the idle machine starts over
+    // paused; the next consumer attach brings it back.
+    webcamIdle = WEBCAM_IDLE_BOOT;
     syncWebcamResumePoll();
     if (!keepError) error = null;
     notify();
