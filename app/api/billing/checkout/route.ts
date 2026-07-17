@@ -58,6 +58,9 @@ export async function POST(request: Request): Promise<Response> {
     const session = await stripeRequest(stripe, "POST", "/v1/checkout/sessions", {
       mode: "subscription",
       line_items: [{ price: priceId, quantity: 1 }],
+      // Shows Checkout's promo-code box: founder/friend coupons are minted in
+      // the Stripe dashboard, never in code.
+      allow_promotion_codes: true,
       // The success page (slice 2 UX) picks the activation code up once via
       // /api/billing/activation-code?session_id=...&pickup=...; the webhook
       // learns the nonce through the session metadata.
