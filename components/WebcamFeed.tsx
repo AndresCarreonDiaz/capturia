@@ -90,10 +90,22 @@ async function acquirePhysicalWebcam(): Promise<MediaStream> {
   });
 }
 
-export default function WebcamFeed() {
+interface WebcamFeedProps {
+  /**
+   * Program-output surfaces (the desktop app's offscreen camera window, a
+   * ?out=1 mirror tab) capture as soon as main un-pauses them; the VISIBLE
+   * stage instead starts with the camera off and waits for the user. Opening
+   * the app to buy Pro or prep a deck must not light the camera LED or fire
+   * the OS permission prompt: capture is intent, launch is not.
+   */
+  autoStart?: boolean;
+}
+
+export default function WebcamFeed({ autoStart = false }: WebcamFeedProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [wanted, setWanted] = useState(autoStart);
   const paused = useSyncExternalStore(
     subscribeWebcamControl,
     readPausedFlag,
@@ -121,7 +133,7 @@ export default function WebcamFeed() {
   }, []);
 
   useEffect(() => {
-    if (paused) return; // hold nothing while paused: that IS the feature
+    if (paused || !wanted) return; // hold nothing while paused or off: that IS the feature
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -157,7 +169,7 @@ export default function WebcamFeed() {
       streamRef.current?.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     };
-  }, [paused, acquireRequest]);
+  }, [paused, acquireRequest, wanted]);
 
   // Attach the live stream whenever the <video> is in the tree. Runs on
   // every render on purpose: a retry can succeed while the error card is up
@@ -181,6 +193,24 @@ export default function WebcamFeed() {
     );
   }
 
+  if (!wanted) {
+    return (
+      <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 bg-neutral-950 px-8 text-center">
+        <p className="text-neutral-100 text-2xl font-semibold">Your camera is off</p>
+        <p className="max-w-sm text-neutral-500 text-sm leading-relaxed">
+          Nothing is captured until you turn it on. Decks, Settings, and
+          Capturia Pro all work without it.
+        </p>
+        <button
+          onClick={() => setWanted(true)}
+          className="rounded-full border border-white/20 bg-white/10 px-7 py-3 text-[15px] font-medium text-white hover:bg-white/20"
+        >
+          Go on camera
+        </button>
+      </div>
+    );
+  }
+
   if (error) {
     return (
       <div className="absolute inset-0 flex items-center justify-center bg-neutral-900">
@@ -190,12 +220,26 @@ export default function WebcamFeed() {
   }
 
   return (
-    <video
-      ref={videoRef}
-      autoPlay
-      playsInline
-      muted
-      className="absolute inset-0 w-full h-full object-cover"
-    />
+    <>
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted
+        className="absolute inset-0 w-full h-full object-cover"
+      />
+      {/* A camera product owes the user an always-visible way OFF the air.
+          Flipping wanted unmounts the video and the acquisition cleanup
+          stops the tracks, so the LED dies with it. Hidden on program-output
+          surfaces (autoStart), which must stay chrome-free. */}
+      {!autoStart && (
+        <button
+          onClick={() => setWanted(false)}
+          className="absolute top-4 left-4 z-20 rounded-full bg-black/50 px-3 py-1.5 font-mono text-[12px] tracking-wide text-neutral-300 hover:bg-black/75 hover:text-white"
+        >
+          camera off
+        </button>
+      )}
+    </>
   );
 }

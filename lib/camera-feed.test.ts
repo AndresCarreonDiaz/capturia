@@ -10,6 +10,7 @@ import {
   WEBCAM_ACQUIRE_RETRY_MS,
   WEBCAM_CONTROL_EVENT,
   WEBCAM_IDLE_AFTER_SECONDS,
+  WEBCAM_IDLE_BOOT,
   WEBCAM_IDLE_INITIAL,
   WEBCAM_PAUSED_FLAG,
   WEBCAM_RESUME_POLL_MS,
@@ -262,6 +263,17 @@ describe("reduceWebcamIdleSecond", () => {
   it("resets the countdown when a consumer returns mid-count", () => {
     const counting = tick(WEBCAM_IDLE_INITIAL, 0, WEBCAM_IDLE_AFTER_SECONDS - 2);
     expect(tick(counting, 1)).toEqual(WEBCAM_IDLE_INITIAL);
+  });
+
+  it("boots paused: an app launch alone never engages the webcam", () => {
+    // WEBCAM_IDLE_BOOT is the launch and teardown state (a lit LED on mere
+    // launch reads as spyware, issue #38's rule applied to boot). One
+    // consumer reading brings it live; an unknown count (old extension,
+    // consumers -1) fail-safes live on the first tick too.
+    expect(WEBCAM_IDLE_BOOT.paused).toBe(true);
+    expect(tick(WEBCAM_IDLE_BOOT, 0, 60).paused).toBe(true);
+    expect(tick(WEBCAM_IDLE_BOOT, 1)).toEqual(WEBCAM_IDLE_INITIAL);
+    expect(tick(WEBCAM_IDLE_BOOT, -1)).toEqual(WEBCAM_IDLE_INITIAL);
   });
 
   it("resumes immediately when a consumer attaches while paused", () => {
