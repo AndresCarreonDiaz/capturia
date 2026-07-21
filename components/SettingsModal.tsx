@@ -87,13 +87,14 @@ export default function SettingsModal({
   // open, silently: a meter that cannot load simply does not render, it is
   // never worth an error banner. Keyed on the vault signature so activating
   // or clearing Pro while the modal is open re-reads.
+  // Rendering is additionally gated on the row's `has`, so a stale value
+  // from a cleared entitlement can never show: the next open refetches and
+  // overwrites (state updates only from the async callbacks; the sync-reset
+  // shape trips react-hooks/set-state-in-effect).
   const [usage, setUsage] = useState<HostedUsage | null>(null);
   const proActive = keys.find((k) => k.provider === "capturia-hosted")?.has ?? false;
   useEffect(() => {
-    if (!open || !proActive || !billing?.getUsage) {
-      setUsage(null);
-      return;
-    }
+    if (!open || !proActive || !billing?.getUsage) return;
     let cancelled = false;
     billing
       .getUsage()
