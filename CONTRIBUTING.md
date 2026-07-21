@@ -39,7 +39,7 @@ This opens Capturia in a native window with local Whisper STT and the global hot
 ## Architecture in 30 seconds
 
 - **Agent never replies in prose.** Every utterance is a tool call or silence. System prompt enforces this.
-- **12 typed components** in `lib/catalog.ts`. Add new ones by adding a Zod schema, a React component in `components/overlays/`, and registering in `lib/a2ui-catalog.tsx`.
+- **13 typed components** in `lib/catalog.ts`. Add new ones by adding a Zod schema, a React component in `components/overlays/`, and registering in `lib/a2ui-catalog.tsx`.
 - **Backend** at `app/api/copilotkit/[[...slug]]/route.ts` runs CopilotKit v2 + `BuiltInAgent` with Gemini 2.5 Flash-Lite.
 - **Desktop wrapper** is Electron. `electron/main.js` opens the studio in a native window. Local Whisper STT via IPC. BYOK key vault via OS Keychain.
 

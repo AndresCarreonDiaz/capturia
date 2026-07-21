@@ -10,8 +10,8 @@ Built solo for the **Generative UI Global Hackathon**, May 2026.
 
 ## Download
 
-Capturia ships as a signed, notarized macOS app (releases v0.1.0 through
-v0.1.3 so far). Grab it at <https://www.capturia.dev>: install once and
+Capturia ships as a signed, notarized macOS app (latest release
+v0.1.3). Grab it at <https://www.capturia.dev>: install once and
 **Capturia** shows up as a camera in Zoom, Meet, and Slack. The free web
 studio lives on the same site and needs no download at all.
 
@@ -247,7 +247,7 @@ lib/
 
 ## Roadmap
 
-**Shipped:** Desktop BYOK key vault, deck-aware cue cards, Program Output / OBS virtual-camera path, **Surface-mode A2UI rendering** (the registered catalog renders live through `<A2UIRenderer>`; `compose_scene` pushes a whole UI at once), **agent-authored A2UI surfaces** (`render_surface`: the model composes its own A2UI tree of branded overlays inside layout primitives, sanitized via `lib/a2ui-validate.ts` and rendered through the real A2UI v0.9 runtime), **interactive surfaces** (`ActionButton` taps loop back as `[ACTION]` turns, fully client-side, live on Gemini 2.5 today), the **audio-reactive feed** (speech-derived `--mic-energy`, no AudioContext), **audience voting** (on-feed QR, phones vote at `/vote/<room>`, deterministic live tally), the **native "Capturia" camera** (macOS camera extension, no OBS; installed by the app itself), the **desktop DMG** (Developer ID signed, notarized, stapled; releases v0.1.0 through v0.1.3 at [capturia.dev](https://www.capturia.dev), runbook in [docs/release.md](docs/release.md)), the **consent-gated telemetry beacon** (four anonymous fields, nothing before the onboarding choice; [docs/telemetry.md](docs/telemetry.md)), and the **Capturia Pro hosted tier** (Stripe billing, activation codes, hosted-key LLM proxy; [docs/hosted-tier.md](docs/hosted-tier.md)).
+**Shipped:** Desktop BYOK key vault, deck-aware cue cards, Program Output / OBS virtual-camera path, **Surface-mode A2UI rendering** (the registered catalog renders live through `<A2UIRenderer>`; `compose_scene` pushes a whole UI at once), **agent-authored A2UI surfaces** (`render_surface`: the model composes its own A2UI tree of branded overlays inside layout primitives, sanitized via `lib/a2ui-validate.ts` and rendered through the real A2UI v0.9 runtime), **interactive surfaces** (`ActionButton` taps loop back as `[ACTION]` turns, fully client-side, live on Gemini 2.5 today), the **audio-reactive feed** (speech-derived `--mic-energy`, no AudioContext), **audience voting** (on-feed QR, phones vote at `/vote/<room>`, deterministic live tally), the **native "Capturia" camera** (macOS camera extension, no OBS; installed by the app itself), the **desktop DMG** (Developer ID signed, notarized, stapled; latest release v0.1.3 at [capturia.dev](https://www.capturia.dev), runbook in [docs/release.md](docs/release.md)), the **consent-gated telemetry beacon** (four anonymous fields, nothing before the onboarding choice; [docs/telemetry.md](docs/telemetry.md)), and the **Capturia Pro hosted tier** (Stripe billing, activation codes, hosted-key LLM proxy; [docs/hosted-tier.md](docs/hosted-tier.md)).
 
 Next:
 
