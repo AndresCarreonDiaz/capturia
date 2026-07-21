@@ -145,7 +145,10 @@ export default function CheckoutSuccess() {
         <div className="mt-7 flex items-center justify-between gap-4">
           <p className="text-[var(--studio-fade)] text-[11px] leading-relaxed">
             By subscribing you agree to the{" "}
-            <a href="/terms" className="cue-link">
+            {/* New tab: an in-tab navigation would leave the exactly-once
+                code view, and after the re-file grace window the code is
+                unrecoverable without support. */}
+            <a href="/terms" target="_blank" rel="noopener noreferrer" className="cue-link">
               Terms
             </a>
             .

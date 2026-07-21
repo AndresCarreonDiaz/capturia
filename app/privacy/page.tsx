@@ -14,7 +14,7 @@ const GITHUB = "https://github.com/AndresCarreonDiaz/capturia";
 export const metadata: Metadata = {
   title: "Privacy Policy · Capturia",
   description:
-    "What Capturia collects and what it never sees: on-device speech, an anonymous four-field beacon you can switch off, no accounts, and no user database.",
+    "What Capturia collects and what it never sees: on-device speech in the desktop app, an anonymous four-field beacon you can switch off, no accounts, and no user database.",
 };
 
 export default function PrivacyPage() {
@@ -22,10 +22,10 @@ export default function PrivacyPage() {
     <LegalShell eyebrow="Privacy" title="Privacy Policy" lastUpdated="July 21, 2026">
       <LegalSection title="The short version">
         <p>
-          Capturia has no accounts, no sign-up, and no user database. Your voice
-          is transcribed on your Mac and your call audio never leaves it. The
-          app sends one anonymous, four-field usage ping that you can switch
-          off. The product is open source under MIT, so every claim on this
+          Capturia has no accounts, no sign-up, and no user database. In the
+          desktop app, your voice is transcribed on your Mac and your call
+          audio never leaves it. The app sends one anonymous, four-field usage
+          ping that you can switch off. The product is open source under MIT, so every claim on this
           page is verifiable in{" "}
           <a href={GITHUB} target="_blank" rel="noopener noreferrer" className="cue-link">
             the source
@@ -36,12 +36,20 @@ export default function PrivacyPage() {
 
       <LegalSection title="Your voice and your calls">
         <p>
-          Speech recognition runs on your Mac: Apple&rsquo;s speech engine on
-          macOS 26, a local Whisper model on earlier versions. No bot joins
-          your meeting, nothing is recorded, and no call audio or video is sent
-          to Capturia. Only the transcribed command, and any deck you choose to
-          load, go to the AI provider that powers your setup (your own provider
-          on the free tier, Capturia&rsquo;s hosted proxy on Pro, below).
+          In the desktop app, speech recognition runs on your Mac:
+          Apple&rsquo;s speech engine on macOS 26, a local Whisper model on
+          earlier versions. No bot joins your meeting, nothing is recorded, and
+          no call audio or video is sent to Capturia. Only the transcribed
+          command, and any deck you choose to load, go to the AI provider that
+          powers your setup (your own provider on the free tier,
+          Capturia&rsquo;s hosted proxy on Pro, below).
+        </p>
+        <p>
+          The browser demo is the exception: dictation there is handled by your
+          browser&rsquo;s built-in speech service, not on your machine. In
+          Chrome that service sends your microphone audio to Google for
+          recognition, governed by Google&rsquo;s privacy policy; Capturia
+          receives only the resulting transcript.
         </p>
       </LegalSection>
 
