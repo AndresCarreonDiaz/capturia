@@ -60,6 +60,9 @@ Stripe Checkout (test mode)
        one-time code -> long-lived refresh token (device cap: 3)
   -> POST /api/billing/token { refreshToken }
        -> Ed25519 JWT (~1h) held in the keychain "capturia-hosted" slot
+  -> POST /api/billing/deactivate (device JWT)
+       frees the calling device's seat; its refresh token stops minting
+       on the next /api/billing/token check
 ```
 
 ## Endpoints
@@ -74,6 +77,7 @@ Stripe Checkout (test mode)
 | `POST /api/billing/webhook` | Stripe events -> Redis entitlement cache + activation codes (deduplicated on event.id, ordered by event.created with revocations winning same-second ties, one code per checkout session; dedup markers commit only after effects land, so a mid-apply fault answers 500 and the Stripe retry re-processes instead of being swallowed) |
 | `POST /api/billing/activate` | `{ code, deviceId }` -> `{ refreshToken, token, expiresAt, devices }` |
 | `POST /api/billing/token` | `{ refreshToken }` -> `{ token, expiresAt }` |
+| `POST /api/billing/deactivate` | Frees the calling device's seat (same device-JWT auth as the proxy; the JWT names customer AND device, so a caller can only ever free its own slot). Idempotent; answers `{ ok, devices }`. The device's refresh token stops minting on its next refresh |
 | `GET /api/billing/activation-code?session_id=cs_...&pickup=...` | One-time code pickup for the checkout success page; the pickup nonce is minted per checkout, travels only in the success URL, and the code is filed under hash(session, nonce), so a bare session id retrieves nothing |
 
 The JWT rides in `x-goog-api-key` (what `@ai-sdk/google` sends) or a
