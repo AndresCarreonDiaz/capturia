@@ -8,10 +8,9 @@ import type { AnchorHTMLAttributes, ReactNode } from "react";
 // <Analytics /> mount in the root layout; this adds the page -> download edge
 // of the funnel (visits -> download clicks -> beacon-counted installs).
 //
-// Today the landing has no direct DMG link (the app is not signed for
-// distribution yet), so the download-intent CTAs are the "watch releases"
-// links. When the landing gets a real Download button, wrap it in this same
-// component (or call trackDownloadClick from its own handler) and the funnel
+// The landing's Download CTAs link the latest release (a Developer ID
+// signed, notarized DMG). Every download-intent CTA routes through this
+// component (or calls trackDownloadClick from its own handler) so the funnel
 // keeps a single, comparable event name.
 export const DOWNLOAD_EVENT = "download_click";
 
