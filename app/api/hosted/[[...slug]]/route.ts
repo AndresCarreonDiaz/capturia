@@ -26,7 +26,14 @@ import { randomUUID } from "node:crypto";
 import { after } from "next/server";
 import { jwtPublicKeyFromEnv, verifyHostedJwt } from "@/lib/hosted/jwt";
 import { getHostedBackend } from "@/lib/hosted/backend";
-import { acquireLease, gateConfigFromEnv, gateHostedCall, recordUsage } from "@/lib/hosted/gate";
+import {
+  acquireLease,
+  gateConfigFromEnv,
+  gateFlashBudget,
+  gateHostedCall,
+  recordUsage,
+  type GateRefusalCode,
+} from "@/lib/hosted/gate";
 import {
   createRelayStream,
   createSettler,
@@ -52,17 +59,27 @@ export const maxDuration = 60;
 // cannot buffer more than the cap.
 const MAX_BODY_BYTES = 1_000_000;
 
-function jsonError(status: number, error: string, retryAfterSec?: number): Response {
-  return Response.json(
-    { error },
-    {
-      status,
-      headers: {
-        "cache-control": "no-store",
-        ...(retryAfterSec ? { "retry-after": String(retryAfterSec) } : {}),
-      },
-    }
-  );
+function jsonError(
+  status: number,
+  error: string,
+  retryAfterSec?: number,
+  code?: GateRefusalCode
+): Response {
+  // Budget refusals additionally ride the Gemini error shape: it is the one
+  // error body @ai-sdk/google's failedResponseHandler parses, so the marker-
+  // tagged message (not a bare statusText) becomes the APICallError the
+  // desktop renderer classifies (lib/desktop-runtime.ts). The top-level
+  // `capturia` field carries the same code for curl and scripts.
+  const body = code
+    ? { error: { code: status, message: error, status: "RESOURCE_EXHAUSTED" }, capturia: code }
+    : { error };
+  return Response.json(body, {
+    status,
+    headers: {
+      "cache-control": "no-store",
+      ...(retryAfterSec ? { "retry-after": String(retryAfterSec) } : {}),
+    },
+  });
 }
 
 // @ai-sdk/google sends the key slot as x-goog-api-key; curl and future
@@ -103,7 +120,7 @@ export async function POST(
 
   const gateConfig = gateConfigFromEnv(process.env);
   const gate = await gateHostedCall(backend.run, customer, gateConfig);
-  if (!gate.ok) return jsonError(gate.status, gate.error, gate.retryAfterSec);
+  if (!gate.ok) return jsonError(gate.status, gate.error, gate.retryAfterSec, gate.code);
 
   const rawBody = await readBodyCapped(request.body, MAX_BODY_BYTES).catch(() => null);
   if (!rawBody) return jsonError(400, "Could not read request body.");
@@ -116,6 +133,13 @@ export async function POST(
   }
   const planned = planHostedCall(slug, body, process.env);
   if (!planned.ok) return jsonError(planned.status, planned.error);
+
+  // Model-scoped sub-budget, checkable only now that the model is known:
+  // flash (deck codegen) can be exhausted while lite-tier traffic continues.
+  const flashGate = await gateFlashBudget(backend.run, customer, planned.plan.modelId, gateConfig);
+  if (!flashGate.ok) {
+    return jsonError(flashGate.status, flashGate.error, flashGate.retryAfterSec, flashGate.code);
+  }
 
   const upstream = upstreamFor(planned.plan, process.env);
   if (!upstream.ok) return jsonError(upstream.status, upstream.error);
@@ -138,7 +162,8 @@ export async function POST(
   const settler = createSettler({
     lease,
     estimatedTokens: estimateTokensForRequest(planned.plan.request),
-    recordUsage: (tokens) => recordUsage(backend.run, customer, tokens, Date.now()),
+    recordUsage: (tokens) =>
+      recordUsage(backend.run, customer, tokens, Date.now(), planned.plan.modelId),
     recordMeter: stripe
       ? (tokens) => recordMeterEvent(stripe, { customer, value: tokens, identifier: requestId })
       : null,

@@ -8,12 +8,16 @@ import { writeEntitlement } from "./entitlements";
 import {
   acquireLease,
   checkRateLimit,
+  countsAgainstFlashBudget,
   gateConfigFromEnv,
+  gateFlashBudget,
   gateHostedCall,
   isEntitled,
   isKillSwitchOn,
+  monthEndMs,
   monthKey,
   readEntitlement,
+  readFlashMonthlyUsage,
   readMonthlyUsage,
   recordUsage,
 } from "./gate";
@@ -34,19 +38,28 @@ async function entitle(run: ReturnType<typeof world>["run"], status = "active" a
 }
 
 describe("gateConfigFromEnv", () => {
-  it("uses the issue #10 defaults and accepts overrides", () => {
+  it("uses the issue #49 defaults and accepts overrides", () => {
+    // 5.5M/month = 20 presentation hours at 275k tokens/hour, with the 500k
+    // flash sub-budget carved out for deck codegen.
     expect(gateConfigFromEnv({})).toEqual({
       ratePerMinute: 10,
-      monthlyTokenBudget: 5_000_000,
+      monthlyTokenBudget: 5_500_000,
+      flashMonthlyTokenBudget: 500_000,
       leaseTtlMs: 120_000,
     });
     expect(
       gateConfigFromEnv({
         CAPTURIA_HOSTED_RATE_LIMIT: "3",
         CAPTURIA_HOSTED_MONTHLY_TOKENS: "1000",
+        CAPTURIA_HOSTED_FLASH_MONTHLY_TOKENS: "200",
         CAPTURIA_HOSTED_LEASE_TTL_MS: "5000",
       })
-    ).toEqual({ ratePerMinute: 3, monthlyTokenBudget: 1000, leaseTtlMs: 5000 });
+    ).toEqual({
+      ratePerMinute: 3,
+      monthlyTokenBudget: 1000,
+      flashMonthlyTokenBudget: 200,
+      leaseTtlMs: 5000,
+    });
   });
 
   it("ignores garbage overrides", () => {
@@ -162,6 +175,38 @@ describe("monthly budget", () => {
     clock.tick(31 * 24 * 60 * 60 * 1000);
     expect(await readMonthlyUsage(run, CUSTOMER, clock.now())).toBe(0);
   });
+
+  it("reports the period end as the first instant of next month (UTC)", () => {
+    expect(monthEndMs(T0)).toBe(Date.UTC(2026, 7, 1));
+  });
+});
+
+describe("flash sub-budget accounting", () => {
+  it("meters exactly the flash model id", () => {
+    expect(countsAgainstFlashBudget("gemini-2.5-flash")).toBe(true);
+    expect(countsAgainstFlashBudget("gemini-2.5-flash-lite")).toBe(false);
+  });
+
+  it("charges a flash call to BOTH counters (the sub-budget is a carve-out)", async () => {
+    const { run, clock } = world();
+    await recordUsage(run, CUSTOMER, 300, clock.now(), "gemini-2.5-flash");
+    expect(await readMonthlyUsage(run, CUSTOMER, clock.now())).toBe(300);
+    expect(await readFlashMonthlyUsage(run, CUSTOMER, clock.now())).toBe(300);
+  });
+
+  it("charges a lite call to the monthly counter only", async () => {
+    const { run, clock } = world();
+    await recordUsage(run, CUSTOMER, 300, clock.now(), "gemini-2.5-flash-lite");
+    expect(await readMonthlyUsage(run, CUSTOMER, clock.now())).toBe(300);
+    expect(await readFlashMonthlyUsage(run, CUSTOMER, clock.now())).toBe(0);
+  });
+
+  it("rolls the flash counter over with the month", async () => {
+    const { run, clock } = world();
+    await recordUsage(run, CUSTOMER, 999, clock.now(), "gemini-2.5-flash");
+    clock.tick(31 * 24 * 60 * 60 * 1000);
+    expect(await readFlashMonthlyUsage(run, CUSTOMER, clock.now())).toBe(0);
+  });
 });
 
 describe("concurrent-stream lease", () => {
@@ -210,7 +255,12 @@ describe("concurrent-stream lease", () => {
 });
 
 describe("gateHostedCall (the brake stack, in order)", () => {
-  const cfg = { ratePerMinute: 2, monthlyTokenBudget: 100, leaseTtlMs: 120_000 };
+  const cfg = {
+    ratePerMinute: 2,
+    monthlyTokenBudget: 100,
+    flashMonthlyTokenBudget: 40,
+    leaseTtlMs: 120_000,
+  };
 
   it("passes an entitled, unthrottled call without touching any lease", async () => {
     const { run, clock } = world();
@@ -256,12 +306,63 @@ describe("gateHostedCall (the brake stack, in order)", () => {
     if (!throttled.ok) expect(throttled.retryAfterSec).toBeGreaterThan(0);
   });
 
-  it("429s once the monthly budget is exhausted", async () => {
+  it("429s once the monthly budget is exhausted, with the distinct code + marker", async () => {
     const { run, clock } = world();
     await entitle(run);
     await recordUsage(run, CUSTOMER, 100, clock.now());
     const decision = await gateHostedCall(run, CUSTOMER, cfg, clock.now());
-    expect(decision).toMatchObject({ ok: false, status: 429 });
-    if (!decision.ok) expect(decision.error).toMatch(/usage exhausted/i);
+    expect(decision).toMatchObject({ ok: false, status: 429, code: "budget_exhausted" });
+    if (!decision.ok) expect(decision.error).toContain("capturia:hosted-budget-exhausted");
+  });
+});
+
+describe("gateFlashBudget (the model-scoped sub-budget)", () => {
+  const cfg = {
+    ratePerMinute: 10,
+    monthlyTokenBudget: 100,
+    flashMonthlyTokenBudget: 40,
+    leaseTtlMs: 120_000,
+  };
+
+  it("passes flash calls while the sub-budget has headroom", async () => {
+    const { run, clock } = world();
+    await recordUsage(run, CUSTOMER, 39, clock.now(), "gemini-2.5-flash");
+    const decision = await gateFlashBudget(run, CUSTOMER, "gemini-2.5-flash", cfg, clock.now());
+    expect(decision).toEqual({ ok: true });
+  });
+
+  it("429s flash once the sub-budget is exhausted, with the distinct code + marker", async () => {
+    const { run, clock } = world();
+    await recordUsage(run, CUSTOMER, 40, clock.now(), "gemini-2.5-flash");
+    const decision = await gateFlashBudget(run, CUSTOMER, "gemini-2.5-flash", cfg, clock.now());
+    expect(decision).toMatchObject({ ok: false, status: 429, code: "flash_budget_exhausted" });
+    if (!decision.ok) {
+      expect(decision.error).toContain("capturia:hosted-flash-budget-exhausted");
+    }
+  });
+
+  it("keeps lite-tier traffic flowing after the flash sub-budget is spent", async () => {
+    const { run, clock } = world();
+    await entitle(run);
+    await recordUsage(run, CUSTOMER, 40, clock.now(), "gemini-2.5-flash");
+    // The launch shape from issue #49: deck codegen (flash) stops, the live
+    // overlay stream (lite) keeps running on the remaining monthly budget.
+    expect(await gateFlashBudget(run, CUSTOMER, "gemini-2.5-flash-lite", cfg, clock.now())).toEqual(
+      { ok: true }
+    );
+    expect(await gateHostedCall(run, CUSTOMER, cfg, clock.now())).toEqual({ ok: true });
+  });
+
+  it("still stops flash through the OVERALL budget even with sub-budget headroom", async () => {
+    const { run, clock } = world();
+    await entitle(run);
+    // Lite traffic alone can exhaust the month; flash has spent nothing, but
+    // the monthly gate (which runs first in the route) refuses everything.
+    await recordUsage(run, CUSTOMER, 100, clock.now(), "gemini-2.5-flash-lite");
+    expect(await gateFlashBudget(run, CUSTOMER, "gemini-2.5-flash", cfg, clock.now())).toEqual({
+      ok: true,
+    });
+    const monthly = await gateHostedCall(run, CUSTOMER, cfg, clock.now());
+    expect(monthly).toMatchObject({ ok: false, status: 429, code: "budget_exhausted" });
   });
 });
