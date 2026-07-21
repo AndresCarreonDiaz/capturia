@@ -77,6 +77,11 @@ export default function SettingsModal({
   // Upgrade-flow feedback: "checkout opened" hint and the activate spinner.
   const [billingInfo, setBillingInfo] = useState<string | null>(null);
   const [upgradeBusy, setUpgradeBusy] = useState(false);
+  // Self-serve deactivation (issue #10): armed = the confirm step is showing.
+  // Deactivation is destructive-ish (this Mac loses Pro until reactivated),
+  // so it never fires on the first click.
+  const [deactivateArmed, setDeactivateArmed] = useState(false);
+  const [deactivateBusy, setDeactivateBusy] = useState(false);
   // Desktop-only anonymous beacon toggle; unsupported (web, stale preload)
   // hides the whole Privacy section.
   const telemetry = useTelemetry();
@@ -143,6 +148,36 @@ export default function SettingsModal({
       setError(ipcErrorMessage(err));
     } finally {
       setBusy(null);
+    }
+  };
+
+  // Server first, vault second: the seat release needs the JWT that the
+  // local clear destroys. The clear itself goes through the normal clear()
+  // prop (keys:clear -> classifyVaultClear -> deactivate_hosted), so the
+  // refresh loop and both keychain slots go together, exactly like the
+  // plain Clear button. On failure nothing is cleared: seat and credentials
+  // stay consistent and the user can retry.
+  const handleDeactivate = async () => {
+    if (!billing?.deactivate) return;
+    setDeactivateBusy(true);
+    setError(null);
+    setBillingInfo(null);
+    try {
+      await billing.deactivate();
+      await clear("capturia-hosted");
+      setDeactivateArmed(false);
+      // Degrade to BYOK: hand the active slot to the first remaining key so
+      // the studio never keeps aiming at the credentials we just cleared.
+      const fallback =
+        keys.find((k) => k.has && k.provider !== "capturia-hosted")?.provider ?? "gemini";
+      onSelectProvider(fallback);
+      setBillingInfo(
+        "This Mac is deactivated; its seat is free for another device. Commands now run on your own keys."
+      );
+    } catch (err) {
+      setError(ipcErrorMessage(err));
+    } finally {
+      setDeactivateBusy(false);
     }
   };
 
@@ -316,6 +351,42 @@ export default function SettingsModal({
                               day: "numeric",
                             })}
                           </p>
+                        </div>
+                      )}
+                      {/* Self-serve deactivation (issue #10): frees this
+                          Mac's seat (3 per plan) server-side, then clears
+                          the local credentials. Confirm step first. */}
+                      {provider === "capturia-hosted" && billing?.deactivate && (
+                        <div className="mt-2">
+                          {deactivateArmed ? (
+                            <div className="flex items-center gap-2">
+                              <span className="flex-1 text-white/50 text-[11px] leading-relaxed">
+                                Free this Mac&apos;s seat? Pro stops on this device and commands
+                                switch to your own keys; your other devices keep working.
+                              </span>
+                              <button
+                                onClick={handleDeactivate}
+                                disabled={deactivateBusy}
+                                className="bg-red-500/15 hover:bg-red-500/25 border border-red-500/40 disabled:opacity-40 text-red-300 text-[11px] font-medium px-3 py-1.5 rounded-lg transition-colors"
+                              >
+                                {deactivateBusy ? "Deactivating…" : "Deactivate"}
+                              </button>
+                              <button
+                                onClick={() => setDeactivateArmed(false)}
+                                disabled={deactivateBusy}
+                                className="text-white/50 hover:text-white disabled:opacity-40 text-[11px] font-mono px-2 py-1.5 rounded-lg transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => setDeactivateArmed(true)}
+                              className="text-white/40 hover:text-red-400 text-[11px] font-mono transition-colors"
+                            >
+                              Deactivate this device
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>

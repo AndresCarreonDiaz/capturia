@@ -202,6 +202,36 @@ function createHostedBilling({ keychain, env = process.env, log = console } = {}
     return usage;
   }
 
+  // Server-side seat release for THIS device (issue #10): POSTs the
+  // deactivation endpoint with the stored JWT, which names the device, so
+  // main sends no id and the server can only free the caller's own slot.
+  // Deliberately does NOT touch the vault: the local clear stays with the
+  // keys:clear routing (classifyVaultClear -> deactivateLocal), so there is
+  // exactly one local-deactivation path and the renderer drives both steps.
+  // Throws a human-readable message on failure; nothing is cleared then, so
+  // the seat and the credentials stay consistent and the user can retry.
+  async function deactivateRemote() {
+    const token = keychain.getKey(HOSTED_SLOT);
+    if (!token) throw new Error("Capturia Pro is not active on this Mac.");
+    let res;
+    let json = null;
+    try {
+      res = await fetch(`${origin()}/api/billing/deactivate`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      json = await res.json().catch(() => null);
+    } catch {
+      throw new Error("Could not reach the Capturia server; check your connection and try again.");
+    }
+    if (!res.ok) {
+      const detail = json && typeof json.error === "string" ? json.error : `HTTP ${res.status}`;
+      throw new Error(`Could not deactivate this device: ${detail}`);
+    }
+    return { ok: true };
+  }
+
   // App boot: if an install has a refresh token, get a fresh JWT right away
   // (the stored one may have expired while the app was closed).
   function start() {
@@ -224,7 +254,16 @@ function createHostedBilling({ keychain, env = process.env, log = console } = {}
     clearTimeout(refreshTimer);
   }
 
-  return { startCheckout, activate, getUsage, refreshNow, start, deactivateLocal, stop };
+  return {
+    startCheckout,
+    activate,
+    getUsage,
+    refreshNow,
+    start,
+    deactivateLocal,
+    deactivateRemote,
+    stop,
+  };
 }
 
 module.exports = { createHostedBilling, HOSTED_SLOT };

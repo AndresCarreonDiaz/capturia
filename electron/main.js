@@ -288,6 +288,13 @@ function registerIpc() {
     "billing:usage",
     guarded(() => hostedBilling.getUsage())
   );
+  // Server-side seat release only: the renderer follows up with the normal
+  // keys:clear("capturia-hosted"), which routes to deactivateLocal above, so
+  // the vault clear has exactly one path (issue #10 self-serve deactivation).
+  ipcMain.handle(
+    "billing:deactivate",
+    guarded(() => hostedBilling.deactivateRemote())
+  );
 
   // On-device streaming speech (macOS 26+ helper). One session at a time;
   // events flow back over the "speech" channel. Availability is a cheap

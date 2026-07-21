@@ -80,6 +80,12 @@ interface CapturiaBridge {
     // checkout/activate. Rejects when Pro is inactive or the endpoint is
     // unreachable; callers treat that as "no meter", never an error state.
     getUsage?: () => Promise<HostedUsage>;
+    // Releases this device's hosted seat server-side (issue #10); optional
+    // because it shipped later than checkout/activate. The caller follows a
+    // resolved deactivation with keys.clear("capturia-hosted") so the local
+    // clear rides the existing vault-clear routing. Rejects with a
+    // human-readable message and clears NOTHING on failure.
+    deactivate?: () => Promise<{ ok: boolean }>;
   };
   // Deck codegen: run a prompt on the stored key in main, return raw model text.
   generateCues: (prompt: string, provider: KeyProvider) => Promise<string>;

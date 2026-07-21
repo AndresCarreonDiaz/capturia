@@ -75,6 +75,13 @@ contextBridge.exposeInMainWorld("capturia", {
     getUsage() {
       return ipcRenderer.invoke("billing:usage");
     },
+    // Releases this device's hosted seat server-side (main authenticates
+    // with the keychain JWT). The renderer follows up with
+    // keys.clear("capturia-hosted") so the local clear rides the existing
+    // vault-clear routing.
+    deactivate() {
+      return ipcRenderer.invoke("billing:deactivate");
+    },
   },
   // Deck codegen: run a prompt on the user's stored key in main, return raw
   // model text. Used by the deck dropzone to design overlays from a PDF.
