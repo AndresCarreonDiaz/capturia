@@ -17,6 +17,10 @@ export default function DeckDropzone({ onLoaded, provider }: Props) {
   const [dragging, setDragging] = useState(false);
   const [status, setStatus] = useState<"idle" | "parsing" | "generating" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
+  // Calm heads-up when the hosted deck allowance is used up: the deck still
+  // loads (deterministic cues), so this is a notice next to the chip, never
+  // the error state.
+  const [notice, setNotice] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
 
@@ -30,15 +34,18 @@ export default function DeckDropzone({ onLoaded, provider }: Props) {
       }
       setStatus("parsing");
       setError(null);
+      setNotice(null);
       try {
         const extract = await extractPdf(file);
         let cards: CueCard[] | null = null;
         // Desktop: design overlays with the user's own LLM. Web or any failure:
         // fall back to the deterministic builder so it always works and never
-        // costs us anything.
+        // costs us anything. A spent hosted allowance additionally says so.
         if (typeof window !== "undefined" && window.capturia?.generateCues) {
           setStatus("generating");
-          cards = await generateCuesViaLLM(extract, provider);
+          const generated = await generateCuesViaLLM(extract, provider);
+          cards = generated.cards;
+          setNotice(generated.notice);
         }
         if (!cards || cards.length === 0) cards = buildCues(extract);
         const facts = toDeckFacts(extract);
@@ -110,6 +117,14 @@ export default function DeckDropzone({ onLoaded, provider }: Props) {
       {error && status === "error" && (
         <span className="text-[10px] font-mono text-red-400/90 max-w-[200px] leading-tight">
           {error}
+        </span>
+      )}
+
+      {/* The deck loaded (built-in cues), only the AI design pass was out of
+          allowance: calm, not red. */}
+      {notice && status === "idle" && (
+        <span className="text-[10px] font-mono text-white/50 max-w-[240px] leading-tight">
+          {notice}
         </span>
       )}
 
