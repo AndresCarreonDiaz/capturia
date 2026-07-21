@@ -32,9 +32,9 @@ describe("getVoteBackend selection", () => {
     });
     expect(backend.mode).toBe("redis");
     expect(backend.subscribe).toBeUndefined();
-    // No teardown script on the Redis bridge yet (rooms idle out on TTL);
-    // the route answers 501 and the studio's fire-and-forget ignores it.
-    expect(backend.unpublishPoll).toBeUndefined();
+    // Teardown exists on BOTH backends (issue #52): the desktop app's
+    // voting toggle must close hosted rooms too, not wait out the 4h TTL.
+    expect(typeof backend.unpublishPoll).toBe("function");
   });
 
   it("accepts the Vercel KV env flavor", () => {
@@ -74,7 +74,7 @@ describe("memory backend delegation", () => {
     expect(state.counts["opt-a"]).toBe(1);
     expect(state.poll?.title).toBe("Best option?");
 
-    const closed = await backend.unpublishPoll!(ROOM, HOST);
+    const closed = await backend.unpublishPoll(ROOM, HOST);
     expect(closed.ok).toBe(true);
     expect((await backend.getRoomState(ROOM)).poll).toBeNull();
   });

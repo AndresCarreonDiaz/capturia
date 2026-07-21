@@ -83,6 +83,54 @@ describe("publishPoll (redis)", () => {
   });
 });
 
+describe("unpublishPoll (redis)", () => {
+  it("rejects invalid input before touching Redis", async () => {
+    const { run, calls } = runnerReturning(["ok", "1"]);
+    const store = createRedisVoteStore(run);
+    expect(rejectionStatus(await store.unpublishPoll("bad room!", HOST))).toBe(422);
+    expect(rejectionStatus(await store.unpublishPoll(ROOM, "x"))).toBe(422);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("maps the 403 wrong-host reply", async () => {
+    const { run } = runnerReturning(["403"]);
+    const store = createRedisVoteStore(run);
+    const res = await store.unpublishPoll(ROOM, HOST);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.status).toBe(403);
+  });
+
+  it("closes the room with the terminal event and drops it from the index", async () => {
+    const { run, calls } = runnerReturning(["ok", "3"]);
+    const store = createRedisVoteStore(run);
+    const res = await store.unpublishPoll(ROOM, HOST);
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.event).toEqual({ type: "closed", round: 3, poll: null, counts: {} });
+    }
+    // EVAL with 4 keys (room hashes + rooms index), hostKey among ARGV.
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBe("EVAL");
+    expect(calls[0][2]).toBe(4);
+    expect(calls[0]).toContain(HOST);
+    expect(calls[0]).toContain("vote:rooms");
+  });
+
+  it("closing an already-gone room succeeds so the toggle stays quiet", async () => {
+    const { run } = runnerReturning(["ok", "0"]);
+    const store = createRedisVoteStore(run);
+    const res = await store.unpublishPoll(ROOM, HOST);
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.event.round).toBe(0);
+  });
+
+  it("maps a malformed reply to 500", async () => {
+    const { run } = runnerReturning("garbage");
+    const store = createRedisVoteStore(run);
+    expect(rejectionStatus(await store.unpublishPoll(ROOM, HOST))).toBe(500);
+  });
+});
+
 describe("castVote (redis)", () => {
   const reply = (status: string) => [
     status,

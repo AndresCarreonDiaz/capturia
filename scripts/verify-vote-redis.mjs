@@ -5,7 +5,8 @@
 //
 //   CAPTURIA_BASE_URL=https://your-deploy.vercel.app node scripts/verify-vote-redis.mjs
 //
-// It uses a throwaway room id; keys expire with the room TTL.
+// It uses a throwaway room id and unpublishes it at the end, so no keys
+// linger beyond the run (the room TTL backstops a crashed run).
 
 import { randomUUID } from "node:crypto";
 
@@ -133,6 +134,31 @@ try {
 } catch (err) {
   check("watch stream sends the live snapshot", false, String(err));
 }
+
+// Host teardown (issue #52): the desktop app's voting toggle must close
+// hosted rooms immediately, not leave them votable for the rest of the TTL.
+const strangerClose = await api("POST", { type: "unpublish", hostKey: "host-imposter1" });
+check("stranger cannot unpublish", strangerClose.status === 403, JSON.stringify(strangerClose));
+
+const closed = await api("POST", { type: "unpublish", hostKey });
+check(
+  "host unpublish closes the room",
+  closed.status === 200 && closed.body?.type === "closed",
+  JSON.stringify(closed)
+);
+
+const deadVote = await api("POST", { type: "vote", viewerId: "viewer-aaaa0002", action: "alpha" });
+check("closed room refuses votes", deadVote.status === 404, JSON.stringify(deadVote));
+
+const reopened = await api("POST", { type: "poll", hostKey, poll });
+check(
+  "re-publish reclaims the room at round 1",
+  reopened.status === 200 && reopened.body?.round === 1,
+  JSON.stringify(reopened)
+);
+
+// Leave nothing behind: the reclaimed room dies now instead of on the TTL.
+await api("POST", { type: "unpublish", hostKey });
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

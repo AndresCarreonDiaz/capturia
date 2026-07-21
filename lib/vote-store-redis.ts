@@ -1,9 +1,9 @@
 // Redis-backed vote rooms (M10, issue #9): the same contract as the
-// in-memory lib/vote-store.ts, atomically enforced by two Lua scripts so a
-// serverless deploy (Vercel + Upstash) keeps exactly the semantics the
-// in-memory store defines: hostKey claims the room, rounds key on the
-// option SET (label edits keep counts), one live vote per viewer with
-// switching, per-viewer rate limit, voter cap, TTL.
+// in-memory lib/vote-store.ts, atomically enforced by per-operation Lua
+// scripts so a serverless deploy (Vercel + Upstash) keeps exactly the
+// semantics the in-memory store defines: hostKey claims the room, rounds key
+// on the option SET (label edits keep counts), one live vote per viewer with
+// switching, per-viewer rate limit, voter cap, TTL, host teardown.
 //
 // No SSE listeners here: serverless invocations share nothing, so the route
 // bridges watch-mode by polling getRoomState (the host tally animates
@@ -130,6 +130,32 @@ return snapshot('ok')
 `;
 
 // KEYS: meta hash, counts hash, voters hash, rooms index zset
+// ARGV: hostKey, roomId
+// Returns: {"403"} | {"ok", round}
+// Host teardown, mirroring the in-memory unpublishPoll: only the claiming
+// hostKey may close the room, and closing one that is already gone succeeds
+// so the studio's fire-and-forget toggle stays quiet on a double toggle or a
+// TTL race. Deleting the hashes is what closes the room for phones within
+// seconds: the SSE polling bridge reads the empty state on its next tick and
+// each phone falls back to its waiting screen. Per-viewer rate-limit keys
+// are left to their own sub-second PX expiry.
+const UNPUBLISH_LUA = `
+local meta, counts, voters, roomsIdx = KEYS[1], KEYS[2], KEYS[3], KEYS[4]
+local hostKey, roomId = ARGV[1], ARGV[2]
+local owner = redis.call('HGET', meta, 'hostKey')
+if not owner then
+  return {'ok', '0'}
+end
+if owner ~= hostKey then
+  return {'403'}
+end
+local round = redis.call('HGET', meta, 'round') or '0'
+redis.call('DEL', meta, counts, voters)
+redis.call('ZREM', roomsIdx, roomId)
+return {'ok', round}
+`;
+
+// KEYS: meta hash, counts hash, voters hash, rooms index zset
 // ARGV: ttlMs, roomId, nowMs
 // One atomic snapshot (no torn read between meta and counts) that also
 // refreshes the TTL, mirroring the in-memory touchedAt-on-read semantics so
@@ -202,6 +228,7 @@ function optionSetKey(options: PollOption[]): string {
 
 export interface RedisVoteStore {
   publishPoll(roomId: string, hostKey: string, poll: unknown): Promise<StoreResult>;
+  unpublishPoll(roomId: string, hostKey: string): Promise<StoreResult>;
   castVote(roomId: string, viewerId: string, action: string): Promise<StoreResult>;
   getRoomState(roomId: string): Promise<VoteEvent>;
 }
@@ -247,6 +274,34 @@ export function createRedisVoteStore(run: RedisRunner): RedisVoteStore {
         counts: countsFromJson(res[2]),
       };
       return { ok: true, event };
+    },
+
+    async unpublishPoll(roomId, hostKey) {
+      if (!ROOM_ID_RE.test(roomId) || !KEY_RE.test(hostKey)) {
+        return { ok: false, status: 422, error: "invalid room or key" };
+      }
+      const k = keys(roomId);
+      const res = (await run([
+        "EVAL",
+        UNPUBLISH_LUA,
+        4,
+        k.meta,
+        k.counts,
+        k.voters,
+        ROOMS_INDEX_KEY,
+        hostKey,
+        roomId,
+      ])) as unknown[];
+      if (!Array.isArray(res)) {
+        return { ok: false, status: 500, error: "bad store reply" };
+      }
+      if (res[0] === "403") return { ok: false, status: 403, error: "not the host" };
+      // Same terminal shape the in-memory store answers with; no nonce, the
+      // Redis backend never mints one (see VoteEvent.nonce).
+      return {
+        ok: true,
+        event: { type: "closed", round: Number(res[1]) || 0, poll: null, counts: {} },
+      };
     },
 
     async castVote(roomId, viewerId, action) {
