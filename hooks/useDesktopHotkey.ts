@@ -123,6 +123,14 @@ interface CapturiaBridge {
     set: (enabled: boolean) => Promise<{ enabled: boolean } | null>;
     ackDisclosure?: () => Promise<{ enabled: boolean } | null>;
   };
+  // Voice recognition language (issue #53); optional for the same
+  // stale-preload reason. Only the canonical BCP-47 tag crosses the bridge;
+  // main validates against the curated list (lib/voice-locale.ts) and
+  // persists it in settings.json.
+  voiceLocale?: {
+    get: () => Promise<{ locale: string } | null>;
+    set: (tag: string) => Promise<{ locale: string } | null>;
+  };
   // On-device streaming speech (macOS 26+ helper); optional for the same
   // stale-preload reason. Events: ready | downloading-model | interim |
   // final | error | done.

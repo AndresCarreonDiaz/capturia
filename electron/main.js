@@ -29,7 +29,8 @@ const { classifyVaultClear } = require("./gen/hosted-billing");
 const { createTray } = require("./tray");
 const { logCrash, crashLogPath } = require("./crash-log");
 const { maybeOfferMoveToApplications, offerMoveToApplications } = require("./first-run");
-const { createTelemetry } = require("./telemetry");
+const { createTelemetry, readSettings, writeSettings } = require("./telemetry");
+const { normalizeVoiceLocale, appleSpeechLocale } = require("./gen/voice-locale");
 const speechHelper = require("./speech-helper");
 const {
   isTrustedSender,
@@ -322,7 +323,10 @@ function registerIpc() {
       // session's id and orphan the mic).
       let sessionId;
       sessionId = speechHelper.startSpeechSession({
-        locale: typeof locale === "string" ? locale : "en_US",
+        // Whatever the renderer sends lands on a curated language in the
+        // helper's underscore form; a stale or hostile payload cannot put
+        // an arbitrary string on the helper's command line.
+        locale: appleSpeechLocale(locale),
         onEvent: (e) => {
           if (!sender.isDestroyed()) sender.send("speech", { ...e, sessionId });
         },
@@ -376,6 +380,27 @@ function registerIpc() {
   // in an earlier session). Releases the first-run consent gate holding the
   // launch ping (electron/telemetry.js); idempotent on later runs.
   ipcMain.handle("telemetry:ack", guarded(() => ({ enabled: telemetry.ackDisclosure() })));
+
+  // Voice recognition language (issue #53): the renderer reads and sets the
+  // canonical BCP-47 tag; it persists in the same userData/settings.json as
+  // the telemetry consent. Both directions run through the curated-list
+  // normalizer, so a hand-edited or stale file can only ever yield a tag the
+  // speech engines actually support.
+  ipcMain.handle(
+    "voice-locale:get",
+    guarded(() => ({ locale: normalizeVoiceLocale(readSettings().voiceLocale) }))
+  );
+  ipcMain.handle(
+    "voice-locale:set",
+    guarded((_event, tag) => {
+      if (typeof tag !== "string") {
+        throw new Error("Capturia: voice-locale:set expects a string.");
+      }
+      const locale = normalizeVoiceLocale(tag);
+      writeSettings({ voiceLocale: locale });
+      return { locale };
+    })
+  );
 
   // Renderer -> main: voice state for the tray (listening on/off, whether the
   // speech engine exists) plus the loaded deck size for the cue hotkeys.
