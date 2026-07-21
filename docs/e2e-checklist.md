@@ -7,12 +7,16 @@ or human judgment; run them before a release-worthy merge.
 ## Voice loop (web, Chrome or Edge)
 
 1. `npm run dev`, open `http://localhost:3000/studio` in Chrome (not Brave or
-   Firefox; the voice button hides there by design).
-2. Enable voice (mic button or the hotkey hint), allow the mic prompt.
-3. Speak: "add a lower third with the name Andres Carreon". Expect the overlay
+   Firefox; the voice button hides there by design). The stage boots in
+   standby ("Your camera is off"): launch alone must never light the camera
+   LED or fire the OS camera prompt.
+2. Click **Go on camera**, allow the camera prompt, and expect your live feed
+   to attach.
+3. Enable voice (mic button or the hotkey hint), allow the mic prompt.
+4. Speak: "add a lower third with the name Andres Carreon". Expect the overlay
    within ~2s, live captions while speaking, and the audio-reactive vignette
    breathing with your voice (FX pill on).
-4. Say "remove everything". Stage clears with exit animations.
+5. Say "remove everything". Stage clears with exit animations.
 
 ## Poll + QR + real phone (the M5 wedge)
 
@@ -31,7 +35,9 @@ or human judgment; run them before a release-worthy merge.
 
 ## Program Output into a real call (interim OBS path)
 
-1. `Cmd+Shift+O` (or `?out=1`) for the chrome-free output window.
+1. **Go on camera** first (a fresh studio boots in standby), then
+   `Cmd+Shift+O` for the chrome-free output view. A second tab on `?out=1`
+   is a mirror receiver and captures on its own; no button needed there.
 2. OBS: window capture of that window, Start Virtual Camera.
 3. Zoom or Meet: pick "OBS Virtual Camera". Expect webcam + overlays + QR
    readable on the receiving side (scan the QR from another laptop's screen).
@@ -39,7 +45,9 @@ or human judgment; run them before a release-worthy merge.
 ## Desktop (Electron scaffold)
 
 1. `npm run electron-dev`. First run: `npx nodejs-whisper download` if the
-   model is missing.
+   model is missing. The Control Room stage boots camera-off like the web
+   studio; hit **Go on camera** to see yourself (onboarding's go-live step
+   walks this button).
 2. Continuous voice (`Cmd+Alt+Space` toggles the session): speak, pause,
    expect a transcript-driven overlay about a second after the pause while
    the mic stays open; say a second command without touching anything and
@@ -93,10 +101,14 @@ or human judgment; run them before a release-worthy merge.
 1. With the Capturia camera extension installed and approved (see
    `native/CapturiaCamera/`), `npm run electron-dev`. The tray menu shows
    **Camera: On** within a few seconds of launch (`CAPTURIA_CAMERA_LOG=1`
-   prints pump stats every 5s if you want proof in the terminal).
+   prints pump stats every 5s if you want proof in the terminal), but the
+   pump BOOTS paused: the Mac's green camera LED stays dark and the feed
+   pumps the branded "Capturia standing by" card until a call app actually
+   attaches (launch is not capture intent; issue #38's rule applied to boot).
 2. Open Photo Booth (or Zoom's camera picker) and select **Capturia** while
-   the app runs. Expect the live Program Output (webcam feed at 1080p30), not
-   the extension's dark scanline splash.
+   the app runs. Attaching is what engages the webcam: expect the standby
+   card to flip to the live Program Output (webcam feed at 1080p30, LED on)
+   within ~2s, not the extension's dark scanline splash.
 3. Tray > Camera: Off. The picker's Capturia feed drops back to the splash
    within a second; Camera: On resumes the live feed.
 4. Quit the app. The splash returns (clean sink disconnect, no frozen last

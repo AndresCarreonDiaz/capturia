@@ -8,9 +8,18 @@ Built solo for the **Generative UI Global Hackathon**, May 2026.
 
 ---
 
+## Download
+
+Capturia ships as a signed, notarized macOS app (latest release
+v0.1.3). Grab it at <https://www.capturia.dev>: install once and
+**Capturia** shows up as a camera in Zoom, Meet, and Slack. The free web
+studio lives on the same site and needs no download at all.
+
+---
+
 ## See it work
 
-The agent has a typed catalog of 12 display components plus one interactive button. A few example interactions:
+The agent has a typed catalog of 13 display components plus one interactive button. A few example interactions:
 
 | You say (or type)… | What happens on screen |
 | --- | --- |
@@ -68,9 +77,9 @@ npx nodejs-whisper download    # pick base.en (142MB), decline CUDA
 npm run electron-dev
 ```
 
-Press `Cmd+,` to open Settings, paste your own API key (encrypted via OS Keychain), and pick which provider drives the agent. **The desktop agent now runs entirely on your key (BYOK)**: the renderer attaches it as a per-request header and the runtime builds the model per request, so Capturia incurs no LLM cost for you. The web demo still uses the project's env key.
+Press `Cmd+,` to open Settings, paste your own API key (encrypted via OS Keychain), and pick which provider drives the agent. **The desktop agent now runs entirely on your key (BYOK)**: the renderer attaches it as a per-request header and the runtime builds the model per request, so Capturia incurs no LLM cost for you. The web demo still uses the project's env key. Prefer no key setup at all? **Capturia Pro** runs the agent on hosted keys; see [docs/hosted-tier.md](docs/hosted-tier.md).
 
-**Show Capturia in a real call today.** Click **Output** (or `Cmd+Shift+O`) for a chrome-free Program Output feed, then publish it through OBS Virtual Camera and pick it in Zoom, Teams, or Meet. See [docs/virtual-camera.md](docs/virtual-camera.md). A native "Capturia" camera device (no OBS) is the next step and needs the macOS Camera Extension entitlement (Apple Developer account).
+**Show Capturia in a real call today.** The desktop app ships a native "Capturia" camera device: install the bundled macOS camera extension once (onboarding or the tray's "Install camera" item walks you through it) and **Capturia** appears directly in every call app's camera picker, no OBS in between. On the web studio, click **Output** (or `Cmd+Shift+O`) for a chrome-free Program Output feed and publish it through OBS Virtual Camera instead. Both paths are covered in [docs/virtual-camera.md](docs/virtual-camera.md).
 
 **Drop your pitch deck.** Drag a PDF onto the studio (or click **Deck**). Capturia reads it on your device, primes the agent with your real titles and numbers, and builds a rail of cue cards you trigger by click or by voice.
 
@@ -106,7 +115,7 @@ Press `Cmd+,` to open Settings, paste your own API key (encrypted via OS Keychai
 
 The agent doesn't manipulate the DOM. It sees a typed catalog of components and decides what to render where, with what props, by calling tools.
 
-**Frontend** (`app/studio/page.tsx`) registers eight tools the agent can call via `useCopilotAction`. `useCopilotReadable` shares the current overlay list back into the agent's context as **AG-UI shared state** (including each authored surface's live `ActionButton`s), so the agent always knows what's on screen and can target updates by `id`. `useCopilotChat().appendMessage` pipes voice transcripts into the same session as `[VOICE]`-prefixed messages, and `ActionButton` taps as `[ACTION]`-prefixed ones.
+**Frontend** (`app/studio/page.tsx`) registers eight tools the agent can call via `useFrontendTool` from the `@copilotkit/react-core/v2` client (Zod parameter schemas, `followUp: false` so one command stays one model call). `useAgentContext` shares the current overlay list back into the agent's context as **AG-UI shared state** (including each authored surface's live `ActionButton`s), so the agent always knows what's on screen and can target updates by `id`. A shared `hooks/useAgentRun.ts` (`useAgent` + the core's `runAgent`, called once and passed down to CommandBar) sends every user turn on the same thread: typed commands, voice transcripts as `[VOICE]`-prefixed messages, and `ActionButton` taps as `[ACTION]`-prefixed ones. The v1 client hooks (`useCopilotAction`, `useCopilotReadable`, `useCopilotChat().appendMessage`) are gone: their send path never reached the v2 runtime's tool loop, which is exactly the bug documented in [docs/known-issues.md](docs/known-issues.md).
 
 **Backend** (`app/api/copilotkit/[[...slug]]/route.ts`) wraps `BuiltInAgent` from `@copilotkit/runtime/v2`. Single-route mode, in-memory thread state, `maxSteps: 1` so each utterance is one model call (no internal roundtrip), `temperature: 0` for deterministic tool selection. ~150 ms TTFT on Gemini 2.5 Flash-Lite.
 
@@ -115,9 +124,9 @@ The agent doesn't manipulate the DOM. It sees a typed catalog of components and 
 **Latency budget** for a single voice utterance:
 
 1. Web Speech `onresult` fires (interim → final transcript)
-2. Transcript appended to the AG-UI session as a `[VOICE]` user message
+2. `useAgentRun` adds the transcript to the AG-UI thread as a `[VOICE]` user message and runs the agent
 3. Gemini 2.5 Flash-Lite emits an `add_overlay` tool call (~150 ms TTFT)
-4. CopilotKit dispatches the call to `useCopilotAction("add_overlay")`
+4. CopilotKit dispatches the call to the registered `useFrontendTool` handler for `add_overlay`
 5. `setOverlays(prev => [...prev, { id, type, position, props }])` mutates React state
 6. `OverlayLayer` reconciles with a 60ms-staggered entrance per new item
 7. The overlay's hand-authored CSS keyframe plays (`overlay-enter`, `digit-roll`, `letterbox-enter-top`, etc.)
@@ -128,7 +137,7 @@ Subsequent updates use the same loop but trigger different visual responses. `bu
 
 ## Component catalog
 
-12 spatial overlays plus `ActionButton`, the one interactive leaf (surface-only: it can appear inside `render_surface` trees, never as a standalone overlay). The agent picks based on context and prompt rules.
+13 spatial overlays plus `ActionButton`, the one interactive leaf (surface-only: it can appear inside `render_surface` trees, never as a standalone overlay). The agent picks based on context and prompt rules.
 
 | Component | Purpose | Notable animation |
 | --- | --- | --- |
@@ -143,6 +152,7 @@ Subsequent updates use the same loop but trigger different visual responses. `bu
 | `ChatBubble` | Speech bubble | Gradient avatar circle with author initial, 3-dot typing indicator, typewriter reveal |
 | `Letterbox` | Cinematic black bars | Slides in/out from screen edges (not fade) |
 | `Ticker` | Cable-news scrolling band | Alternating accent dots per item, breathing color sheen |
+| `CountdownTimer` | Big on-feed countdown clock | Ticks client-side (no agent turns), walks green → amber → red, counts overtime upward past zero |
 | `LiveBadge` | Pulsing "LIVE" pill | Ring ripple radiating outward + dot pulse, brightens with speaking energy |
 | `ActionButton` | Tappable pill inside authored surfaces | Glow ring; tap fires an `[ACTION] <name>` turn back to the agent; dims while a turn runs |
 
@@ -194,7 +204,7 @@ app/
   globals.css                           ← all keyframes live here
   layout.tsx                            ← root layout, fonts, metadata
   page.tsx                              ← landing page ("On Air")
-  studio/page.tsx                       ← Capturia studio: eight useCopilotAction handlers, leaf + surface render layers
+  studio/page.tsx                       ← Capturia studio: eight useFrontendTool handlers, leaf + surface render layers
   vote/[room]/page.tsx                  ← the phone page behind the on-feed vote QR
 components/
   A2uiOverlay.tsx                       ← A2UI host: Surface Mode leaf + authored-surface tree
@@ -207,8 +217,9 @@ components/
   ModelKeyBanner.tsx                    ← operator error when the server has no model key
   OverlayLayer.tsx                      ← overlay reconciliation, FLIP transitions, exit tracking
   WebcamFeed.tsx                        ← getUserMedia → fullscreen video
-  overlays/                             ← 12 reactive components + ActionButton (interactive leaf)
+  overlays/                             ← 13 reactive components + ActionButton (interactive leaf)
 hooks/
+  useAgentRun.ts                        ← the one v2 agent driver: send + busy + run-error state
   useNumberTween.ts                     ← rAF-based number + array tween + parseNumeric helpers
   useRecorder.ts                        ← getDisplayMedia + getUserMedia → webm download
   useSpeechEnergy.ts                    ← speech-result energy → --mic-energy CSS var (no AudioContext)
@@ -236,7 +247,7 @@ lib/
 
 ## Roadmap
 
-**Shipped:** Desktop BYOK key vault, deck-aware cue cards, Program Output / OBS virtual-camera path, **Surface-mode A2UI rendering** (the registered catalog renders live through `<A2UIRenderer>`; `compose_scene` pushes a whole UI at once), **agent-authored A2UI surfaces** (`render_surface`: the model composes its own A2UI tree of branded overlays inside layout primitives, sanitized via `lib/a2ui-validate.ts` and rendered through the real A2UI v0.9 runtime), **interactive surfaces** (`ActionButton` taps loop back as `[ACTION]` turns, fully client-side, live on Gemini 2.5 today), the **audio-reactive feed** (speech-derived `--mic-energy`, no AudioContext), and **audience voting** (on-feed QR, phones vote at `/vote/<room>`, deterministic live tally).
+**Shipped:** Desktop BYOK key vault, deck-aware cue cards, Program Output / OBS virtual-camera path, **Surface-mode A2UI rendering** (the registered catalog renders live through `<A2UIRenderer>`; `compose_scene` pushes a whole UI at once), **agent-authored A2UI surfaces** (`render_surface`: the model composes its own A2UI tree of branded overlays inside layout primitives, sanitized via `lib/a2ui-validate.ts` and rendered through the real A2UI v0.9 runtime), **interactive surfaces** (`ActionButton` taps loop back as `[ACTION]` turns, fully client-side, live on Gemini 2.5 today), the **audio-reactive feed** (speech-derived `--mic-energy`, no AudioContext), **audience voting** (on-feed QR, phones vote at `/vote/<room>`, deterministic live tally), the **native "Capturia" camera** (macOS camera extension, no OBS; installed by the app itself), the **desktop DMG** (Developer ID signed, notarized, stapled; latest release v0.1.3 at [capturia.dev](https://www.capturia.dev), runbook in [docs/release.md](docs/release.md)), the **consent-gated telemetry beacon** (four anonymous fields, nothing before the onboarding choice; [docs/telemetry.md](docs/telemetry.md)), and the **Capturia Pro hosted tier** (Stripe billing, activation codes, hosted-key LLM proxy; [docs/hosted-tier.md](docs/hosted-tier.md)).
 
 Next:
 
@@ -248,6 +259,17 @@ Next:
 - **Multi-language voice prompt**: currently English-only
 - **Custom-agent factory for Gemini 3.x** with `thought_signature` replay so we can move to the faster model
 - **MCP integration** for sourcing live data feeds
+
+---
+
+## Docs
+
+- [docs/virtual-camera.md](docs/virtual-camera.md): both camera paths, the native extension and the OBS bridge
+- [docs/hosted-tier.md](docs/hosted-tier.md): the Capturia Pro hosted tier (billing, entitlements, LLM proxy)
+- [docs/release.md](docs/release.md): the DMG release runbook (signing, notarization, stapling)
+- [docs/telemetry.md](docs/telemetry.md): the consent-gated four-field beacon, and every way to turn it off
+- [docs/known-issues.md](docs/known-issues.md): the v1-vs-v2 CopilotKit client history and model quirks
+- [docs/e2e-checklist.md](docs/e2e-checklist.md): the manual passes that need real hardware or human judgment
 
 ---
 
@@ -268,7 +290,7 @@ For security issues, see [SECURITY.md](SECURITY.md) instead of public issues.
 
 MIT. See [LICENSE](LICENSE).
 
-Capturia is open source under MIT. A separate commercial tier (cloud deck sync, team library, branded overlays, hosted codegen with caching) may be offered in the future as part of the Capturia commercial product. The core app in this repo stays free and open.
+Capturia is open source under MIT. The commercial tier, **Capturia Pro** (the agent on hosted keys, no BYOK setup; see [docs/hosted-tier.md](docs/hosted-tier.md)), runs alongside it and its server code lives in this same repo. The core app stays free and open.
 
 ---
 

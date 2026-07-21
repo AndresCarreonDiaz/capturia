@@ -74,9 +74,9 @@ test("already collected: a 410 stops the poll after one request and points at su
   await expect(
     page.getByRole("heading", { name: /no longer available/ })
   ).toBeVisible({ timeout: 15_000 });
-  const support = page.getByRole("link", { name: "support@capturia.dev" });
+  const support = page.getByRole("link", { name: "capturia@andresio.com" });
   await expect(support).toBeVisible();
-  await expect(support).toHaveAttribute("href", "mailto:support@capturia.dev");
+  await expect(support).toHaveAttribute("href", "mailto:capturia@andresio.com");
 
   // 410 is terminal (the code was handed out or expired): no retries.
   expect(counter.requests).toBe(1);

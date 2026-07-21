@@ -20,7 +20,7 @@ We aim to acknowledge reports within 3 business days and triage within 7. Critic
 - Issues in transitive dependencies (please report upstream first; we will track via Dependabot).
 - Attacks requiring physical access to the user's machine.
 - Issues affecting only forks with custom modifications.
-- Issues in the optional cloud features of the commercial Capturia product (those have a separate disclosure channel).
+- Issues in the hosted Capturia Pro service (billing, entitlements, the LLM proxy): report those to **capturia@andresio.com**. The code lives in this repo, so an advisory through the link above works too; the email is the faster channel for anything involving the live service.
 
 ## After the fix
 
