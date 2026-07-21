@@ -32,7 +32,7 @@ This opens Capturia in a native window with local Whisper STT and the global hot
 ## Code style
 
 - TypeScript strict mode. Run `npx tsc --noEmit` before pushing.
-- Run `npm run lint` and address any new warnings.
+- Run `npm run lint` and address anything NEW. A pre-existing React 19 baseline (currently 19 errors + 1 warning) is known and documented; do not try to fix it in an unrelated PR, and do not add to it.
 - Follow existing patterns: hand-authored CSS keyframes in `app/globals.css`, Tailwind v4 for layout, Zod schemas for the catalog.
 - No em-dashes in user-facing copy (project preference). Use commas, periods, or restructure.
 
@@ -48,7 +48,9 @@ See [README.md](README.md) for the full architecture.
 ## PR checklist
 
 - [ ] `npx tsc --noEmit` passes
-- [ ] `npm run lint` passes (or new warnings are intentional)
+- [ ] `npx vitest run` passes
+- [ ] `npm run lint` introduces no NEW problems beyond the documented React 19 baseline (currently 19 errors + 1 warning)
+- [ ] `npx playwright test` passes for UI-affecting changes (it boots its own dev server; the live-agent test skips itself without a Gemini key)
 - [ ] README updated if you added user-visible behavior
 - [ ] Brief description of what changed and why
 
