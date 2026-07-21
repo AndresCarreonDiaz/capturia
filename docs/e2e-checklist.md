@@ -132,9 +132,14 @@ Then by hand:
 1. `npm run build:electron`, then `CAPTURIA_STATIC_UI=1 npm run electron`
    (no Next server running). The studio must load and the agent loop must run
    BYOK exactly like the dev path.
-2. Confirm voting is the documented exception: without a hosted
-   `NEXT_PUBLIC_CAPTURIA_ORIGIN` baked into the export, the QR/vote path
-   surfaces its error instead of silently dropping votes.
+2. Voting from the packaged app targets the hosted deploy (issue #52):
+   `npm run build:electron` bakes `NEXT_PUBLIC_CAPTURIA_ORIGIN` as
+   `https://www.capturia.dev` unless the env sets it (a SET-but-empty var
+   disables it). Toggle Vote on: the QR must render over the feed, a phone
+   scanning it lands on `www.capturia.dev/vote/<room>` and its votes move
+   the on-feed tally; toggling Vote off returns the phone to its waiting
+   screen within a few seconds. A build with the var explicitly emptied
+   must still surface the origin notice instead of silently dropping votes.
 
 ## Menu-bar shell (M8, tray)
 

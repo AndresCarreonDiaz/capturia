@@ -18,3 +18,16 @@ export function voteOriginUsable(origin: string | null | undefined): boolean {
 export function voteUrlLocalhostOnly(voteUrl: string): boolean {
   return /\/\/(localhost|127\.0\.0\.1)[:/]/.test(voteUrl);
 }
+
+// Base URL for the STUDIO's own room traffic (publish/unpublish/host votes/
+// SSE). Empty string means relative, same-origin fetches: any http(s) studio
+// talks to its own server even while advertising a different public origin
+// to phones (the tunnel/self-host case, where that origin fronts this very
+// server). Only a studio whose page origin cannot serve the API at all (the
+// packaged app on file://) sends its room traffic to the advertised origin
+// instead, cross-origin; the vote route answers with open CORS for exactly
+// this caller (see app/api/vote/[room]/route.ts).
+export function voteApiBase(advertisedOrigin: string, pageOrigin: string): string {
+  if (voteOriginUsable(pageOrigin)) return "";
+  return voteOriginUsable(advertisedOrigin) ? advertisedOrigin : "";
+}

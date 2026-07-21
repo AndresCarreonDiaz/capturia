@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { PollDef, PollOption, VoteEvent } from "@/lib/vote-store";
 import { randomToken } from "@/lib/random-id";
-import { voteOriginUsable } from "@/lib/vote-url";
+import { voteApiBase, voteOriginUsable } from "@/lib/vote-url";
 
 // Studio side of audience voting. Publishes the live poll (derived from the
 // current authored surface) to this session's vote room, subscribes to the
@@ -39,16 +39,19 @@ interface Args {
 export function useVoteRoom({ enabled, poll, onCounts, onPublishError }: Args) {
   const { room, hostKey } = getSessionRoom();
   // Whether voting can work HERE at all. The advertised origin (below) must
-  // be http(s) for phones, and the room's own publish/subscribe traffic is
-  // same-origin relative fetches, so a file:// studio (the packaged desktop
-  // app with no NEXT_PUBLIC_CAPTURIA_ORIGIN baked in) has neither a
-  // scannable URL nor a reachable /api/vote. Everything below gates on this
-  // so the feed never carries a dead QR and the operator gets ONE clear
-  // notice instead of a doomed publish loop's error noise.
-  const origin =
-    process.env.NEXT_PUBLIC_CAPTURIA_ORIGIN ||
-    (typeof window !== "undefined" ? window.location.origin : "");
+  // be http(s) for phones. On any http(s) studio the room's own traffic is
+  // same-origin relative fetches; on the packaged app's file:// origin it
+  // travels to the advertised origin instead (apiBase, cross-origin against
+  // the hosted deploy, which build:electron bakes in). Only a file:// studio
+  // with NO baked origin has neither a scannable URL nor a reachable
+  // /api/vote: everything below gates on originUsable so the feed never
+  // carries a dead QR and the operator gets ONE clear notice instead of a
+  // doomed publish loop's error noise.
+  const configuredOrigin = process.env.NEXT_PUBLIC_CAPTURIA_ORIGIN || "";
+  const pageOrigin = typeof window !== "undefined" ? window.location.origin : "";
+  const origin = configuredOrigin || pageOrigin;
   const originUsable = voteOriginUsable(origin);
+  const apiBase = voteApiBase(configuredOrigin, pageOrigin);
   const onCountsRef = useRef(onCounts);
   const onPublishErrorRef = useRef(onPublishError);
   const pollRef = useRef<PollDef | null>(null);
@@ -73,7 +76,7 @@ export function useVoteRoom({ enabled, poll, onCounts, onPublishError }: Args) {
     let cancelled = false;
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/vote/${room}`, {
+        const res = await fetch(`${apiBase}/api/vote/${room}`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body,
@@ -98,7 +101,7 @@ export function useVoteRoom({ enabled, poll, onCounts, onPublishError }: Args) {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [enabled, originUsable, poll, room, hostKey]);
+  }, [enabled, originUsable, poll, room, hostKey, apiBase]);
 
   // Unpublish on toggle-off: without this the room stays votable for the
   // rest of the 4h TTL, and a later session in this tab (the room id is
@@ -119,18 +122,18 @@ export function useVoteRoom({ enabled, poll, onCounts, onPublishError }: Args) {
     if (!wasEnabledRef.current) return;
     wasEnabledRef.current = false;
     lastPublishedRef.current = "";
-    fetch(`/api/vote/${room}`, {
+    fetch(`${apiBase}/api/vote/${room}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ type: "unpublish", hostKey }),
     }).catch(() => {});
-  }, [enabled, originUsable, room, hostKey]);
+  }, [enabled, originUsable, room, hostKey, apiBase]);
 
   // Live counts. EventSource's native reconnect covers the window before the
   // first publish (the server closes streams for unknown rooms).
   useEffect(() => {
     if (!enabled || !originUsable) return;
-    const source = new EventSource(`/api/vote/${room}?watch=1`);
+    const source = new EventSource(`${apiBase}/api/vote/${room}?watch=1`);
     source.onmessage = (msg) => {
       try {
         const event = JSON.parse(msg.data) as VoteEvent;
@@ -140,7 +143,7 @@ export function useVoteRoom({ enabled, poll, onCounts, onPublishError }: Args) {
       }
     };
     return () => source.close();
-  }, [enabled, originUsable, room]);
+  }, [enabled, originUsable, room, apiBase]);
 
   // The operator's own tap on a poll button becomes a server vote (instead of
   // an agent turn), so audience counts and host taps can never diverge.
@@ -150,11 +153,12 @@ export function useVoteRoom({ enabled, poll, onCounts, onPublishError }: Args) {
     (action: string): boolean => {
       const current = pollRef.current;
       // Without a workable origin the tap must fall through to the agent
-      // [ACTION] path: a vote POST from file:// goes nowhere, and swallowing
-      // the tap would leave poll buttons dead in the packaged app.
+      // [ACTION] path: with no baked origin a vote POST from file:// goes
+      // nowhere, and swallowing the tap would leave poll buttons dead in the
+      // packaged app.
       if (!enabledRef.current || !originUsable || !current) return false;
       if (!current.options.some((o) => o.actionName === action)) return false;
-      fetch(`/api/vote/${room}`, {
+      fetch(`${apiBase}/api/vote/${room}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         // Key the host's voter slot on the SECRET hostKey, not the PUBLIC room
@@ -165,7 +169,7 @@ export function useVoteRoom({ enabled, poll, onCounts, onPublishError }: Args) {
       }).catch(() => {});
       return true;
     },
-    [room, hostKey, originUsable]
+    [room, hostKey, originUsable, apiBase]
   );
 
   // The QR on the feed is scanned by people watching through Zoom/Meet (the
@@ -175,9 +179,11 @@ export function useVoteRoom({ enabled, poll, onCounts, onPublishError }: Args) {
   // otherwise we fall back to however the operator opened the studio (a LAN
   // IP origin works for in-room audiences). Origin exists only in the
   // browser; null during prerender is fine because nothing renders the URL
-  // until the operator enables voting post-hydration. A non-http(s) origin
-  // (file:// in the packaged app) yields NO url at all rather than a dead
-  // QR on the feed; voteOriginUnusable tells the studio to explain why.
+  // until the operator enables voting post-hydration. The packaged app bakes
+  // the hosted deploy's origin in at build time, so its QR points there; a
+  // non-http(s) origin with nothing baked (a stripped-down desktop build)
+  // yields NO url at all rather than a dead QR on the feed, and
+  // voteOriginUnusable tells the studio to explain why.
   const voteUrl = enabled && originUsable ? `${origin}/vote/${room}` : null;
 
   return { voteUrl, voteOriginUnusable: enabled && !originUsable, castHostVote };

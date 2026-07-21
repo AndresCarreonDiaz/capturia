@@ -14,7 +14,9 @@ requires their env. The studio, `/api/copilotkit`, the vote flow, and the
 desktop BYOK providers are untouched; every hosted/billing endpoint answers
 503 when its env is absent and spends nothing without a valid Capturia JWT.
 Adding a dependency from any free path onto `/api/hosted` or `/api/billing`
-is a regression.
+is a regression. Hosted audience voting (the `/api/vote` rooms the packaged
+app publishes to on www.capturia.dev, issue #52) currently ships free with
+no entitlement check; gating it under Pro is a future decision.
 
 ## Request path
 
