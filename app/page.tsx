@@ -1149,6 +1149,12 @@ function SiteFooter() {
           >
             Releases
           </DownloadLink>
+          <Link href="/privacy" className="hover:text-white transition-colors">
+            Privacy
+          </Link>
+          <Link href="/terms" className="hover:text-white transition-colors">
+            Terms
+          </Link>
         </nav>
       </div>
 

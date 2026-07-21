@@ -142,7 +142,14 @@ export default function CheckoutSuccess() {
             </>
           )}
 
-        <div className="mt-7 flex justify-end">
+        <div className="mt-7 flex items-center justify-between gap-4">
+          <p className="text-[var(--studio-fade)] text-[11px] leading-relaxed">
+            By subscribing you agree to the{" "}
+            <a href="/terms" className="cue-link">
+              Terms
+            </a>
+            .
+          </p>
           <button
             onClick={dismiss}
             className="ghost-btn rounded-full px-5 py-2.5 text-[13px] font-medium"
