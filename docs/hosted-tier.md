@@ -78,7 +78,7 @@ Stripe Checkout (test mode)
 | `POST /api/billing/activate` | `{ code, deviceId }` -> `{ refreshToken, token, expiresAt, devices }` |
 | `POST /api/billing/token` | `{ refreshToken }` -> `{ token, expiresAt }` |
 | `POST /api/billing/deactivate` | Frees the calling device's seat (same device-JWT auth as the proxy; the JWT names customer AND device, so a caller can only ever free its own slot). Idempotent; answers `{ ok, devices }`. The device's refresh token stops minting on its next refresh |
-| `POST /api/billing/portal` | Creates a Stripe Billing Portal session (card, invoices, cancel) for the authenticated customer and answers only its URL. Device-JWT auth; the JWT `sub` IS the Stripe customer id, so no lookup exists to drift |
+| `POST /api/billing/portal` | Creates a Stripe Billing Portal session (card, invoices, cancel) for the authenticated customer and answers only its URL. Device-JWT auth; the JWT `sub` IS the Stripe customer id, so no lookup exists to drift. Rate-braked at 5/min per customer before the outbound Stripe write, mirroring checkout's per-IP cap |
 | `GET /api/billing/activation-code?session_id=cs_...&pickup=...` | One-time code pickup for the checkout success page; the pickup nonce is minted per checkout, travels only in the success URL, and the code is filed under hash(session, nonce), so a bare session id retrieves nothing |
 
 The JWT rides in `x-goog-api-key` (what `@ai-sdk/google` sends) or a
