@@ -154,6 +154,32 @@ describe("buildTrayMenu", () => {
   });
 });
 
+describe("restart-ai menu entry", () => {
+  it("shows no restart item while the AI engine is up or has a fallback", () => {
+    expect(buildTrayMenu(state()).filter((i) => i.action === "restart-ai")).toHaveLength(0);
+    expect(
+      buildTrayMenu(state({ aiEngineDown: false })).filter((i) => i.action === "restart-ai")
+    ).toHaveLength(0);
+  });
+
+  it("offers Restart AI engine while the engine is down", () => {
+    const item = buildTrayMenu(state({ aiEngineDown: true })).find(
+      (i) => i.action === "restart-ai"
+    );
+    expect(item?.label).toBe("Restart AI engine");
+    expect(item?.enabled).toBe(true);
+  });
+
+  it("keeps the restart item clickable even before the renderer reports", () => {
+    // The engine restarts in MAIN; a hung or still-booting renderer is no
+    // reason to block the one recovery path the failure dialog points at.
+    const item = buildTrayMenu(state({ aiEngineDown: true, reported: false })).find(
+      (i) => i.action === "restart-ai"
+    );
+    expect(item?.enabled).toBe(true);
+  });
+});
+
 describe("sysextItem / install-camera menu entry", () => {
   it("shows no install item when the shell has no sysext module", () => {
     const items = buildTrayMenu(state()).filter((i) => i.action === "install-camera");
