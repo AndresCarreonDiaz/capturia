@@ -27,6 +27,7 @@ const { createHostedBilling } = require("./hosted-billing");
 // this same gen module.
 const { classifyVaultClear } = require("./gen/hosted-billing");
 const { createTray } = require("./tray");
+const { createUpdateCheck } = require("./update-check");
 const { logCrash, crashLogPath } = require("./crash-log");
 const { maybeOfferMoveToApplications, offerMoveToApplications } = require("./first-run");
 const { createTelemetry } = require("./telemetry");
@@ -113,6 +114,10 @@ let cameraFeed = null;
 let sysext = null;
 // Menu-bar tray; created in whenReady, rebuilt whenever renderer state lands.
 let tray = null;
+// Update check against GitHub releases (electron/update-check.js): the
+// delayed launch check plus the tray's Check for Updates. null when the
+// module could not load (electron/gen not built).
+let updateCheck = null;
 // Closing the Control Room hides it to the tray; only a real quit (Cmd+Q,
 // tray Quit, app menu) tears the window down. before-quit flips this.
 let isQuitting = false;
@@ -1016,12 +1021,33 @@ if (!gotTheLock) {
             showControlRoom();
             sendRendererAction("open-settings");
           },
+          // The manual check always answers with a dialog (update offer,
+          // up-to-date, or the failure); no-op only when the module never
+          // loaded, in which case the tray did not load either.
+          "check-updates": () => {
+            void updateCheck?.checkNow();
+          },
           quit: () => app.quit(),
         },
       });
     } catch (err) {
       console.error(
         "Capturia: tray unavailable (is electron/gen built? run `npm run electron` or `node scripts/build-electron-libs.mjs`):",
+        err
+      );
+    }
+
+    // Minimum-viable update check (issue #50). The automatic check runs on
+    // packaged builds only: a dev checkout updates through git, and smoke
+    // runs must stay unattended (no dialogs) and deterministic (no network
+    // dependency in the gate). The tray's Check for Updates works either
+    // way. Same degrade posture as the tray (the require needs electron/gen).
+    try {
+      updateCheck = createUpdateCheck({ getParentWindow: () => mainWindow });
+      if (!isDev && !isSmoke) updateCheck.scheduleLaunchCheck();
+    } catch (err) {
+      console.error(
+        "Capturia: update check unavailable (is electron/gen built? run `npm run electron` or `node scripts/build-electron-libs.mjs`):",
         err
       );
     }
