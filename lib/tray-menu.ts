@@ -42,6 +42,7 @@ export type TrayAction =
   | "restart-ai"
   | "open-control-room"
   | "open-settings"
+  | "check-updates"
   | "quit";
 
 export interface TrayItem {
@@ -151,6 +152,10 @@ export function buildTrayMenu(state: TrayState, toggleHotkey?: string): TrayItem
     ...restartAi,
     { type: "item", label: "Open Control Room", enabled: true, action: "open-control-room" },
     { type: "item", label: "Settings…", enabled: true, action: "open-settings" },
+    // Always clickable: the check runs in MAIN against GitHub, so neither
+    // renderer state nor packaging can make the click do nothing (the module
+    // answers a failed fetch honestly, electron/update-check.js).
+    { type: "item", label: "Check for Updates", enabled: true, action: "check-updates" },
     { type: "separator" },
     { type: "item", label: "Quit Capturia", enabled: true, action: "quit" },
   ];

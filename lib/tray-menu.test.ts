@@ -78,13 +78,24 @@ describe("buildTrayMenu", () => {
     expect(bare?.accelerator).toBeUndefined();
   });
 
-  it("always exposes Control Room, Settings, and Quit", () => {
+  it("always exposes Control Room, Settings, Check for Updates, and Quit", () => {
     const actions = buildTrayMenu(state({ reported: false, voiceSupported: false })).map(
       (i) => i.action
     );
     expect(actions).toContain("open-control-room");
     expect(actions).toContain("open-settings");
+    expect(actions).toContain("check-updates");
     expect(actions).toContain("quit");
+  });
+
+  it("keeps Check for Updates clickable regardless of renderer state", () => {
+    // The check runs in main against GitHub; a still-booting or voiceless
+    // renderer is no reason to block it, and the click always answers.
+    const item = buildTrayMenu(state({ reported: false, voiceSupported: false })).find(
+      (i) => i.action === "check-updates"
+    );
+    expect(item?.label).toBe("Check for Updates");
+    expect(item?.enabled).toBe(true);
   });
 
   it("every non-separator item has a label", () => {
