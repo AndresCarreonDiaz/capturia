@@ -5,6 +5,7 @@ import { useTelemetry } from "@/hooks/useTelemetry";
 import { ipcErrorMessage } from "@/lib/ipc-error";
 import type { HostedUsage } from "@/lib/hosted-billing";
 import { hoursMeterFraction, hoursMeterLabel } from "@/lib/hosted-hours";
+import { DEFAULT_VOICE_LOCALE, VOICE_LOCALES } from "@/lib/voice-locale";
 
 interface Props {
   open: boolean;
@@ -18,6 +19,9 @@ interface Props {
   /** Re-pulls the vault list; activation stores tokens in MAIN, so the modal
    *  cannot learn about them from save()'s return value. */
   onRefreshKeys?: () => Promise<void>;
+  /** Speech-recognition language: the canonical BCP-47 tag (lib/voice-locale.ts). */
+  voiceLocale: string;
+  onSelectVoiceLocale: (tag: string) => void;
 }
 
 const PROVIDER_META: Record<
@@ -70,6 +74,8 @@ export default function SettingsModal({
   activeProvider,
   onSelectProvider,
   onRefreshKeys,
+  voiceLocale,
+  onSelectVoiceLocale,
 }: Props) {
   const [drafts, setDrafts] = useState<Partial<Record<KeyProvider, string>>>({});
   const [busy, setBusy] = useState<KeyProvider | null>(null);
@@ -86,6 +92,27 @@ export default function SettingsModal({
   // Desktop-only anonymous beacon toggle; unsupported (web, stale preload)
   // hides the whole Privacy section.
   const telemetry = useTelemetry();
+  // Non-English disabled where it would be a lie: desktop below macOS 26
+  // (and stale preloads without the speech bridge) transcribes with the
+  // local English-only Whisper model, so a non-English pick there would
+  // silently produce garbage. Web Speech and the macOS 26+ apple-speech
+  // helper handle the whole curated list. Defaults open until the probe
+  // answers; the probe is a sync check in main, so the window is tiny.
+  const [englishOnly, setEnglishOnly] = useState(false);
+  useEffect(() => {
+    const bridge = window.capturia;
+    if (!bridge?.isDesktop) return;
+    let cancelled = false;
+    const appleAvailable = bridge.speech
+      ? bridge.speech.available().catch(() => false)
+      : Promise.resolve(false);
+    appleAvailable.then((ok) => {
+      if (!cancelled) setEnglishOnly(!ok);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   // Guided upgrade needs the desktop billing bridge; without it (web, stale
   // preload) the Pro row keeps the paste-a-token input.
   const billing = typeof window !== "undefined" ? window.capturia?.billing : undefined;
@@ -507,6 +534,43 @@ export default function SettingsModal({
               {error}
             </div>
           )}
+
+          <div className="mt-6 pt-5 border-t border-white/10">
+            <div className="mb-1.5 text-white/40 text-[10px] font-mono uppercase tracking-[0.2em]">
+              Voice
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <p className="text-white/50 text-xs leading-relaxed">
+                The language Capturia listens in. Switching applies
+                immediately, even mid-session, and the agent writes overlay
+                text in the same language.
+              </p>
+              <select
+                value={voiceLocale}
+                onChange={(e) => onSelectVoiceLocale(e.target.value)}
+                aria-label="Voice recognition language"
+                className="shrink-0 bg-white/5 border border-white/10 focus:border-white/30 rounded-lg px-3 py-2 text-xs text-white outline-none transition-colors"
+              >
+                {VOICE_LOCALES.map((l) => (
+                  <option
+                    key={l.tag}
+                    value={l.tag}
+                    disabled={englishOnly && l.tag !== DEFAULT_VOICE_LOCALE}
+                    className="bg-neutral-900 text-white"
+                  >
+                    {l.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {englishOnly && (
+              <p className="mt-1.5 text-white/35 text-[11px] leading-relaxed">
+                This Mac transcribes with a local English-only Whisper model
+                (streaming multilingual speech needs macOS 26), so other
+                languages are disabled here.
+              </p>
+            )}
+          </div>
 
           {telemetry.supported && (
             <div className="mt-6 pt-5 border-t border-white/10">

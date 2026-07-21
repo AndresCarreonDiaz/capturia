@@ -48,6 +48,8 @@ import type { PollOption } from "@/lib/vote-store";
 import { useRecorder } from "@/hooks/useRecorder";
 import { useCameraExtension, useDesktopHotkey, useDesktopStateReport } from "@/hooks/useDesktopHotkey";
 import { useKeyVault } from "@/hooks/useKeyVault";
+import { useVoiceLocale } from "@/hooks/useVoiceLocale";
+import { voiceLanguageName } from "@/lib/voice-locale";
 import type { KeyProvider } from "@/hooks/useDesktopHotkey";
 import SettingsModal from "@/components/SettingsModal";
 import OnboardingFlow from "@/components/OnboardingFlow";
@@ -195,6 +197,11 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
   const [lastSent, setLastSent] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const firstRunCheckedRef = useRef(false);
+  // Speech-recognition language (issue #53): one canonical tag, persisted in
+  // main's settings.json on desktop and localStorage on web, threaded to
+  // every speech engine below and to the agent context so overlay copy
+  // follows the speaker's language.
+  const { locale: voiceLocale, setLocale: setVoiceLocale } = useVoiceLocale();
   // The full-screen stage; audio-reactivity publishes --mic-energy onto it.
   const stageRef = useRef<HTMLDivElement>(null);
   // v2 agent driver: sends the user turn through the AG-UI agent + core runAgent
@@ -495,7 +502,8 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
         // state either.
         interimCueRef.current = null;
         parkedCueRef.current = null;
-      }
+      },
+      voiceLocale
     );
 
   // Listening transitions are segment boundaries with one nuance: both
@@ -826,6 +834,15 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
     description:
       "Loaded pitch deck (if any). Slide titles, bullets, detected numbers (label/value), and names. When the speaker mentions something that appears here, render it using THESE exact values. Never invent numbers that contradict the deck.",
     value: (deckFacts ?? null) as unknown as Parameters<typeof useAgentContext>[0]["value"],
+  });
+
+  // Spoken language (issue #53): overlay copy must follow the speaker's
+  // language because they CHOSE it, not because the model guessed from
+  // whatever script the transcript arrived in.
+  useAgentContext({
+    description:
+      "The language the speaker is presenting in (their speech-recognition setting). Write ALL overlay text (titles, labels, ticker items, chat bubbles) in this language unless the speaker explicitly asks for another.",
+    value: voiceLanguageName(voiceLocale),
   });
 
   // NOTE on all 8 tool registrations below:
@@ -1488,6 +1505,8 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
             activeProvider={activeProvider}
             onSelectProvider={setActiveProvider}
             onRefreshKeys={vault.refresh}
+            voiceLocale={voiceLocale}
+            onSelectVoiceLocale={setVoiceLocale}
           />
         </>
       )}
