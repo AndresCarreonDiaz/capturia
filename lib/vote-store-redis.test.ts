@@ -34,7 +34,7 @@ function rejectionStatus(res: StoreResult): number | null {
 
 describe("publishPoll (redis)", () => {
   it("rejects invalid input before touching Redis", async () => {
-    const { run, calls } = runnerReturning(["ok", "1", "[]"]);
+    const { run, calls } = runnerReturning(["ok", "1", "nonce1nonce1", "[]"]);
     const store = createRedisVoteStore(run);
     expect(rejectionStatus(await store.publishPoll("bad room!", HOST, POLL))).toBe(422);
     expect(rejectionStatus(await store.publishPoll(ROOM, "x", POLL))).toBe(422);
@@ -65,6 +65,7 @@ describe("publishPoll (redis)", () => {
     const { run, calls } = runnerReturning([
       "ok",
       "2",
+      "abc123def456",
       JSON.stringify(["opt-a", "3", "opt-b", "1"]),
     ]);
     const store = createRedisVoteStore(run);
@@ -72,6 +73,9 @@ describe("publishPoll (redis)", () => {
     expect(res.ok).toBe(true);
     if (res.ok) {
       expect(res.event.round).toBe(2);
+      // The nonce the SCRIPT answered with, not this call's candidate: only
+      // the publish that claims the room mints the instance marker.
+      expect(res.event.nonce).toBe("abc123def456");
       expect(res.event.counts).toEqual({ "opt-a": 3, "opt-b": 1 });
       expect((res.event.poll as unknown as Record<string, unknown>).sneaky).toBeUndefined();
     }
@@ -81,11 +85,29 @@ describe("publishPoll (redis)", () => {
     expect(calls[0]).toContain(HOST);
     expect(calls[0]).toContain("vote:rooms");
   });
+
+  it("sends a fresh nonce candidate per publish for the claim to keep", async () => {
+    const { run, calls } = runnerReturning([
+      "ok",
+      "1",
+      "abc123def456",
+      JSON.stringify(["opt-a", "0", "opt-b", "0"]),
+    ]);
+    const store = createRedisVoteStore(run);
+    await store.publishPoll(ROOM, HOST, POLL);
+    await store.publishPoll(ROOM, HOST, POLL);
+    // Candidate is the last ARGV, shaped like the in-memory nonce.
+    const first = String(calls[0][calls[0].length - 1]);
+    const second = String(calls[1][calls[1].length - 1]);
+    expect(first).toMatch(/^[a-z0-9]{12}$/);
+    expect(second).toMatch(/^[a-z0-9]{12}$/);
+    expect(second).not.toBe(first);
+  });
 });
 
 describe("unpublishPoll (redis)", () => {
   it("rejects invalid input before touching Redis", async () => {
-    const { run, calls } = runnerReturning(["ok", "1"]);
+    const { run, calls } = runnerReturning(["ok", "1", "abc123def456"]);
     const store = createRedisVoteStore(run);
     expect(rejectionStatus(await store.unpublishPoll("bad room!", HOST))).toBe(422);
     expect(rejectionStatus(await store.unpublishPoll(ROOM, "x"))).toBe(422);
@@ -101,12 +123,20 @@ describe("unpublishPoll (redis)", () => {
   });
 
   it("closes the room with the terminal event and drops it from the index", async () => {
-    const { run, calls } = runnerReturning(["ok", "3"]);
+    const { run, calls } = runnerReturning(["ok", "3", "abc123def456"]);
     const store = createRedisVoteStore(run);
     const res = await store.unpublishPoll(ROOM, HOST);
     expect(res.ok).toBe(true);
     if (res.ok) {
-      expect(res.event).toEqual({ type: "closed", round: 3, poll: null, counts: {} });
+      // The closed frame names the dying instance (nonce) so phones cannot
+      // restore its vote lock into a recreated room, in-memory-style.
+      expect(res.event).toEqual({
+        type: "closed",
+        round: 3,
+        nonce: "abc123def456",
+        poll: null,
+        counts: {},
+      });
     }
     // EVAL with 4 keys (room hashes + rooms index), hostKey among ARGV.
     expect(calls).toHaveLength(1);
@@ -117,11 +147,14 @@ describe("unpublishPoll (redis)", () => {
   });
 
   it("closing an already-gone room succeeds so the toggle stays quiet", async () => {
-    const { run } = runnerReturning(["ok", "0"]);
+    const { run } = runnerReturning(["ok", "0", ""]);
     const store = createRedisVoteStore(run);
     const res = await store.unpublishPoll(ROOM, HOST);
     expect(res.ok).toBe(true);
-    if (res.ok) expect(res.event.round).toBe(0);
+    if (res.ok) {
+      expect(res.event.round).toBe(0);
+      expect(res.event.nonce).toBeUndefined();
+    }
   });
 
   it("maps a malformed reply to 500", async () => {
@@ -135,6 +168,7 @@ describe("castVote (redis)", () => {
   const reply = (status: string) => [
     status,
     "1",
+    "abc123def456",
     JSON.stringify(POLL),
     JSON.stringify(["opt-a", "1", "opt-b", "0"]),
   ];
@@ -155,7 +189,7 @@ describe("castVote (redis)", () => {
       ["503", 503],
     ] as const) {
       const { run } = runnerReturning(
-        status === "404" ? ["404", "0", "", "{}"] : reply(status)
+        status === "404" ? ["404", "0", "", "", "{}"] : reply(status)
       );
       const store = createRedisVoteStore(run);
       const res = await store.castVote(ROOM, "viewer-1234", "opt-a");
@@ -180,7 +214,12 @@ describe("castVote (redis)", () => {
     const store = createRedisVoteStore(run);
     const res = await store.castVote(ROOM, "viewer-1234", "opt-b");
     expect(res.ok).toBe(true);
-    if (res.ok) expect(res.event.round).toBe(1);
+    if (res.ok) {
+      expect(res.event.round).toBe(1);
+      // The phone saves (nonce, round) with its vote, so vote replies must
+      // carry the instance nonce too.
+      expect(res.event.nonce).toBe("abc123def456");
+    }
   });
 });
 
@@ -189,10 +228,16 @@ describe("getRoomState (redis)", () => {
     const calls: (string | number)[][] = [];
     const store = createRedisVoteStore(async (command) => {
       calls.push(command);
-      return ["3", JSON.stringify(POLL), JSON.stringify(["opt-a", "5", "opt-b", "2"])];
+      return [
+        "3",
+        "abc123def456",
+        JSON.stringify(POLL),
+        JSON.stringify(["opt-a", "5", "opt-b", "2"]),
+      ];
     });
     const state = await store.getRoomState(ROOM);
     expect(state.round).toBe(3);
+    expect(state.nonce).toBe("abc123def456");
     expect(state.poll?.options).toHaveLength(2);
     expect(state.counts).toEqual({ "opt-a": 5, "opt-b": 2 });
     // One EVAL, no torn two-command read.
@@ -201,8 +246,9 @@ describe("getRoomState (redis)", () => {
   });
 
   it("an unknown room reads as the empty state", async () => {
-    const store = createRedisVoteStore(async () => ["0", "", "{}"]);
+    const store = createRedisVoteStore(async () => ["0", "", "", "{}"]);
     const state = await store.getRoomState(ROOM);
     expect(state).toEqual({ type: "state", round: 0, poll: null, counts: {} });
+    expect(state.nonce).toBeUndefined();
   });
 });

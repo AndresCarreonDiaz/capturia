@@ -31,11 +31,12 @@ export interface VoteEvent {
   type: "state" | "vote" | "closed";
   round: number;
   // Random marker minted when the ROOM INSTANCE is created, absent only for
-  // unknown-room snapshots and the Redis backend (whose rooms survive
-  // restarts). Rounds restart at 1 whenever the room is recreated (server
-  // restart, TTL expiry, unpublish), so a phone that keys its local "already
-  // voted" lock on the round alone could see the same round number on a
-  // fresh tally and lock itself out; keying on (nonce, round) cannot.
+  // unknown-room snapshots. Both backends mint one (this store at room
+  // creation, the Redis store in its meta hash at claim time). Rounds
+  // restart at 1 whenever the room is recreated (server restart, TTL
+  // expiry, unpublish), so a phone that keys its local "already voted" lock
+  // on the round alone could see the same round number on a fresh tally and
+  // lock itself out; keying on (nonce, round) cannot.
   nonce?: string;
   poll: PollDef | null;
   counts: Record<string, number>;

@@ -157,6 +157,18 @@ check(
   JSON.stringify(reopened)
 );
 
+// The recreated room must be a NEW instance to phones: same round number,
+// different nonce. The phone page keys its "already voted" lock on
+// (nonce, round), so a backend that reused (or omitted) the nonce here would
+// resurrect pre-unpublish vote locks into the fresh tally.
+check(
+  "re-publish mints a fresh room nonce",
+  Boolean(publish.body?.nonce) &&
+    Boolean(reopened.body?.nonce) &&
+    reopened.body.nonce !== publish.body.nonce,
+  JSON.stringify({ before: publish.body?.nonce, after: reopened.body?.nonce })
+);
+
 // Leave nothing behind: the reclaimed room dies now instead of on the TTL.
 await api("POST", { type: "unpublish", hostKey });
 

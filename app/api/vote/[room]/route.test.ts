@@ -87,7 +87,9 @@ describe("CORS for the desktop studio", () => {
 
 describe("unpublish through the route", () => {
   it("closes the room on every backend contract (no 501 left)", async () => {
-    await post(ROOM, { type: "poll", hostKey: HOST, poll: POLL });
+    const published = await post(ROOM, { type: "poll", hostKey: HOST, poll: POLL });
+    const firstNonce = (await published.json()).nonce as string;
+    expect(firstNonce).toBeTruthy();
 
     const strangerClose = await post(ROOM, { type: "unpublish", hostKey: "host-imposter1" });
     expect(strangerClose.status).toBe(403);
@@ -101,8 +103,14 @@ describe("unpublish through the route", () => {
     const rejected = await post(ROOM, { type: "vote", viewerId: "viewer-1234", action: "opt-a" });
     expect(rejected.status).toBe(404);
 
+    // Round 1 again, but a DIFFERENT instance nonce: the phone page keys its
+    // "already voted" lock on (nonce, round), so a matching nonce here would
+    // resurrect pre-unpublish vote locks into the fresh tally.
     const republished = await post(ROOM, { type: "poll", hostKey: HOST, poll: POLL });
-    expect((await republished.json()).round).toBe(1);
+    const reopenedBody = await republished.json();
+    expect(reopenedBody.round).toBe(1);
+    expect(reopenedBody.nonce).toBeTruthy();
+    expect(reopenedBody.nonce).not.toBe(firstNonce);
   });
 
   it("stays quiet on a double toggle: closing a missing room succeeds", async () => {
