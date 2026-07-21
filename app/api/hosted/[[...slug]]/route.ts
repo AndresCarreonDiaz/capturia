@@ -39,6 +39,7 @@ import {
   createSettler,
   createSseUsageObserver,
   estimateTokensForRequest,
+  hostedTokenFromRequest,
   planHostedCall,
   readBodyCapped,
   upstreamFor,
@@ -82,16 +83,6 @@ function jsonError(
   });
 }
 
-// @ai-sdk/google sends the key slot as x-goog-api-key; curl and future
-// clients may prefer a standard bearer. Either carries the Capturia JWT.
-function tokenFromRequest(request: Request): string | null {
-  const googHeader = request.headers.get("x-goog-api-key");
-  if (googHeader) return googHeader;
-  const auth = request.headers.get("authorization");
-  if (auth?.toLowerCase().startsWith("bearer ")) return auth.slice(7).trim();
-  return null;
-}
-
 export async function POST(
   request: Request,
   ctx: { params: Promise<{ slug?: string[] }> }
@@ -102,7 +93,7 @@ export async function POST(
   if (!publicKey) {
     return jsonError(503, "Hosted tier is not configured on this deployment.");
   }
-  const verdict = verifyHostedJwt(tokenFromRequest(request), publicKey);
+  const verdict = verifyHostedJwt(hostedTokenFromRequest(request), publicKey);
   if (!verdict.ok) return jsonError(401, verdict.error);
   const customer = verdict.claims.sub;
 
