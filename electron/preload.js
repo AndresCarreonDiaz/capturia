@@ -52,8 +52,11 @@ contextBridge.exposeInMainWorld("capturia", {
   },
   // Where main's loopback CopilotKit runtime listens this launch: an absolute
   // runtimeUrl plus the per-launch bearer token that authenticates the
-  // renderer to it. null when the server failed to start (the renderer then
-  // stays on the /api/copilotkit route, which works in dev).
+  // renderer to it. null when the server failed to start in dev (the renderer
+  // then stays on the /api/copilotkit route, which Next serves); on the
+  // static (file://) UI, where that route does not exist, a failed start
+  // yields { disabled: true } so the renderer can say AI is off instead of
+  // fetching a URL that cannot work.
   runtimeInfo() {
     return ipcRenderer.invoke("runtime:info");
   },

@@ -28,12 +28,18 @@ export interface TrayState {
   // the item, because that build can never submit an activation request (the
   // dev host app in native/CapturiaCamera owns that workflow).
   sysextStatus?: SysextUiStatus;
+  // The loopback AI runtime failed to start AND the shell has no fallback
+  // route (static/file:// UI; dev serves the runtime through Next either
+  // way). Shows the restart entry point (issue #51): without it the only
+  // recovery from a failed runtime start is relaunching the whole app.
+  aiEngineDown?: boolean;
 }
 
 export type TrayAction =
   | "toggle-listening"
   | "toggle-camera"
   | "install-camera"
+  | "restart-ai"
   | "open-control-room"
   | "open-settings"
   | "quit";
@@ -130,12 +136,19 @@ export function buildTrayMenu(state: TrayState, toggleHotkey?: string): TrayItem
   const install =
     state.sysextStatus === undefined ? null : sysextItem(state.sysextStatus);
 
+  // Present only while the engine is down: a working engine needs no restart
+  // item, and on builds with a route fallback the item would be noise.
+  const restartAi: TrayItem[] = state.aiEngineDown
+    ? [{ type: "item", label: "Restart AI engine", enabled: true, action: "restart-ai" }]
+    : [];
+
   return [
     { type: "item", label: trayStatusLabel(state), enabled: false },
     { type: "separator" },
     toggle,
     ...camera,
     ...(install ? [install] : []),
+    ...restartAi,
     { type: "item", label: "Open Control Room", enabled: true, action: "open-control-room" },
     { type: "item", label: "Settings…", enabled: true, action: "open-settings" },
     { type: "separator" },

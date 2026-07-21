@@ -27,6 +27,7 @@ const { createHostedBilling } = require("./hosted-billing");
 // this same gen module.
 const { classifyVaultClear } = require("./gen/hosted-billing");
 const { createTray } = require("./tray");
+const { logCrash, crashLogPath } = require("./crash-log");
 const { maybeOfferMoveToApplications, offerMoveToApplications } = require("./first-run");
 const { createTelemetry } = require("./telemetry");
 const speechHelper = require("./speech-helper");
@@ -96,8 +97,10 @@ const STUDIO_URL = useStaticUi
 const trustOpts = { isDev: !useStaticUi };
 
 let mainWindow = null;
-// Set once the loopback CopilotKit runtime is up; null means it failed and
-// the renderer falls back to /api/copilotkit (works in dev via Next).
+// Set once the loopback CopilotKit runtime is up; null means it failed. The
+// dev renderer then falls back to /api/copilotkit (which Next serves), while
+// the static (file://) UI has no such route: runtime:info reports an explicit
+// disabled state instead, and the restart flow below owns recovery.
 let runtimeServer = null;
 // The virtual-camera feed (electron/camera-feed.js): the offscreen Program
 // Output window pumping frames into the Capturia CMIO extension's sink. null
@@ -132,6 +135,42 @@ let hostedBilling = null;
 // CAPTURIA_USER_DATA override above so the settings store lands in the same
 // profile the run uses.
 const telemetry = createTelemetry({ disabled: isSmoke });
+
+// Main-process crash visibility (issue #51): without these, an escaped throw
+// or orphaned rejection in main dies in a console nobody attached. Log and
+// keep the shell alive: main hosts the virtual camera mid-call, so
+// degrade-and-log beats the default hard exit (registering uncaughtException
+// deliberately replaces it). At module load so even whenReady failures land.
+process.on("uncaughtException", (err) => {
+  logCrash({
+    source: "main",
+    reason: "uncaughtException",
+    detail: (err && err.stack) || String(err),
+  });
+});
+process.on("unhandledRejection", (reason) => {
+  logCrash({
+    source: "main",
+    reason: "unhandledRejection",
+    detail: (reason && reason.stack) || String(reason),
+  });
+});
+
+// Parent failure dialogs on the Control Room only while it is visible; a
+// sheet attached to a window hidden to the tray never reaches the screen,
+// so hidden (and early-startup) dialogs stand alone instead.
+function showFailureDialog(options) {
+  return mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()
+    ? dialog.showMessageBox(mainWindow, options)
+    : dialog.showMessageBox(options);
+}
+
+// Every failure dialog ends by pointing at the local crash log, the only
+// evidence trail there is (no third-party crash service without consent).
+function withLogHint(text) {
+  const file = crashLogPath();
+  return file ? `${text}\n\nDetails logged to: ${file}` : text;
+}
 
 // Wrap every privileged IPC handler so it first rejects calls from an
 // untrusted sender (a navigated-away or injected renderer), then runs the
@@ -184,13 +223,17 @@ function registerIpc() {
   ipcMain.handle("keys:list", guarded(() => keychain.listKeys()));
 
   // Renderer -> main: where the loopback CopilotKit runtime listens this
-  // launch (URL + per-launch bearer token). null when the server failed to
-  // start, in which case the renderer stays on the /api/copilotkit route.
+  // launch (URL + per-launch bearer token). With the server down the answer
+  // depends on the UI source: the dev renderer gets null and stays on the
+  // Next-served /api/copilotkit route, but the static (file://) renderer has
+  // no such route, so it gets an explicit disabled marker instead of a
+  // fallback URL that cannot work (issue #51).
   ipcMain.handle(
     "runtime:info",
-    guarded(() =>
-      runtimeServer ? { url: runtimeServer.url, token: runtimeServer.token } : null
-    )
+    guarded(() => {
+      if (runtimeServer) return { url: runtimeServer.url, token: runtimeServer.token };
+      return useStaticUi ? { disabled: true } : null;
+    })
   );
 
   // Deck codegen on the user's key, in main. Returns raw model text (JSON the
@@ -459,6 +502,84 @@ function createWindow() {
   mainWindow.webContents.on("render-process-gone", resetRendererState);
   mainWindow.webContents.on("did-navigate", resetRendererState);
 
+  // Crash surfacing for the same event (issue #51): the reset above keeps the
+  // tray honest, this keeps the USER in the loop instead of a dead window.
+  // clean-exit is a normal teardown, not a crash. Reload reuses this same
+  // webContents, so the navigation lockdown above stays in force. No dialogs
+  // in smoke mode (its gates already turn a dead renderer into a FAIL exit)
+  // or mid-quit (a renderer killed by the teardown must not block the exit).
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    if (details.reason === "clean-exit") return;
+    logCrash({
+      source: "renderer",
+      reason: details.reason,
+      detail: `exit code ${details.exitCode}`,
+    });
+    if (isSmoke || isQuitting) return;
+    void showFailureDialog({
+      type: "warning",
+      buttons: ["Reload", "Quit Capturia"],
+      defaultId: 0,
+      cancelId: 0,
+      message: "The Capturia window crashed",
+      detail: withLogHint(
+        `The studio page ended unexpectedly (${details.reason}). Reload to pick up where the session left off.`
+      ),
+    }).then(({ response }) => {
+      if (response === 1) app.quit();
+      else mainWindow?.webContents.reload();
+    });
+  });
+
+  // A hung page may recover on its own (a long GC, a wedged await), so Wait
+  // is the default; Reload is the way out when it does not. One dialog at a
+  // time: the event re-fires while the page stays hung.
+  let unresponsiveDialogOpen = false;
+  mainWindow.on("unresponsive", () => {
+    logCrash({ source: "renderer", reason: "unresponsive" });
+    if (isSmoke || isQuitting || unresponsiveDialogOpen) return;
+    unresponsiveDialogOpen = true;
+    void showFailureDialog({
+      type: "warning",
+      buttons: ["Wait", "Reload"],
+      defaultId: 0,
+      cancelId: 0,
+      message: "Capturia is not responding",
+      detail: withLogHint(
+        "The studio window stopped responding. It may recover on its own; reloading restarts the page."
+      ),
+    }).then(({ response }) => {
+      unresponsiveDialogOpen = false;
+      if (response === 1) mainWindow?.webContents.reload();
+    });
+  });
+
+  // A failed main-frame load in the packaged app (broken update, disk issue)
+  // used to be an indistinguishable black window: log it and offer the load
+  // again. -3 (ERR_ABORTED) is a superseded navigation, not a failure. Dev
+  // fails here when the Next server is down, which its console already
+  // covers, and smoke exits through its own did-fail-load gate below.
+  mainWindow.webContents.on(
+    "did-fail-load",
+    (_event, code, description, failedUrl, isMainFrame) => {
+      if (!isMainFrame || code === -3) return;
+      logCrash({ source: "window-load", reason: `${code} ${description}`, detail: failedUrl });
+      if (isSmoke || isQuitting || !useStaticUi) return;
+      void showFailureDialog({
+        type: "warning",
+        buttons: ["Retry", "Cancel"],
+        defaultId: 0,
+        cancelId: 1,
+        message: "Capturia could not load its window",
+        detail: withLogHint(
+          `The studio page failed to load (${description}). Retry reloads it; if this keeps happening, reinstall Capturia.`
+        ),
+      }).then(({ response }) => {
+        if (response === 0) mainWindow?.loadURL(STUDIO_URL);
+      });
+    }
+  );
+
   // Dock icon only while the Control Room is open (the Krisp pattern): the
   // app lives in the menu bar, the dock entry exists for Cmd+Tab while the
   // window is up. app.dock is macOS-only.
@@ -500,9 +621,12 @@ function createWindow() {
           setTimeout(poll, 200);
         })();
       }).then(async (bundleRan) => {
-        const info = window.capturia && window.capturia.runtimeInfo
+        const raw = window.capturia && window.capturia.runtimeInfo
           ? await window.capturia.runtimeInfo()
           : null;
+        // The disabled marker (runtime down on the static UI) is not a usable
+        // endpoint; only a real URL feeds the keycheck that proves AI works.
+        const info = raw && raw.url ? raw : null;
         let keycheck = null;
         if (info) {
           const r = await fetch(info.url, {
@@ -612,6 +736,79 @@ function createWindow() {
   mainWindow.loadURL(STUDIO_URL);
 }
 
+// Start the loopback CopilotKit runtime with ONE silent retry: a transient
+// bind or env hiccup should not cost the launch its AI. A second failure
+// lands in the crash log (the dialog points there) and resolves null, the
+// explicit no-runtime state runtime:info hands the renderer.
+async function startRuntimeWithRetry() {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return await startRuntimeServer({ keychain, isDev });
+    } catch (err) {
+      console.error("Capturia: runtime server failed to start:", err);
+      if (attempt === 1) {
+        logCrash({
+          source: "runtime-server",
+          reason: "start failed after retry",
+          detail: (err && err.stack) || String(err),
+        });
+      }
+    }
+  }
+  return null;
+}
+
+// Re-attempt a failed runtime start (the failure dialog's Retry, the tray's
+// Restart AI engine; one attempt at a time because those two can race). On
+// success the studio window reloads so the fresh page picks up the working
+// URL over runtime:info; the reload reuses the same webContents, so the
+// navigation lockdown from createWindow stays in force. On another failure
+// the dialog returns, so the outcome is never silent.
+let runtimeRestartInFlight = false;
+async function restartRuntime() {
+  if (runtimeRestartInFlight || runtimeServer) return;
+  runtimeRestartInFlight = true;
+  try {
+    runtimeServer = await startRuntimeWithRetry();
+  } finally {
+    runtimeRestartInFlight = false;
+  }
+  tray?.update();
+  if (runtimeServer) {
+    mainWindow?.webContents.reload();
+  } else {
+    void offerRuntimeRestart();
+  }
+}
+
+// The honest no-AI dialog: what broke, what still works, and both ways out.
+// Continue without AI needs no work here because the renderer already holds
+// the explicit disabled state from runtime:info. One copy at a time: a tray
+// retry failing while the startup dialog waits must not stack a second one.
+let runtimeDialogOpen = false;
+async function offerRuntimeRestart() {
+  if (runtimeDialogOpen) return;
+  runtimeDialogOpen = true;
+  let response;
+  try {
+    ({ response } = await showFailureDialog({
+      type: "warning",
+      buttons: ["Retry", "Continue without AI"],
+      defaultId: 0,
+      cancelId: 1,
+      message: "The AI engine failed to start",
+      detail: withLogHint(
+        "Voice commands and overlays are unavailable. The webcam, cue-card " +
+          "hotkeys, and virtual camera still work. Retry now, or later via " +
+          "Restart AI engine in the menu bar."
+      ),
+    }));
+  } finally {
+    runtimeDialogOpen = false;
+  }
+  if (response === 0) await restartRuntime();
+}
+
 // Bring the Control Room forward from wherever it is: hidden to the tray,
 // minimized, or already gone (recreate). Every "open the app" path funnels
 // here: tray menu, dock click, second launch. Never in smoke mode, whose
@@ -661,13 +858,10 @@ if (!gotTheLock) {
     );
 
     // Loopback CopilotKit runtime, up before the window asks for it. A start
-    // failure is survivable in dev (the Next route serves the runtime), so it
-    // logs instead of crashing the shell.
-    try {
-      runtimeServer = await startRuntimeServer({ keychain, isDev });
-    } catch (err) {
-      console.error("Capturia: runtime server failed to start:", err);
-    }
+    // failure (after the built-in retry) is survivable in dev, where the Next
+    // route serves the runtime; on the static UI it means no AI at all, which
+    // the dialog below surfaces once the shell is up.
+    runtimeServer = await startRuntimeWithRetry();
 
     // Virtual camera feed: the offscreen Program Output window pumping into
     // the Capturia CMIO extension (started below, after the tray exists, so
@@ -760,7 +954,10 @@ if (!gotTheLock) {
           // Extension-install status only when the sysext module loaded; the
           // tray model hides the item for undefined AND for "unsupported".
           const sysextFields = sysext ? { sysextStatus: sysext.getState().status } : {};
-          if (!cameraFeed) return { ...rendererState, ...sysextFields };
+          // The restart item shows only while the AI engine is down with no
+          // fallback route (static UI; dev serves the runtime through Next).
+          const aiEngineDown = useStaticUi && !runtimeServer;
+          if (!cameraFeed) return { ...rendererState, ...sysextFields, aiEngineDown };
           const camera = cameraFeed.getState();
           return {
             ...rendererState,
@@ -770,6 +967,7 @@ if (!gotTheLock) {
             cameraFrozen: camera.frozen,
             cameraHasError: Boolean(camera.error),
             ...sysextFields,
+            aiEngineDown,
           };
         },
         toggleHotkey: HOTKEY_TOGGLE_VOICE,
@@ -808,6 +1006,11 @@ if (!gotTheLock) {
               if (response === 0) sysext?.install();
             });
           },
+          // Outcomes surface themselves: success reloads the studio window,
+          // failure brings the dialog back (restartRuntime above).
+          "restart-ai": () => {
+            void restartRuntime();
+          },
           "open-control-room": showControlRoom,
           "open-settings": () => {
             showControlRoom();
@@ -836,6 +1039,15 @@ if (!gotTheLock) {
     });
     if (!registered) {
       console.warn(`Failed to register hotkey ${HOTKEY_TOGGLE_VOICE} (in use?)`);
+    }
+
+    // The AI engine is down and the static UI has no fallback route
+    // (/api/copilotkit does not exist on file://), so every command would die
+    // silently: say so now that the shell is up behind the dialog. Dev keeps
+    // the silent fallback (the Next route serves the runtime) and smoke must
+    // stay unattended (its keycheck gate already fails the run).
+    if (!runtimeServer && useStaticUi && !isSmoke) {
+      void offerRuntimeRestart();
     }
 
     // Last, so the whole app (window, tray, runtime) is already up behind

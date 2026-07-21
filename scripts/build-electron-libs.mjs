@@ -19,6 +19,7 @@ const files = [
   "lib/speech-events.ts",
   "lib/camera-feed.ts",
   "lib/sysext.ts",
+  "lib/crash-log.ts",
 ];
 const outDir = join(root, "electron", "gen");
 

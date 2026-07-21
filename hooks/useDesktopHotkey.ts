@@ -20,10 +20,11 @@ export interface KeyEntry {
 }
 // Where main's loopback CopilotKit runtime listens: the absolute runtimeUrl
 // plus the per-launch bearer token that authenticates the renderer to it.
-export interface DesktopRuntimeInfo {
-  url: string;
-  token: string;
-}
+// { disabled: true } when the runtime failed to start on the static file://
+// build, where the /api/copilotkit fallback route does not exist: AI stays
+// off until main restarts the engine (tray: Restart AI engine) and reloads
+// the page on success.
+export type DesktopRuntimeInfo = { url: string; token: string } | { disabled: true };
 // State the renderer reports up to main; drives the tray menu status, its
 // Start/Stop Listening item, and (via cueCount, the loaded deck size) the
 // registration of the global cue-card hotkeys.
@@ -61,8 +62,9 @@ interface CapturiaBridge {
     // No `get`: the plaintext key never enters the renderer. The runtime
     // server in main reads the keychain itself (electron/runtime-server.js).
   };
-  // null when the runtime server failed to start (renderer falls back to the
-  // /api/copilotkit route, which works in dev).
+  // null when the runtime server failed to start in dev (renderer falls back
+  // to the /api/copilotkit route, which Next serves); { disabled: true } when
+  // it failed on the static build, where no fallback route exists.
   runtimeInfo: () => Promise<DesktopRuntimeInfo | null>;
   // Capturia Pro upgrade flow (M11 slice 2); optional because a stale
   // packaged preload may predate it. checkout() opens the Stripe page in

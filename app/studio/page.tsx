@@ -97,12 +97,20 @@ export default function Studio() {
   // runtime. Must be STATE (like the old key plumbing): CopilotKit resolves
   // `headers` during render, so only a re-render propagates the token.
   const [desktopRuntime, setDesktopRuntime] = useState<{ url: string; token: string } | null>(null);
+  // Desktop static (file://) builds have no /api/copilotkit fallback, so when
+  // the loopback runtime is down main sends { disabled: true } instead of a
+  // URL that cannot work (issue #51); the studio then says so (the keycheck
+  // banner in Capturia below) instead of letting every command die silently.
+  // Main's Restart AI engine reloads the page on success, clearing this.
+  const [runtimeDisabled, setRuntimeDisabled] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     window.capturia?.runtimeInfo?.()
       .then((info) => {
-        if (!cancelled && info) setDesktopRuntime(info);
+        if (cancelled || !info) return;
+        if ("disabled" in info) setRuntimeDisabled(true);
+        else setDesktopRuntime(info);
       })
       .catch(() => {
         /* runtime server down: dev still works via the Next route */
@@ -147,6 +155,7 @@ export default function Studio() {
         setActiveProvider={setPickedProvider}
         headers={headers}
         runtimeUrl={runtimeUrl}
+        runtimeDisabled={runtimeDisabled}
       />
     </CopilotKitProvider>
   );
@@ -160,9 +169,13 @@ interface CapturiaProps {
   // match them so it reports the health of the exact key path the agent uses.
   headers: Record<string, string>;
   runtimeUrl: string;
+  // Desktop main reported the loopback runtime down with no fallback route
+  // (static build): the keycheck effect shows the honest banner instead of
+  // probing an endpoint that does not exist.
+  runtimeDisabled: boolean;
 }
 
-function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUrl }: CapturiaProps) {
+function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUrl, runtimeDisabled }: CapturiaProps) {
   // Mirror role, fixed by how the page was LOADED (not by the outputMode
   // toggle below): a ?out=1 page is a dedicated output surface (the desktop
   // app's offscreen camera window, a second same-browser tab) and RECEIVES
@@ -211,7 +224,9 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
     // (operator chrome is hidden in Program Output), so probing would be a
     // wasted POST; over file:// (the packaged offscreen window) the relative
     // route does not even exist.
-    if (isMirrorReceiver) return;
+    // A down runtime with no fallback route has nothing to probe; the
+    // agentOfflineError derivation below owns that banner.
+    if (isMirrorReceiver || runtimeDisabled) return;
     let cancelled = false;
     fetch(runtimeUrl, {
       method: "POST",
@@ -228,7 +243,17 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
     return () => {
       cancelled = true;
     };
-  }, [headers, runtimeUrl, vaultKeysSig, isMirrorReceiver]);
+  }, [headers, runtimeUrl, vaultKeysSig, isMirrorReceiver, runtimeDisabled]);
+
+  // What the agent-offline banner shows: the explicit disabled state (runtime
+  // down on a static build, issue #51) outranks the probe's last verdict.
+  // Derived, not set from the effect, so the disabled case needs no probe and
+  // no cascading setState; main's dialog and tray item own the retry, and a
+  // successful restart reloads the page, clearing this.
+  const agentOfflineError = runtimeDisabled
+    ? "Capturia's AI engine failed to start, so commands won't render overlays. " +
+      "Pick Restart AI engine from the Capturia menu bar icon to bring it back."
+    : modelKeyError;
 
   // Deck state: cue cards to trigger, plus a compact view shared with the agent.
   const [cues, setCues] = useState<CueCard[]>([]);
@@ -1209,12 +1234,13 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
             const voteUrlUnreachable =
               voteOn && (voteOriginUnusable || (!!voteUrl && voteUrlLocalhostOnly(voteUrl)));
             const publishError = voteOn ? votePublishError : null;
-            if (!(!isSupported || modelKeyError || voteUrlUnreachable || publishError || runError))
+            if (!(!isSupported || agentOfflineError || voteUrlUnreachable || publishError || runError))
               return null;
             return (
               <div className="absolute top-28 left-1/2 -translate-x-1/2 z-40 w-[min(92vw,30rem)] flex flex-col gap-2">
-                {/* Agent has no model key: nothing will render until fixed. */}
-                {modelKeyError && <ModelKeyBanner message={modelKeyError} />}
+                {/* Agent has no model key (or no runtime at all on desktop):
+                    nothing will render until fixed. */}
+                {agentOfflineError && <ModelKeyBanner message={agentOfflineError} />}
                 {/* Honest heads-up when voice can't run here (Firefox/Brave/desktop). */}
                 {!isSupported && <BrowserBanner />}
                 {/* An agent run failed (rate limit, revoked key, server 503).

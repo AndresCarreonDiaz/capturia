@@ -1,5 +1,22 @@
 # Known issues
 
+## Fixed: desktop failure surfacing (issue #51)
+
+The packaged app used to swallow its worst failures. A runtime-server start
+failure fell back to `/api/copilotkit`, which does not exist on a `file://`
+origin, so AI died with no message; a crashed or hung renderer and a failed
+`file://` load were all the same black window. The shell now retries the
+runtime start once and then surfaces each of these with a dialog (Retry /
+Continue without AI, Reload / Quit, Wait / Reload, Retry the load) plus a
+tray item, "Restart AI engine", that restarts the runtime and reloads the
+studio on success. When the runtime is down on the static UI, `runtime:info`
+hands the renderer an explicit `{ disabled: true }` instead of a fallback URL
+that cannot work, and the studio shows the agent-offline banner. Every such
+failure (plus main's `uncaughtException`/`unhandledRejection`) appends a
+one-line JSON record to `crash.log` under `app.getPath("logs")` (macOS:
+`~/Library/Logs/Capturia/`), capped in size; record shape and cap live in
+`lib/crash-log.ts`. No third-party crash service, by design.
+
 ## FIXED: agent tool calls now render overlays in the browser
 
 **Status:** FIXED 2026-07-02. Root cause was a wiring mistake, not a CopilotKit
