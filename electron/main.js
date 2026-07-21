@@ -156,10 +156,11 @@ process.on("unhandledRejection", (reason) => {
   });
 });
 
-// Parent failure dialogs on the Control Room when it exists (the sysext
-// retry-dialog pattern below); during early startup they stand alone.
+// Parent failure dialogs on the Control Room only while it is visible; a
+// sheet attached to a window hidden to the tray never reaches the screen,
+// so hidden (and early-startup) dialogs stand alone instead.
 function showFailureDialog(options) {
-  return mainWindow && !mainWindow.isDestroyed()
+  return mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()
     ? dialog.showMessageBox(mainWindow, options)
     : dialog.showMessageBox(options);
 }
@@ -782,20 +783,29 @@ async function restartRuntime() {
 
 // The honest no-AI dialog: what broke, what still works, and both ways out.
 // Continue without AI needs no work here because the renderer already holds
-// the explicit disabled state from runtime:info.
+// the explicit disabled state from runtime:info. One copy at a time: a tray
+// retry failing while the startup dialog waits must not stack a second one.
+let runtimeDialogOpen = false;
 async function offerRuntimeRestart() {
-  const { response } = await showFailureDialog({
-    type: "warning",
-    buttons: ["Retry", "Continue without AI"],
-    defaultId: 0,
-    cancelId: 1,
-    message: "The AI engine failed to start",
-    detail: withLogHint(
-      "Voice commands and overlays are unavailable. The webcam, cue-card " +
-        "hotkeys, and virtual camera still work. Retry now, or later via " +
-        "Restart AI engine in the menu bar."
-    ),
-  });
+  if (runtimeDialogOpen) return;
+  runtimeDialogOpen = true;
+  let response;
+  try {
+    ({ response } = await showFailureDialog({
+      type: "warning",
+      buttons: ["Retry", "Continue without AI"],
+      defaultId: 0,
+      cancelId: 1,
+      message: "The AI engine failed to start",
+      detail: withLogHint(
+        "Voice commands and overlays are unavailable. The webcam, cue-card " +
+          "hotkeys, and virtual camera still work. Retry now, or later via " +
+          "Restart AI engine in the menu bar."
+      ),
+    }));
+  } finally {
+    runtimeDialogOpen = false;
+  }
   if (response === 0) await restartRuntime();
 }
 
