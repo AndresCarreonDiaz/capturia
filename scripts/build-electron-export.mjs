@@ -4,11 +4,13 @@
 //
 // Next's output:"export" hard-errors on any server-only surface, and the
 // desktop bundle must not ship one anyway: app/api/* (POST/SSE route handlers)
-// is replaced by the runtime hosted in Electron main, and app/vote/* (dynamic
+// is replaced by the runtime hosted in Electron main, app/vote/* (dynamic
 // room route) lives on the hosted web deployment that phones reach via the QR
-// origin (NEXT_PUBLIC_CAPTURIA_ORIGIN). There is no config switch to exclude
-// routes from a build, so this script relocates those directories aside for
-// the duration of the build and restores them afterwards, even on Ctrl-C.
+// origin (NEXT_PUBLIC_CAPTURIA_ORIGIN), and app/download (the landing's
+// redirect route) belongs to the hosted deployment too. There is no config
+// switch to exclude routes from a build, so this script relocates those
+// directories aside for the duration of the build and restores them
+// afterwards, even on Ctrl-C.
 // Do not run it while `next dev` is serving this checkout.
 
 import { spawnSync } from "node:child_process";
@@ -21,6 +23,7 @@ const HOLD = join(root, ".electron-export-hold");
 const EXCLUDED = [
   ["app/api", "app-api"],
   ["app/vote", "app-vote"],
+  ["app/download", "app-download"],
 ];
 
 // Refuse to run under a live dev server: this build renames app/api and
@@ -41,7 +44,8 @@ try {
 if (existsSync(HOLD)) {
   console.error(
     `[build-electron-export] ${HOLD} already exists; a previous build died mid-restore. ` +
-      "Move its contents back under app/ (app-api -> app/api, app-vote -> app/vote), " +
+      "Move its contents back under app/ (app-api -> app/api, app-vote -> app/vote, " +
+      "app-download -> app/download), " +
       "delete the directory, then re-run."
   );
   process.exit(1);

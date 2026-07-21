@@ -20,7 +20,11 @@ import { Suspense } from "react";
 
 const GITHUB = "https://github.com/AndresCarreonDiaz/capturia";
 const RELEASES = "https://github.com/AndresCarreonDiaz/capturia/releases";
-const DOWNLOAD = "https://github.com/AndresCarreonDiaz/capturia/releases/latest";
+// One click starts the DMG: app/download/route.ts 302s to the stable
+// latest-release asset on GitHub, so these CTAs open in the SAME tab (no
+// target=_blank) and the browser just downloads. RELEASES stays as the
+// small transparency link to the full release history.
+const DOWNLOAD = "/download";
 const LICENSE = "https://github.com/AndresCarreonDiaz/capturia/blob/main/LICENSE";
 
 export const metadata: Metadata = {
@@ -131,8 +135,6 @@ function TopNav() {
           <DownloadLink
             location="nav"
             href={DOWNLOAD}
-            target="_blank"
-            rel="noopener noreferrer"
             className="cta-solid inline-flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-medium"
           >
             <DownloadIcon />
@@ -187,8 +189,6 @@ function Hero() {
           <DownloadLink
             location="hero"
             href={DOWNLOAD}
-            target="_blank"
-            rel="noopener noreferrer"
             className="cta-solid inline-flex items-center gap-2.5 rounded-full px-7 py-3.5 text-[15px] font-semibold w-full sm:w-auto justify-center"
           >
             <DownloadIcon />
@@ -831,8 +831,6 @@ function Pricing() {
             <DownloadLink
               location="pricing"
               href={DOWNLOAD}
-              target="_blank"
-              rel="noopener noreferrer"
               className="cta-solid mt-8 inline-flex items-center justify-center gap-2 rounded-full px-6 py-3.5 text-[15px] font-semibold"
             >
               <DownloadIcon />
@@ -920,11 +918,15 @@ const FAQS: Array<{ q: string; a: React.ReactNode }> = [
     q: "Can I download the app today?",
     a: (
       <>
-        Yes. Grab the DMG from{" "}
-        <DownloadLink location="faq" href={DOWNLOAD} target="_blank" rel="noopener noreferrer" className="cue-link">
+        Yes.{" "}
+        <DownloadLink location="faq" href={DOWNLOAD} className="cue-link">
+          Download the DMG
+        </DownloadLink>{" "}
+        (the click starts it immediately; every build is also listed on{" "}
+        <a href={RELEASES} target="_blank" rel="noopener noreferrer" className="cue-link">
           GitHub releases
-        </DownloadLink>
-        , drag Capturia into Applications, and launch. Builds are Developer ID
+        </a>
+        ), drag Capturia into Applications, and launch. Builds are Developer ID
         signed and notarized by Apple, so Gatekeeper opens them without
         warnings. The{" "}
         <Link href="/studio" className="cue-link">
@@ -1069,8 +1071,6 @@ function FinalCta() {
           <DownloadLink
             location="final-cta"
             href={DOWNLOAD}
-            target="_blank"
-            rel="noopener noreferrer"
             className="cta-solid inline-flex items-center gap-2.5 rounded-full px-9 py-4 text-base font-semibold w-full sm:w-auto justify-center"
           >
             <DownloadIcon />
@@ -1129,7 +1129,7 @@ function SiteFooter() {
         </div>
 
         <nav className="flex flex-col sm:items-end gap-2.5 text-[13px] text-[var(--studio-graphite)]">
-          <DownloadLink location="footer" href={DOWNLOAD} target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
+          <DownloadLink location="footer" href={DOWNLOAD} className="hover:text-white transition-colors">
             Download for macOS
           </DownloadLink>
           <Link href="/studio" className="hover:text-white transition-colors">
