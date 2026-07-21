@@ -78,6 +78,7 @@ Stripe Checkout (test mode)
 | `POST /api/billing/activate` | `{ code, deviceId }` -> `{ refreshToken, token, expiresAt, devices }` |
 | `POST /api/billing/token` | `{ refreshToken }` -> `{ token, expiresAt }` |
 | `POST /api/billing/deactivate` | Frees the calling device's seat (same device-JWT auth as the proxy; the JWT names customer AND device, so a caller can only ever free its own slot). Idempotent; answers `{ ok, devices }`. The device's refresh token stops minting on its next refresh |
+| `POST /api/billing/portal` | Creates a Stripe Billing Portal session (card, invoices, cancel) for the authenticated customer and answers only its URL. Device-JWT auth; the JWT `sub` IS the Stripe customer id, so no lookup exists to drift |
 | `GET /api/billing/activation-code?session_id=cs_...&pickup=...` | One-time code pickup for the checkout success page; the pickup nonce is minted per checkout, travels only in the success URL, and the code is filed under hash(session, nonce), so a bare session id retrieves nothing |
 
 The JWT rides in `x-goog-api-key` (what `@ai-sdk/google` sends) or a
@@ -104,6 +105,16 @@ clamped; 401/403 drop credentials, 402 retries hourly, transient errors every
 5 minutes). Clearing the Pro row in Settings clears BOTH slots and the timer.
 Decision logic lives in lib/hosted-billing.ts and lib/checkout-success.ts,
 fully unit-tested; Electron consumes the gen build.
+
+An active Pro row also manages itself (issues #10/#48): "Manage
+subscription" asks /api/billing/portal for a Stripe customer portal URL and
+opens it in the OS browser (https-only, same rule as checkout URLs), so
+card updates, invoices, and cancellation all live on Stripe's page.
+"Deactivate this device" (with a confirm step) frees this Mac's seat via
+/api/billing/deactivate, then clears the local credentials through the
+same vault-clear routing as the Clear button, dropping the app back to
+BYOK; the freed seat lets a new Mac activate, which is also what the
+4th-device refusal message now points at.
 
 ## Env contract
 

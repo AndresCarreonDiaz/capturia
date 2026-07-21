@@ -232,6 +232,28 @@ function createHostedBilling({ keychain, env = process.env, log = console } = {}
     return { ok: true };
   }
 
+  // Stripe Billing Portal for this customer (card, invoices, cancel). Same
+  // https-only rule as startCheckout: the URL goes straight to
+  // shell.openExternal, so a compromised or misconfigured billing origin
+  // must not be able to hand the OS an arbitrary scheme.
+  async function getPortalUrl() {
+    const token = keychain.getKey(HOSTED_SLOT);
+    if (!token) throw new Error("Capturia Pro is not active on this Mac.");
+    const res = await fetch(`${origin()}/api/billing/portal`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    const json = await res.json().catch(() => null);
+    const url =
+      json && typeof json.url === "string" && /^https:\/\//i.test(json.url) ? json.url : null;
+    if (!res.ok || !url) {
+      const detail = json && typeof json.error === "string" ? json.error : `HTTP ${res.status}`;
+      throw new Error(`Could not open the subscription portal: ${detail}`);
+    }
+    return url;
+  }
+
   // App boot: if an install has a refresh token, get a fresh JWT right away
   // (the stored one may have expired while the app was closed).
   function start() {
@@ -258,6 +280,7 @@ function createHostedBilling({ keychain, env = process.env, log = console } = {}
     startCheckout,
     activate,
     getUsage,
+    getPortalUrl,
     refreshNow,
     start,
     deactivateLocal,

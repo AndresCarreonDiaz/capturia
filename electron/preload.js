@@ -82,6 +82,11 @@ contextBridge.exposeInMainWorld("capturia", {
     deactivate() {
       return ipcRenderer.invoke("billing:deactivate");
     },
+    // Opens the Stripe customer portal (card, invoices, cancel) in the OS
+    // browser from main; only { ok } ever crosses back.
+    portal() {
+      return ipcRenderer.invoke("billing:portal");
+    },
   },
   // Deck codegen: run a prompt on the user's stored key in main, return raw
   // model text. Used by the deck dropzone to design overlays from a PDF.

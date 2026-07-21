@@ -295,6 +295,17 @@ function registerIpc() {
     "billing:deactivate",
     guarded(() => hostedBilling.deactivateRemote())
   );
+  // Stripe customer portal (issue #48): like checkout, the URL opens in the
+  // OS browser from main and never crosses to the renderer; getPortalUrl
+  // enforces https before shell.openExternal sees anything.
+  ipcMain.handle(
+    "billing:portal",
+    guarded(async () => {
+      const url = await hostedBilling.getPortalUrl();
+      await shell.openExternal(url);
+      return { ok: true };
+    })
+  );
 
   // On-device streaming speech (macOS 26+ helper). One session at a time;
   // events flow back over the "speech" channel. Availability is a cheap

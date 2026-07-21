@@ -82,6 +82,7 @@ export default function SettingsModal({
   // so it never fires on the first click.
   const [deactivateArmed, setDeactivateArmed] = useState(false);
   const [deactivateBusy, setDeactivateBusy] = useState(false);
+  const [portalBusy, setPortalBusy] = useState(false);
   // Desktop-only anonymous beacon toggle; unsupported (web, stale preload)
   // hides the whole Privacy section.
   const telemetry = useTelemetry();
@@ -178,6 +179,24 @@ export default function SettingsModal({
       setError(ipcErrorMessage(err));
     } finally {
       setDeactivateBusy(false);
+    }
+  };
+
+  // Stripe hosts the whole subscription surface (card, invoices, cancel);
+  // main opens the portal in the OS browser, so the modal only reports that
+  // it did.
+  const handlePortal = async () => {
+    if (!billing?.portal) return;
+    setPortalBusy(true);
+    setError(null);
+    setBillingInfo(null);
+    try {
+      await billing.portal();
+      setBillingInfo("Subscription portal opened in your browser.");
+    } catch (err) {
+      setError(ipcErrorMessage(err));
+    } finally {
+      setPortalBusy(false);
     }
   };
 
@@ -353,41 +372,63 @@ export default function SettingsModal({
                           </p>
                         </div>
                       )}
-                      {/* Self-serve deactivation (issue #10): frees this
-                          Mac's seat (3 per plan) server-side, then clears
-                          the local credentials. Confirm step first. */}
-                      {provider === "capturia-hosted" && billing?.deactivate && (
-                        <div className="mt-2">
-                          {deactivateArmed ? (
-                            <div className="flex items-center gap-2">
-                              <span className="flex-1 text-white/50 text-[11px] leading-relaxed">
-                                Free this Mac&apos;s seat? Pro stops on this device and commands
-                                switch to your own keys; your other devices keep working.
-                              </span>
-                              <button
-                                onClick={handleDeactivate}
-                                disabled={deactivateBusy}
-                                className="bg-red-500/15 hover:bg-red-500/25 border border-red-500/40 disabled:opacity-40 text-red-300 text-[11px] font-medium px-3 py-1.5 rounded-lg transition-colors"
-                              >
-                                {deactivateBusy ? "Deactivating…" : "Deactivate"}
-                              </button>
-                              <button
-                                onClick={() => setDeactivateArmed(false)}
-                                disabled={deactivateBusy}
-                                className="text-white/50 hover:text-white disabled:opacity-40 text-[11px] font-mono px-2 py-1.5 rounded-lg transition-colors"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => setDeactivateArmed(true)}
-                              className="text-white/40 hover:text-red-400 text-[11px] font-mono transition-colors"
-                            >
-                              Deactivate this device
-                            </button>
-                          )}
-                        </div>
+                      {/* Plan management (issues #10/#48): the Stripe-hosted
+                          portal for the subscription itself, and self-serve
+                          seat release for this Mac (confirm step first). */}
+                      {provider === "capturia-hosted" &&
+                        (billing?.portal || billing?.deactivate) && (
+                          <div className="mt-2">
+                            {deactivateArmed ? (
+                              <div className="flex items-center gap-2">
+                                <span className="flex-1 text-white/50 text-[11px] leading-relaxed">
+                                  Free this Mac&apos;s seat? Pro stops on this device and commands
+                                  switch to your own keys; your other devices keep working.
+                                </span>
+                                <button
+                                  onClick={handleDeactivate}
+                                  disabled={deactivateBusy}
+                                  className="bg-red-500/15 hover:bg-red-500/25 border border-red-500/40 disabled:opacity-40 text-red-300 text-[11px] font-medium px-3 py-1.5 rounded-lg transition-colors"
+                                >
+                                  {deactivateBusy ? "Deactivating…" : "Deactivate"}
+                                </button>
+                                <button
+                                  onClick={() => setDeactivateArmed(false)}
+                                  disabled={deactivateBusy}
+                                  className="text-white/50 hover:text-white disabled:opacity-40 text-[11px] font-mono px-2 py-1.5 rounded-lg transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-4">
+                                {billing?.portal && (
+                                  <button
+                                    onClick={handlePortal}
+                                    disabled={portalBusy}
+                                    className="text-white/40 hover:text-white disabled:opacity-40 text-[11px] font-mono transition-colors"
+                                  >
+                                    {portalBusy ? "Opening portal…" : "Manage subscription ↗"}
+                                  </button>
+                                )}
+                                {billing?.deactivate && (
+                                  <button
+                                    onClick={() => setDeactivateArmed(true)}
+                                    className="text-white/40 hover:text-red-400 text-[11px] font-mono transition-colors"
+                                  >
+                                    Deactivate this device
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      {/* The upgrade branch below renders billingInfo for an
+                          inactive row; an ACTIVE row needs its own outlet for
+                          the portal hint. */}
+                      {provider === "capturia-hosted" && billingInfo && (
+                        <p className="mt-1.5 text-emerald-300/80 text-[11px] leading-relaxed">
+                          {billingInfo}
+                        </p>
                       )}
                     </div>
                   ) : provider === "capturia-hosted" && billing ? (

@@ -86,6 +86,9 @@ interface CapturiaBridge {
     // clear rides the existing vault-clear routing. Rejects with a
     // human-readable message and clears NOTHING on failure.
     deactivate?: () => Promise<{ ok: boolean }>;
+    // Opens the Stripe customer portal (card, invoices, cancel) in the OS
+    // browser; optional for the same stale-preload reason.
+    portal?: () => Promise<{ ok: boolean }>;
   };
   // Deck codegen: run a prompt on the stored key in main, return raw model text.
   generateCues: (prompt: string, provider: KeyProvider) => Promise<string>;
