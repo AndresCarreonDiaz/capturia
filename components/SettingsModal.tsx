@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import type { KeyEntry, KeyProvider } from "@/hooks/useDesktopHotkey";
 import { useTelemetry } from "@/hooks/useTelemetry";
 import { ipcErrorMessage } from "@/lib/ipc-error";
+import type { HostedUsage } from "@/lib/hosted-billing";
+import { hoursMeterFraction, hoursMeterLabel } from "@/lib/hosted-hours";
 
 interface Props {
   open: boolean;
@@ -81,6 +83,30 @@ export default function SettingsModal({
   // Guided upgrade needs the desktop billing bridge; without it (web, stale
   // preload) the Pro row keeps the paste-a-token input.
   const billing = typeof window !== "undefined" ? window.capturia?.billing : undefined;
+  // Hours meter for an entitled Pro row (issue #10 slice 4). Fetched per
+  // open, silently: a meter that cannot load simply does not render, it is
+  // never worth an error banner. Keyed on the vault signature so activating
+  // or clearing Pro while the modal is open re-reads.
+  const [usage, setUsage] = useState<HostedUsage | null>(null);
+  const proActive = keys.find((k) => k.provider === "capturia-hosted")?.has ?? false;
+  useEffect(() => {
+    if (!open || !proActive || !billing?.getUsage) {
+      setUsage(null);
+      return;
+    }
+    let cancelled = false;
+    billing
+      .getUsage()
+      .then((u) => {
+        if (!cancelled) setUsage(u);
+      })
+      .catch(() => {
+        if (!cancelled) setUsage(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, proActive, billing]);
 
   const handleUpgrade = async () => {
     if (!billing) return;
@@ -250,17 +276,47 @@ export default function SettingsModal({
                     </a>
                   </div>
                   {has ? (
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 font-mono text-xs text-white/60">
-                        {mask}
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 font-mono text-xs text-white/60">
+                          {mask}
+                        </div>
+                        <button
+                          onClick={() => handleClear(provider)}
+                          disabled={isBusy}
+                          className="text-white/50 hover:text-red-400 text-xs font-mono px-3 py-2 rounded-lg transition-colors disabled:opacity-40"
+                        >
+                          Clear
+                        </button>
                       </div>
-                      <button
-                        onClick={() => handleClear(provider)}
-                        disabled={isBusy}
-                        className="text-white/50 hover:text-red-400 text-xs font-mono px-3 py-2 rounded-lg transition-colors disabled:opacity-40"
-                      >
-                        Clear
-                      </button>
+                      {/* Hours meter (Pro only): the plan is sold in hours,
+                          so the meter speaks hours; tokens stay invisible. */}
+                      {provider === "capturia-hosted" && usage && (
+                        <div className="mt-2">
+                          <div
+                            className="h-1 rounded-full bg-white/10 overflow-hidden"
+                            role="progressbar"
+                            aria-label="Included hours used this month"
+                          >
+                            <div
+                              className="h-full rounded-full bg-cyan-400/70 transition-all"
+                              style={{
+                                width: `${
+                                  hoursMeterFraction(usage.tokensUsed, usage.monthlyTokenBudget) *
+                                  100
+                                }%`,
+                              }}
+                            />
+                          </div>
+                          <p className="mt-1.5 text-white/50 text-[11px] leading-relaxed">
+                            {hoursMeterLabel(usage.tokensUsed, usage.monthlyTokenBudget)} · resets{" "}
+                            {new Date(usage.periodEnd).toLocaleDateString(undefined, {
+                              month: "short",
+                              day: "numeric",
+                            })}
+                          </p>
+                        </div>
+                      )}
                     </div>
                   ) : provider === "capturia-hosted" && billing ? (
                     <div>

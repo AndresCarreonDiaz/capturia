@@ -282,6 +282,12 @@ function registerIpc() {
       return hostedBilling.activate(code);
     })
   );
+  // No payload to validate (the call carries none); guarded() gates the
+  // caller and main authenticates with the keychain JWT itself.
+  ipcMain.handle(
+    "billing:usage",
+    guarded(() => hostedBilling.getUsage())
+  );
 
   // On-device streaming speech (macOS 26+ helper). One session at a time;
   // events flow back over the "speech" channel. Availability is a cheap

@@ -51,6 +51,7 @@ interface FetchResponseLike {
 interface HostedBilling {
   startCheckout(): Promise<string>;
   activate(rawCode: unknown): Promise<{ ok: true; devices: number }>;
+  getUsage(): Promise<Record<string, number>>;
   refreshNow(): Promise<{ refreshed: boolean; reason?: string }>;
   start(): void;
   deactivateLocal(): void;
@@ -308,6 +309,41 @@ describe("startCheckout", () => {
     await expect(billing.startCheckout()).rejects.toThrow(
       "Could not start checkout: Stripe is not configured."
     );
+  });
+});
+
+describe("getUsage", () => {
+  const USAGE = {
+    tokensUsed: 275_000,
+    monthlyTokenBudget: 5_500_000,
+    flashTokensUsed: 10_000,
+    flashTokenBudget: 500_000,
+    periodEnd: NOW + 10 * 24 * 60 * 60 * 1000,
+  };
+
+  it("reads the usage endpoint with the stored JWT as a bearer", async () => {
+    const { billing, keychain } = makeBilling();
+    seed(keychain);
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, USAGE));
+    await expect(billing.getUsage()).resolves.toEqual(USAGE);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(`${ORIGIN}/api/hosted/usage`);
+    expect(init.headers.authorization).toBe("Bearer jwt_old");
+  });
+
+  it("refuses without a stored JWT, before any network touch", async () => {
+    const { billing } = makeBilling();
+    await expect(billing.getUsage()).rejects.toThrow(/not active/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the server's error string and rejects malformed 2xx bodies", async () => {
+    const { billing, keychain } = makeBilling();
+    seed(keychain);
+    fetchMock.mockResolvedValueOnce(jsonResponse(401, { error: "token expired" }));
+    await expect(billing.getUsage()).rejects.toThrow(/token expired/);
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { tokensUsed: "many" }));
+    await expect(billing.getUsage()).rejects.toThrow(/unexpected response/);
   });
 });
 
