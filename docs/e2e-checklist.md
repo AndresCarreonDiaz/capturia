@@ -135,7 +135,12 @@ Then by hand:
 2. Voting from the packaged app targets the hosted deploy (issue #52):
    `npm run build:electron` bakes `NEXT_PUBLIC_CAPTURIA_ORIGIN` as
    `https://www.capturia.dev` unless the env sets it (a SET-but-empty var
-   disables it). Toggle Vote on: the QR must render over the feed, a phone
+   disables it). Prerequisite: that deploy must have its Redis vote backend
+   provisioned and certified FIRST (docs/release.md, "Before any release");
+   a serverless deploy without it falls back to the in-memory store, which
+   does not survive across invocations, so this whole step fails with
+   phones stuck on the waiting screen under a confident-looking QR.
+   Toggle Vote on: the QR must render over the feed, a phone
    scanning it lands on `www.capturia.dev/vote/<room>` and its votes move
    the on-feed tally; toggling Vote off returns the phone to its waiting
    screen within a few seconds. A build with the var explicitly emptied
