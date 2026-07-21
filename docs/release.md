@@ -55,6 +55,24 @@ Environment summary (the first two are the pack:mac contract, see
 | `CAPTURIA_EXT_SIGN_IDENTITY_SHA1` | Optional. Pins the exact Developer ID Application certificate (its SHA-1 from `security find-identity -v -p codesigning`) for the extension re-sign when two distinct certificates share a name, e.g. a renewed certificate coexisting with its predecessor; the build refuses to pick one by surprise and names this variable. |
 | `CAPTURIA_NOTARY_PROFILE` | Name of a `notarytool store-credentials` keychain profile (below). Unset: notarization is skipped with a clear log line. Set: the DMG is submitted with `--wait`, rejection fails the build loudly (the developer log is printed), then app and DMG are stapled and `spctl --assess` must accept the app. |
 
+## Publishing the release: the stable-named DMG copy
+
+Every GitHub release carries the DMG twice: the versioned artifact
+(`Capturia-<version>-arm64.dmg`) and a copy named exactly
+`Capturia-arm64.dmg` uploaded alongside it:
+
+```
+cp dist-app/Capturia-<version>-arm64.dmg Capturia-arm64.dmg
+gh release upload <tag> Capturia-arm64.dmg
+```
+
+The stable name is load-bearing: the landing's one-click download route
+(`app/download/route.ts`, served at `/download`) 302s to
+`.../releases/latest/download/Capturia-arm64.dmg`, and GitHub resolves that
+URL only while the latest release carries an asset with that exact name. A
+release published without it breaks the landing's Download button until the
+copy is uploaded.
+
 ## One-time portal setup: the Developer ID provisioning profile
 
 Release builds of `com.capturia.desktop` need a **Developer ID** provisioning
