@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import type { SysextStateReport } from "@/lib/sysext";
+import type { HostedUsage } from "@/lib/hosted-billing";
 
 // Actions main pushes on the "hotkey" channel. index rides along on the
 // "fire-cue" action (deck rail position, 0-based); consumers must validate
@@ -74,6 +75,11 @@ interface CapturiaBridge {
   billing?: {
     checkout: () => Promise<{ ok: boolean }>;
     activate: (code: string) => Promise<{ ok: boolean; devices?: number }>;
+    // Current-period hosted usage for the Settings hours meter; optional
+    // within the optional bridge because it shipped later than
+    // checkout/activate. Rejects when Pro is inactive or the endpoint is
+    // unreachable; callers treat that as "no meter", never an error state.
+    getUsage?: () => Promise<HostedUsage>;
   };
   // Deck codegen: run a prompt on the stored key in main, return raw model text.
   generateCues: (prompt: string, provider: KeyProvider) => Promise<string>;

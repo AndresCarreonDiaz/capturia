@@ -27,6 +27,10 @@ Desktop app (Capturia JWT from keychain)
             entitlement cache          hosted:ent:<customer>
             rate limit                 ~10/min sliding window
             monthly token budget       hosted:usage:<customer>:<YYYY-MM>
+            flash sub-budget           hosted:usage-flash:<customer>:<YYYY-MM>
+                                       (gemini-2.5-flash only, checked after
+                                       the body names the model; deck codegen
+                                       stops while lite traffic continues)
             per-lane lease             hosted:lease:<customer>:<stream|batch>
                                        (live overlay stream and deck codegen
                                        never 409 each other)
@@ -65,6 +69,7 @@ Stripe Checkout (test mode)
 | `POST /api/hosted/v1/generate` | Stable alias: `{ model?, stream?, request }` where `request` is a Gemini `generateContent` payload; streams SSE back |
 | `POST /api/hosted/v1beta/models/<id>:streamGenerateContent` | The exact wire shape `@ai-sdk/google` emits; lets the desktop runtime point at the proxy by swapping `baseURL` + key slot only |
 | `POST /api/hosted/v1beta/models/<id>:generateContent` | Non-streaming variant |
+| `GET /api/hosted/usage` | Current-period usage for the authenticated customer (same JWT check as the proxy): `{ tokensUsed, monthlyTokenBudget, flashTokensUsed, flashTokenBudget, periodEnd }`. Feeds the in-app hours meter |
 | `POST /api/billing/checkout` | Creates the Stripe Checkout session (subscription, `STRIPE_PRICE_ID`) |
 | `POST /api/billing/webhook` | Stripe events -> Redis entitlement cache + activation codes (deduplicated on event.id, ordered by event.created with revocations winning same-second ties, one code per checkout session; dedup markers commit only after effects land, so a mid-apply fault answers 500 and the Stripe retry re-processes instead of being swallowed) |
 | `POST /api/billing/activate` | `{ code, deviceId }` -> `{ refreshToken, token, expiresAt, devices }` |
@@ -111,7 +116,8 @@ fully unit-tested; Electron consumes the gen build.
 | `CAPTURIA_JWT_PRIVATE_KEY` | server | base64 PKCS8 DER Ed25519 (PEM also accepted). Mints JWTs. NEVER commit |
 | `CAPTURIA_JWT_PUBLIC_KEY` | server | base64 SPKI DER. Verifies JWTs at the proxy |
 | `CAPTURIA_HOSTED_MODELS` | server | Optional csv override of the model allowlist |
-| `CAPTURIA_HOSTED_RATE_LIMIT` / `_MONTHLY_TOKENS` / `_LEASE_TTL_MS` | server | Brake tuning (defaults 10/min, 5M tokens, 120s) |
+| `CAPTURIA_HOSTED_RATE_LIMIT` / `_MONTHLY_TOKENS` / `_LEASE_TTL_MS` | server | Brake tuning (defaults 10/min, 5.5M tokens = 20 presentation hours at 275k/hour, 120s) |
+| `CAPTURIA_HOSTED_FLASH_MONTHLY_TOKENS` | server | Monthly `gemini-2.5-flash` sub-budget within the overall allowance (default 500k; deck codegen is the flash consumer). Exhaustion answers 429 with a distinct marker-tagged body in the Gemini error shape, which the desktop app renders as the calm deck-allowance state; lite-tier calls continue |
 | `CAPTURIA_HOSTED_MAX_OUTPUT_TOKENS` | server | Per-request output clamp injected into every forwarded generationConfig (default 8192) |
 | `CAPTURIA_HOSTED_DEV_ENTITLEMENT` | dev only | Seeds an active entitlement + the fixed dev activation code for that customer id. Seeded only into the in-memory backend: ignored in production builds AND whenever real Upstash env is present |
 | `CAPTURIA_HOSTED_URL` | desktop | Proxy origin override for the desktop runtime (dev: `http://localhost:3000/api/hosted`) |

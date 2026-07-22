@@ -31,6 +31,18 @@ export function allowedHostedModels(env: Env = process.env): string[] {
   return models.length > 0 ? models : [...DEFAULT_HOSTED_MODELS];
 }
 
+// Where the Capturia JWT rides on a hosted-surface request: @ai-sdk/google
+// sends the key slot as x-goog-api-key; curl and future clients may prefer a
+// standard bearer. Shared by the proxy and the usage endpoint so "same auth
+// as the proxy" stays true by construction.
+export function hostedTokenFromRequest(request: Request): string | null {
+  const googHeader = request.headers.get("x-goog-api-key");
+  if (googHeader) return googHeader;
+  const auth = request.headers.get("authorization");
+  if (auth?.toLowerCase().startsWith("bearer ")) return auth.slice(7).trim();
+  return null;
+}
+
 export interface HostedPlan {
   modelId: string;
   stream: boolean;

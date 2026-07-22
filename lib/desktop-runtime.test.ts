@@ -8,6 +8,10 @@ import {
   resolveDesktopAgentSpec,
   desktopKeyError,
   isAllowedRuntimeOrigin,
+  classifyHostedExhaustion,
+  hostedExhaustionNotice,
+  HOSTED_BUDGET_EXHAUSTED_MARKER,
+  HOSTED_FLASH_BUDGET_EXHAUSTED_MARKER,
   HOSTED_PROVIDER,
 } from "./desktop-runtime";
 
@@ -174,6 +178,40 @@ describe("desktopKeyError", () => {
     const err = desktopKeyError({ provider: HOSTED_PROVIDER, storedKey: null, env: NO_ENV });
     expect(err).toMatch(/Capturia Pro/);
     expect(err).not.toMatch(/GOOGLE_API_KEY/);
+  });
+});
+
+describe("hosted exhaustion classification", () => {
+  it("finds the markers anywhere in an error string, however wrapped", () => {
+    // The message travels through APICallError, CopilotKit's RUN_ERROR, the
+    // client's "code: message" formatting, and Electron's IPC wrapper; the
+    // classifier must only care that the marker survived.
+    expect(
+      classifyHostedExhaustion(
+        `CKError: Monthly included usage is used up. [${HOSTED_BUDGET_EXHAUSTED_MARKER}]`
+      )
+    ).toBe("hosted_monthly");
+    expect(
+      classifyHostedExhaustion(
+        `Error invoking remote method 'deck:generate': Error: refused [${HOSTED_FLASH_BUDGET_EXHAUSTED_MARKER}]`
+      )
+    ).toBe("hosted_flash");
+  });
+
+  it("never classifies ordinary errors or empty input", () => {
+    expect(classifyHostedExhaustion("429: Rate limit exceeded, slow down.")).toBeNull();
+    expect(classifyHostedExhaustion("")).toBeNull();
+    expect(classifyHostedExhaustion(null)).toBeNull();
+    expect(classifyHostedExhaustion(undefined)).toBeNull();
+  });
+
+  it("speaks hours (never tokens) and says what keeps working", () => {
+    const monthly = hostedExhaustionNotice("hosted_monthly");
+    expect(monthly).toContain("You have used your 20 included hours this month");
+    expect(monthly).not.toMatch(/token/i);
+    const flash = hostedExhaustionNotice("hosted_flash");
+    expect(flash).toMatch(/deck creation allowance/i);
+    expect(flash).not.toMatch(/token/i);
   });
 });
 

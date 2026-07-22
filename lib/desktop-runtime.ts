@@ -121,6 +121,46 @@ export function desktopKeyError({ provider, storedKey, env }: DesktopKeyInput): 
   );
 }
 
+// Wire markers for the hosted proxy's budget refusals (issue #10 slice 4).
+// The proxy embeds one of these in the refusal message it sends in the
+// Gemini error shape, so the exact text survives the trip through
+// @ai-sdk/google (APICallError.message), CopilotKit's RUN_ERROR event, and
+// Electron's IPC rejection wrapper. The renderer then matches the marker
+// instead of parsing status codes it never sees. Defined here (not in
+// lib/hosted/gate.ts) so the electron/gen build stays free of server code,
+// mirroring how lib/hosted/entitlements.ts re-exports ACTIVATION_CODE_RE.
+export const HOSTED_BUDGET_EXHAUSTED_MARKER = "capturia:hosted-budget-exhausted";
+export const HOSTED_FLASH_BUDGET_EXHAUSTED_MARKER = "capturia:hosted-flash-budget-exhausted";
+
+export type HostedExhaustion = "hosted_monthly" | "hosted_flash";
+
+// Flash first: its marker does not contain the monthly one, but checking the
+// more specific state first keeps that true even if the tokens ever change.
+export function classifyHostedExhaustion(text: string | null | undefined): HostedExhaustion | null {
+  if (!text) return null;
+  if (text.includes(HOSTED_FLASH_BUDGET_EXHAUSTED_MARKER)) return "hosted_flash";
+  if (text.includes(HOSTED_BUDGET_EXHAUSTED_MARKER)) return "hosted_monthly";
+  return null;
+}
+
+// The calm operator copy for a budget-exhausted run. Hours, never tokens
+// (the pricing decision on issue #49): Pro is sold as 20 presentation hours
+// a month, and the flash sub-budget is sold as the deck creation allowance.
+// Both promise what KEEPS working, because the failure is only the new run:
+// the camera, the overlays already on screen, and the cue decks stay live.
+export function hostedExhaustionNotice(kind: HostedExhaustion): string {
+  if (kind === "hosted_flash") {
+    return (
+      "Your deck creation allowance for this month is used up. Decks still " +
+      "load with the built-in cue builder, and live overlays keep running."
+    );
+  }
+  return (
+    "You have used your 20 included hours this month. Your camera and the " +
+    "overlays on screen keep working; new AI runs resume when your month renews."
+  );
+}
+
 // Browser origins allowed to call the loopback runtime. The packaged renderer
 // loads from file://, which browsers serialize as the literal string "null";
 // in dev the studio comes from the local Next server (any localhost port,

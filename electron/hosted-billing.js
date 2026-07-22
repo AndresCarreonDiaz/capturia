@@ -25,6 +25,7 @@ const {
   normalizeActivationCode,
   parseActivateResponse,
   parseTokenResponse,
+  parseUsageResponse,
   RETRY_TRANSIENT_MS,
   RETRY_UNENTITLED_MS,
 } = require("./gen/hosted-billing");
@@ -179,6 +180,28 @@ function createHostedBilling({ keychain, env = process.env, log = console } = {}
     return { refreshed: false, reason: `http_${status}` };
   }
 
+  // Current-period usage for the Settings hours meter. The stored JWT
+  // authenticates the read exactly like a generation (same header the proxy
+  // takes); only the validated counters cross back to the renderer, never
+  // the token. Throws a human-readable message; the modal shows nothing on
+  // failure (a meter is not worth an error dialog).
+  async function getUsage() {
+    const token = keychain.getKey(HOSTED_SLOT);
+    if (!token) throw new Error("Capturia Pro is not active on this Mac.");
+    const res = await fetch(`${origin()}/api/hosted/usage`, {
+      headers: { authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok) {
+      const detail = json && typeof json.error === "string" ? json.error : `HTTP ${res.status}`;
+      throw new Error(`Could not read usage: ${detail}`);
+    }
+    const usage = parseUsageResponse(json);
+    if (!usage) throw new Error("Usage returned an unexpected response; try again.");
+    return usage;
+  }
+
   // App boot: if an install has a refresh token, get a fresh JWT right away
   // (the stored one may have expired while the app was closed).
   function start() {
@@ -201,7 +224,7 @@ function createHostedBilling({ keychain, env = process.env, log = console } = {}
     clearTimeout(refreshTimer);
   }
 
-  return { startCheckout, activate, refreshNow, start, deactivateLocal, stop };
+  return { startCheckout, activate, getUsage, refreshNow, start, deactivateLocal, stop };
 }
 
 module.exports = { createHostedBilling, HOSTED_SLOT };

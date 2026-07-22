@@ -13,6 +13,10 @@
 // exact atomic semantics; brakes need cheap, shared, testable logic.
 
 import type { RedisRunner } from "../upstash";
+import {
+  HOSTED_BUDGET_EXHAUSTED_MARKER,
+  HOSTED_FLASH_BUDGET_EXHAUSTED_MARKER,
+} from "../desktop-runtime";
 
 type Env = Record<string, string | undefined>;
 
@@ -21,20 +25,35 @@ export interface GateConfig {
   ratePerMinute: number;
   /** Monthly included token allowance per user (proxy-side brake, not billing). */
   monthlyTokenBudget: number;
+  /** Monthly sub-allowance for the flash tier (deck codegen) within the above. */
+  flashMonthlyTokenBudget: number;
   /** Backstop TTL for the one-stream-per-user lease. */
   leaseTtlMs: number;
 }
 
-// Defaults follow the issue #10 proposal: ~10 req/min vs ~2/min legit, and a
-// token budget sized so 20 "AI hours" of Flash-Lite-class usage fits with
-// headroom (billing-grade hour metering is a later slice; this counter only
-// has to stop runaway spend).
+// Defaults follow the issue #49 pricing decision: ~10 req/min vs ~2/min
+// legit, 5.5M tokens/month so a deck-primed 20-presentation-hour month
+// honestly fits the promise (275k tokens per hour), and a 500k sub-budget
+// for gemini-2.5-flash so deck codegen keeps working while the worst-case
+// burn stays far under the subscription price (flash output tokens cost
+// ~6x the lite tier's).
 export function gateConfigFromEnv(env: Env = process.env): GateConfig {
   return {
     ratePerMinute: positiveInt(env.CAPTURIA_HOSTED_RATE_LIMIT, 10),
-    monthlyTokenBudget: positiveInt(env.CAPTURIA_HOSTED_MONTHLY_TOKENS, 5_000_000),
+    monthlyTokenBudget: positiveInt(env.CAPTURIA_HOSTED_MONTHLY_TOKENS, 5_500_000),
+    flashMonthlyTokenBudget: positiveInt(env.CAPTURIA_HOSTED_FLASH_MONTHLY_TOKENS, 500_000),
     leaseTtlMs: positiveInt(env.CAPTURIA_HOSTED_LEASE_TTL_MS, 120_000),
   };
+}
+
+// Which model the flash sub-budget meters. Exact id, not a pattern: the
+// allowlist ships exactly one flash-class model (lib/hosted/proxy.ts), and
+// an operator who overrides CAPTURIA_HOSTED_MODELS owns the budget shape of
+// whatever they add.
+export const FLASH_BUDGET_MODEL = "gemini-2.5-flash";
+
+export function countsAgainstFlashBudget(modelId: string): boolean {
+  return modelId === FLASH_BUDGET_MODEL;
 }
 
 function positiveInt(raw: string | undefined, fallback: number): number {
@@ -106,8 +125,23 @@ export function monthKey(nowMs: number): string {
   return new Date(nowMs).toISOString().slice(0, 7); // "2026-07"
 }
 
+// When the current usage window rolls over: the first instant of next month
+// in UTC, matching the monthKey granularity above. The usage endpoint
+// reports it so the app can say when the meter resets.
+export function monthEndMs(nowMs: number): number {
+  const d = new Date(nowMs);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+}
+
 function usageKey(customer: string, nowMs: number): string {
   return `hosted:usage:${customer}:${monthKey(nowMs)}`;
+}
+
+// Distinct keyspace, not a suffix on usageKey: the customer id is
+// client-influenced (JWT sub), so the flash counter must never be reachable
+// by crafting a customer string that collides with the plain key's shape.
+function flashUsageKey(customer: string, nowMs: number): string {
+  return `hosted:usage-flash:${customer}:${monthKey(nowMs)}`;
 }
 
 // When a request is refused, the honest retry-after is the earliest instant
@@ -166,20 +200,35 @@ export async function readMonthlyUsage(
   return Number(await run(["GET", usageKey(customer, nowMs)])) || 0;
 }
 
+export async function readFlashMonthlyUsage(
+  run: RedisRunner,
+  customer: string,
+  nowMs: number
+): Promise<number> {
+  return Number(await run(["GET", flashUsageKey(customer, nowMs)])) || 0;
+}
+
 // Post-call accounting; the pre-call gate reads the same counter, so a call
 // in flight is never double-blocked but the NEXT call sees its cost. Tokens
 // are floored at 1 so a response whose usage metadata went missing still
-// costs something.
+// costs something. A flash-tier call charges BOTH counters: the sub-budget
+// carves out part of the monthly allowance, it does not add to it.
 export async function recordUsage(
   run: RedisRunner,
   customer: string,
   totalTokens: number,
-  nowMs: number
+  nowMs: number,
+  modelId?: string
 ): Promise<number> {
   const key = usageKey(customer, nowMs);
   const tokens = Math.max(1, Math.floor(totalTokens) || 0);
   const total = Number(await run(["INCRBY", key, tokens])) || 0;
   await run(["EXPIRE", key, USAGE_TTL_S]);
+  if (modelId && countsAgainstFlashBudget(modelId)) {
+    const flashKey = flashUsageKey(customer, nowMs);
+    await run(["INCRBY", flashKey, tokens]);
+    await run(["EXPIRE", flashKey, USAGE_TTL_S]);
+  }
   return total;
 }
 
@@ -217,9 +266,14 @@ export async function acquireLease(
   };
 }
 
+// Machine-readable refusal class for the two budget states. Rate limits and
+// entitlement refusals stay code-less: clients retry or re-activate; only
+// exhaustion needs a distinct calm rendering (lib/desktop-runtime.ts).
+export type GateRefusalCode = "budget_exhausted" | "flash_budget_exhausted";
+
 export type GateDecision =
   | { ok: true }
-  | { ok: false; status: number; error: string; retryAfterSec?: number };
+  | { ok: false; status: number; error: string; retryAfterSec?: number; code?: GateRefusalCode };
 
 // The brake stack in gate order, cheapest and most global first. None of
 // these need the request body, so the route runs them BEFORE parsing it;
@@ -252,7 +306,37 @@ export async function gateHostedCall(
     return {
       ok: false,
       status: 429,
-      error: "Monthly included usage exhausted; hosted generation resumes next cycle.",
+      code: "budget_exhausted",
+      error:
+        "Monthly included usage is used up; hosted generation resumes when the " +
+        `plan renews. [${HOSTED_BUDGET_EXHAUSTED_MARKER}]`,
+    };
+  }
+  return { ok: true };
+}
+
+// The flash sub-budget, gated separately from gateHostedCall because the
+// model id only exists after the body is planned (the main gate runs before
+// the body is even read). A refusal here is model-scoped by design: deck
+// codegen stops while lite-tier overlay traffic keeps flowing on the
+// remaining monthly allowance.
+export async function gateFlashBudget(
+  run: RedisRunner,
+  customer: string,
+  modelId: string,
+  cfg: GateConfig,
+  nowMs = Date.now()
+): Promise<GateDecision> {
+  if (!countsAgainstFlashBudget(modelId)) return { ok: true };
+  const used = await readFlashMonthlyUsage(run, customer, nowMs);
+  if (used >= cfg.flashMonthlyTokenBudget) {
+    return {
+      ok: false,
+      status: 429,
+      code: "flash_budget_exhausted",
+      error:
+        "The deck creation allowance for this month is used up; other hosted " +
+        `generation continues. [${HOSTED_FLASH_BUDGET_EXHAUSTED_MARKER}]`,
     };
   }
   return { ok: true };

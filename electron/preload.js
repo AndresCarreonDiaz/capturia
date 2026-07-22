@@ -70,6 +70,11 @@ contextBridge.exposeInMainWorld("capturia", {
     activate(code) {
       return ipcRenderer.invoke("billing:activate", { code: String(code ?? "") });
     },
+    // Current-period hosted usage counters for the Settings hours meter.
+    // Read-only; main fetches with the keychain JWT, which never crosses.
+    getUsage() {
+      return ipcRenderer.invoke("billing:usage");
+    },
   },
   // Deck codegen: run a prompt on the user's stored key in main, return raw
   // model text. Used by the deck dropzone to design overlays from a PDF.

@@ -68,6 +68,39 @@ export interface TokenResult {
   expiresAt: number;
 }
 
+// GET /api/hosted/usage response (app/api/hosted/usage/route.ts): the raw
+// token counters the Settings hours meter renders through lib/hosted-hours.
+export interface HostedUsage {
+  tokensUsed: number;
+  monthlyTokenBudget: number;
+  flashTokensUsed: number;
+  flashTokenBudget: number;
+  /** Absolute ms timestamp: when the current usage window resets. */
+  periodEnd: number;
+}
+
+export function parseUsageResponse(body: unknown): HostedUsage | null {
+  const b = body as Record<string, unknown> | null;
+  const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
+  if (
+    !b ||
+    !num(b.tokensUsed) ||
+    !num(b.monthlyTokenBudget) ||
+    !num(b.flashTokensUsed) ||
+    !num(b.flashTokenBudget) ||
+    !num(b.periodEnd)
+  ) {
+    return null;
+  }
+  return {
+    tokensUsed: b.tokensUsed,
+    monthlyTokenBudget: b.monthlyTokenBudget,
+    flashTokensUsed: b.flashTokensUsed,
+    flashTokenBudget: b.flashTokenBudget,
+    periodEnd: b.periodEnd,
+  };
+}
+
 export function parseTokenResponse(body: unknown): TokenResult | null {
   const b = body as Record<string, unknown> | null;
   if (
