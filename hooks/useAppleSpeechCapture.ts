@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { VoiceCaptureState } from "./useVoiceCapture";
 import { isLikelyHallucination } from "@/lib/transcript-stream";
+import { appleSpeechLocale } from "@/lib/voice-locale";
 
 // The apple-speech TranscriptStream engine (M9): on-device streaming
 // transcription through the capturia-speech helper (macOS 26+), spawned and
@@ -21,7 +22,11 @@ interface SpeechEventPayload {
 export function useAppleSpeechCapture(
   onFinalResult: (text: string) => void,
   onInterimResult?: (text: string) => void,
-  onSegmentEnd?: () => void
+  onSegmentEnd?: () => void,
+  // Canonical BCP-47 tag from lib/voice-locale.ts; converted to the
+  // helper's underscore form at start. A change mid-session restarts the
+  // helper in the new language (see the locale effect below).
+  locale?: string
 ): VoiceCaptureState {
   const [isListening, setIsListening] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState("");
@@ -146,35 +151,67 @@ export function useAppleSpeechCapture(
     });
   }, []);
 
-  const startListening = useCallback(async () => {
+  // The current locale, readable from the stable callbacks below without
+  // re-registering them; the effect after startSession owns the mid-session
+  // restart when it changes.
+  const localeRef = useRef(locale);
+
+  // Open a helper session in the current locale. Shared by startListening
+  // and the live language switch; the generation counter makes a superseded
+  // start adopt-and-stop its session instead of clobbering the newer one's
+  // id (two quick locale flips race their IPC round trips).
+  const startGenRef = useRef(0);
+  const startSession = useCallback(async (status: string) => {
     const speech = window.capturia?.speech;
-    if (!speech || listeningRef.current) return;
-    listeningRef.current = true;
+    if (!speech) return;
+    const gen = ++startGenRef.current;
     startingRef.current = true;
-    setIsListening(true);
-    setLastError("");
-    setInterimTranscript("");
-    setSpeechStatus("starting speech engine…");
+    setSpeechStatus(status);
     try {
-      const id = await speech.start();
+      const id = await speech.start(appleSpeechLocale(localeRef.current));
       // A stop (or unmount, which clears listeningRef) can land during the
       // IPC round trip; adopting the session then would leave a hot mic
       // nothing points at.
-      if (!listeningRef.current) {
+      if (gen !== startGenRef.current || !listeningRef.current) {
         speech.stop(id).catch(() => {});
         return;
       }
       sessionIdRef.current = id;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setLastError(msg);
-      setSpeechStatus(`error: ${msg}`);
-      listeningRef.current = false;
-      setIsListening(false);
+      // A superseded start's failure is not the newer session's problem.
+      if (gen === startGenRef.current) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setLastError(msg);
+        setSpeechStatus(`error: ${msg}`);
+        listeningRef.current = false;
+        setIsListening(false);
+      }
     } finally {
-      startingRef.current = false;
+      if (gen === startGenRef.current) startingRef.current = false;
     }
   }, []);
+
+  const startListening = useCallback(async () => {
+    if (!window.capturia?.speech || listeningRef.current) return;
+    listeningRef.current = true;
+    setIsListening(true);
+    setLastError("");
+    setInterimTranscript("");
+    await startSession("starting speech engine…");
+  }, [startSession]);
+
+  // Live language switch: while listening, start a NEW helper session in the
+  // new locale. Main's speech:start stops the old helper itself, and the
+  // sessionId tag on events lets the old session's trailing finals/done
+  // drain without touching this one (the same overlap a stop/start restart
+  // already survives; startingRef keeps the drain from flipping the
+  // listening state).
+  useEffect(() => {
+    const prev = localeRef.current;
+    localeRef.current = locale;
+    if (prev === locale || !listeningRef.current) return;
+    void startSession("switching language…");
+  }, [locale, startSession]);
 
   const stopListening = useCallback(() => {
     const speech = window.capturia?.speech;

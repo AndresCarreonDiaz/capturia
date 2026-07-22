@@ -14,6 +14,11 @@ const { randomUUID } = require("crypto");
 
 // base.en: 142MB, real-time on Apple Silicon, ~2x better accuracy than tiny.en.
 // Bump to small.en (466MB) later if accuracy is still a complaint.
+// ENGLISH-ONLY by construction (the .en models have no other languages), so
+// this engine ignores the voice-language setting; the Settings picker pins
+// English while this is the active engine (macOS before 26, where the
+// apple-speech helper is unavailable). Shipping the multilingual "base"
+// model instead is the day other languages land on this path.
 const MODEL_NAME = "base.en";
 const TIMESTAMP_RE = /\[\d{2}:\d{2}:\d{2}\.\d{3}\s+-->\s+\d{2}:\d{2}:\d{2}\.\d{3}\]\s*/g;
 

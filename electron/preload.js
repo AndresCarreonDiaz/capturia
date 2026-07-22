@@ -163,6 +163,17 @@ contextBridge.exposeInMainWorld("capturia", {
       return ipcRenderer.invoke("telemetry:ack");
     },
   },
+  // Voice recognition language (issue #53): the renderer reads and sets the
+  // canonical BCP-47 tag; main validates against the curated list and
+  // persists it in settings.json alongside the telemetry consent.
+  voiceLocale: {
+    get() {
+      return ipcRenderer.invoke("voice-locale:get");
+    },
+    set(tag) {
+      return ipcRenderer.invoke("voice-locale:set", String(tag ?? ""));
+    },
+  },
   // On-device streaming speech (macOS 26+): start/stop the mic helper and
   // subscribe to its events (ready/interim/final/error/done).
   speech: {

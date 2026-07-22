@@ -40,9 +40,11 @@ const SEND_TIMEOUT_MS = 3000;
 
 // Simple settings store in userData: read-modify-write of a small JSON
 // object, resilient to a missing or corrupt file. Holds { telemetry,
-// installId, cameraInstalledReported }. Writes go through a temp file +
-// rename so a crash mid-write can never truncate the file and lose a
-// persisted opt-out.
+// installId, cameraInstalledReported, voiceLocale }. Writes go through a
+// temp file + rename so a crash mid-write can never truncate the file and
+// lose a persisted opt-out. Exported so other main modules (the voice-locale
+// IPC) share this one read-modify-write path instead of racing a second
+// writer against the same file.
 function settingsPath() {
   return path.join(app.getPath("userData"), "settings.json");
 }
@@ -193,4 +195,4 @@ function createTelemetry({ disabled = false, log = console } = {}) {
   return { send, isEnabled, setEnabled, ackDisclosure };
 }
 
-module.exports = { createTelemetry };
+module.exports = { createTelemetry, readSettings, writeSettings };
