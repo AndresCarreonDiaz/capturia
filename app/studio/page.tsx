@@ -49,6 +49,7 @@ import { useRecorder } from "@/hooks/useRecorder";
 import { useCameraExtension, useDesktopHotkey, useDesktopStateReport } from "@/hooks/useDesktopHotkey";
 import { useKeyVault } from "@/hooks/useKeyVault";
 import { useVoiceLocale } from "@/hooks/useVoiceLocale";
+import { useCameraDevice } from "@/hooks/useCameraDevice";
 import { voiceLanguageName } from "@/lib/voice-locale";
 import type { KeyProvider } from "@/hooks/useDesktopHotkey";
 import SettingsModal from "@/components/SettingsModal";
@@ -202,6 +203,10 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
   // every speech engine below and to the agent context so overlay copy
   // follows the speaker's language.
   const { locale: voiceLocale, setLocale: setVoiceLocale } = useVoiceLocale();
+  // The capture camera (issue #12): a persisted {deviceId, label} pick, null
+  // for automatic. Resolved at acquisition time inside WebcamFeed; the
+  // Settings picker writes it, and a rotated deviceId is persisted back.
+  const { preference: cameraPreference, setPreference: setCameraPreference } = useCameraDevice();
   // The full-screen stage; audio-reactivity publishes --mic-energy onto it.
   const stageRef = useRef<HTMLDivElement>(null);
   // v2 agent driver: sends the user turn through the AG-UI agent + core runAgent
@@ -1179,7 +1184,14 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
           visible Control Room starts with the camera OFF so launching the
           app to prep a deck or buy Pro never lights the LED (the stage's
           "Go on camera" is the intent signal). */}
-      <WebcamFeed autoStart={isMirrorReceiver} />
+      <WebcamFeed
+        autoStart={isMirrorReceiver}
+        preferredDevice={cameraPreference}
+        // A receiver never writes stores: on desktop the pick lives in
+        // main's settings.json, and a receiver-side localStorage write
+        // would fork the source of truth.
+        onPreferredDeviceResolved={isMirrorReceiver ? undefined : setCameraPreference}
+      />
 
       {/* Layer 0.4: audio-reactive vignette. Breathes with --mic-energy (set by
           useSpeechEnergy from speech results, or from mirrored speak pings on
@@ -1507,6 +1519,8 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
             onRefreshKeys={vault.refresh}
             voiceLocale={voiceLocale}
             onSelectVoiceLocale={setVoiceLocale}
+            cameraPreference={cameraPreference}
+            onSelectCamera={setCameraPreference}
           />
         </>
       )}
