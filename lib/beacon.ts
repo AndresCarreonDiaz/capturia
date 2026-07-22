@@ -46,6 +46,12 @@ export const MAX_BEACON_BODY_BYTES = 512;
 export const RATE_LIMIT_MAX = 30;
 export const RATE_LIMIT_WINDOW_MS = 60_000;
 
+// The public summary GET rides the same limiter with a tighter budget: the
+// CDN's s-maxage serves almost every reader, so 10/minute per IP is plenty
+// for cache misses while bounding what a curl loop can spend in Redis
+// commands (a summary read is one nine-command pipeline).
+export const SUMMARY_RATE_LIMIT_MAX = 10;
+
 // Unique-install keys expire on their own: dailies live long enough to
 // compute a trailing week plus a debugging margin, monthlies long enough for
 // a year-over-year look. Event counters are tiny, bounded, and deliberately
@@ -149,9 +155,10 @@ export const beaconKeys = {
   rateLimit: (bucket: string) => `beacon:rl:${bucket}`,
 };
 
-// What the owner-only summary endpoint returns. All aggregates, no per-user
-// records: unique counts come from HyperLogLogs, so individual installIds
-// are not even recoverable from storage.
+// What the public summary endpoint returns (and /metrics renders). All
+// aggregates, no per-user records: unique counts come from HyperLogLogs, so
+// individual installIds are not even recoverable from storage, which is why
+// serving this to anyone is safe by construction.
 export interface BeaconSummary {
   backend: "memory" | "redis";
   day: string;

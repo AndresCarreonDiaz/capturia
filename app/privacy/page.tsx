@@ -19,7 +19,7 @@ export const metadata: Metadata = {
 
 export default function PrivacyPage() {
   return (
-    <LegalShell eyebrow="Privacy" title="Privacy Policy" lastUpdated="July 21, 2026">
+    <LegalShell eyebrow="Privacy" title="Privacy Policy" lastUpdated="July 22, 2026">
       <LegalSection title="The short version">
         <p>
           Capturia has no accounts, no sign-up, and no user database. In the
@@ -63,7 +63,11 @@ export default function PrivacyPage() {
           names, or any free-form text. The server rejects payloads with extra
           fields, and it stores aggregate counts only: individual install ids
           are not recoverable from storage, and raw IP addresses are never
-          stored.
+          stored. Those aggregate counts are publicly visible at{" "}
+          <a href="/metrics" className="cue-link">
+            /metrics
+          </a>
+          , so you can see everything the beacon adds up to, exactly as we do.
         </p>
         <p>
           Nothing is sent before you have seen the first-run disclosure and its

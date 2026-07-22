@@ -80,7 +80,7 @@ Aggregates only, in Redis (Upstash), with no per-user records:
 | `beacon:count:<event>` | plain counter per event | none |
 | `beacon:versions` | hash of appVersion to launch count (capped at 200 fields) | 800 days |
 | `beacon:versions-overflow` | launches whose NEW version was refused by the field cap | 800 days |
-| `beacon:rl:<hash>` | per-IP rate limit counter; the only IP-derived value, a truncated SHA-256, gone when the window expires | 60 s |
+| `beacon:rl:<bucket>` | per-IP rate limit counter; the only IP-derived value, a truncated SHA-256, gone when the window expires (beacon POSTs use the bare hash, public summary reads a `summary:`-prefixed one) | 60 s |
 
 HyperLogLogs can only answer "how many", never "who": individual installIds
 are not recoverable from storage. Raw IPs are never stored at all.
@@ -105,13 +105,33 @@ vote store).
 
 ## Reading the numbers
 
-Owner-only summary endpoint, guarded by `CAPTURIA_METRICS_TOKEN` (with the
-env var unset the endpoint answers 503 and exposes nothing):
+The summary endpoint and the dashboard on top of it are public, by decision
+rather than by accident: every number is an aggregate count, the unique
+counts live in HyperLogLogs that can only answer "how many", never "who",
+and the release download counts shown next to them are numbers GitHub
+already publishes for anyone. There is nothing per-user to protect, so
+there is no token to manage and no login to fumble on a phone. If gating is
+ever wanted back, the old bearer-token gate lives in the git history of
+`app/api/beacon/summary/route.ts` and reverting it is a one-file change.
+
+Two ways to read it:
+
+- `https://www.capturia.dev/metrics`: the dashboard (beacon aggregates plus
+  GitHub release downloads, auto-refreshing while visible). Noindexed and
+  absent from the landing nav; the privacy page links it as part of the
+  transparency promise, and anyone with the URL can open it.
+- The raw endpoint, no headers needed:
 
 ```sh
-curl -H "Authorization: Bearer $CAPTURIA_METRICS_TOKEN" \
-  https://www.capturia.dev/api/beacon/summary
+curl https://www.capturia.dev/api/beacon/summary
 ```
+
+Being public and unauthenticated, the endpoint protects the Redis bill
+instead of a secret: responses carry `Cache-Control: public, s-maxage=300,
+stale-while-revalidate=600` so the CDN serves almost every reader (adoption
+numbers do not move faster than five minutes), and the cache-miss path has
+a 10/minute per-IP limit on the same truncated-hash limiter the beacon POST
+uses, under its own `summary:` bucket namespace.
 
 ```json
 {
@@ -150,11 +170,11 @@ CTA). The Electron build ships none of it: `next.config.ts` aliases
 - Vercel: enable Web Analytics on the project (dashboard toggle; already
   done for www.capturia.dev). Pageviews and `download_click` appear under
   Analytics after the next deploy.
-- Vercel env: set `CAPTURIA_METRICS_TOKEN` to a long random secret (this
-  also arms `/api/beacon/summary`). The Upstash integration provides
-  `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` (or the KV flavor),
-  shared with the vote store; the beacon uses the same database.
+- Vercel env: the Upstash integration provides `UPSTASH_REDIS_REST_URL` /
+  `UPSTASH_REDIS_REST_TOKEN` (or the KV flavor), shared with the vote
+  store; the beacon uses the same database. The summary endpoint needs no
+  env of its own.
 - Desktop dev: point the app at a local endpoint with
   `CAPTURIA_BEACON_URL=http://localhost:3000/api/beacon npm run electron-dev`
-  and read it back from `http://localhost:3000/api/beacon/summary` (set
-  `CAPTURIA_METRICS_TOKEN` for the dev server first).
+  and read it back from `http://localhost:3000/api/beacon/summary` (or on
+  `http://localhost:3000/metrics`); no token, it is public.

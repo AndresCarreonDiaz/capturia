@@ -33,7 +33,9 @@ export interface BeaconStore {
   record(payload: BeaconPayload, now?: number): Promise<void>;
   summary(now?: number): Promise<BeaconSummary>;
   // Fixed-window per-bucket rate limit; true = this request may proceed.
-  allow(bucket: string, now?: number): Promise<boolean>;
+  // `max` defaults to the beacon POST budget; the public summary GET passes
+  // its own tighter cap (SUMMARY_RATE_LIMIT_MAX) under a namespaced bucket.
+  allow(bucket: string, now?: number, max?: number): Promise<boolean>;
 }
 
 function zeroCounts(): Record<BeaconEvent, number> {
@@ -105,7 +107,7 @@ export function createMemoryBeaconStore(): BeaconStore {
       };
     },
 
-    async allow(bucket, now = Date.now()) {
+    async allow(bucket, now = Date.now(), max = RATE_LIMIT_MAX) {
       // Opportunistic sweep so abandoned buckets do not accumulate.
       if (limiter.size > 1000) {
         for (const [key, entry] of limiter) if (now >= entry.resetAt) limiter.delete(key);
@@ -116,7 +118,7 @@ export function createMemoryBeaconStore(): BeaconStore {
         return true;
       }
       entry.count += 1;
-      return entry.count <= RATE_LIMIT_MAX;
+      return entry.count <= max;
     },
   };
 }
@@ -223,11 +225,11 @@ export function createRedisBeaconStore(pipeline: RedisPipeline): BeaconStore {
       };
     },
 
-    async allow(bucket) {
+    async allow(bucket, _now, max = RATE_LIMIT_MAX) {
       const res = await pipeline([
         ["EVAL", RATE_LIMIT_LUA, 1, beaconKeys.rateLimit(bucket), RATE_LIMIT_WINDOW_MS],
       ]);
-      return (Number(res[0]) || 0) <= RATE_LIMIT_MAX;
+      return (Number(res[0]) || 0) <= max;
     },
   };
 }

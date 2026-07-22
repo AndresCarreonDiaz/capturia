@@ -5,7 +5,7 @@ import { getBeaconStore } from "@/lib/beacon-store";
 // Anonymous desktop beacon (docs/telemetry.md). The Capturia app POSTs
 //   { installId, event, appVersion, macosVersion }
 // on launch and on camera activation; storage is aggregate-only (unique
-// installs in HyperLogLogs, plain counters), read back by the owner via
+// installs in HyperLogLogs, plain counters), read back publicly via
 // /api/beacon/summary. Public endpoint, so: strict allowlist validation
 // (lib/beacon.ts rejects extra fields outright), a small body cap, and a
 // per-IP rate limit whose only IP-derived value is a truncated hash that
