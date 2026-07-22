@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { SysextStateReport } from "@/lib/sysext";
 import type { HostedUsage } from "@/lib/hosted-billing";
+import type { CameraPreference } from "@/lib/camera-select";
 
 // Actions main pushes on the "hotkey" channel. index rides along on the
 // "fire-cue" action (deck rail position, 0-based); consumers must validate
@@ -130,6 +131,16 @@ interface CapturiaBridge {
   voiceLocale?: {
     get: () => Promise<{ locale: string } | null>;
     set: (tag: string) => Promise<{ locale: string } | null>;
+  };
+  // Camera pick (issue #12); optional for the same stale-preload reason. The
+  // persisted {deviceId, label} the stage should capture, null = automatic;
+  // main validates (lib/camera-select.ts), persists it in settings.json, and
+  // threads it into the offscreen Program Output page.
+  cameraDevice?: {
+    get: () => Promise<{ preference: CameraPreference | null } | null>;
+    set: (
+      preference: CameraPreference | null
+    ) => Promise<{ preference: CameraPreference | null } | null>;
   };
   // On-device streaming speech (macOS 26+ helper); optional for the same
   // stale-preload reason. Events: ready | downloading-model | interim |

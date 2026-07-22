@@ -174,6 +174,18 @@ contextBridge.exposeInMainWorld("capturia", {
       return ipcRenderer.invoke("voice-locale:set", String(tag ?? ""));
     },
   },
+  // Camera pick (issue #12): the renderer reads and sets the persisted
+  // {deviceId, label} the stage should capture (null = automatic). Main
+  // validates against lib/camera-select.ts, persists it in settings.json,
+  // and threads it into the offscreen Program Output page.
+  cameraDevice: {
+    get() {
+      return ipcRenderer.invoke("camera-device:get");
+    },
+    set(preference) {
+      return ipcRenderer.invoke("camera-device:set", preference ?? null);
+    },
+  },
   // On-device streaming speech (macOS 26+): start/stop the mic helper and
   // subscribe to its events (ready/interim/final/error/done).
   speech: {
