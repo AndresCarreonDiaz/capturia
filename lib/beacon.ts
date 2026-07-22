@@ -46,6 +46,12 @@ export const MAX_BEACON_BODY_BYTES = 512;
 export const RATE_LIMIT_MAX = 30;
 export const RATE_LIMIT_WINDOW_MS = 60_000;
 
+// The public summary GET rides the same limiter with a tighter budget: the
+// CDN's s-maxage serves almost every reader, so 10/minute per IP is plenty
+// for cache misses while bounding what a curl loop can spend in Redis
+// commands (a summary read is one nine-command pipeline).
+export const SUMMARY_RATE_LIMIT_MAX = 10;
+
 // Unique-install keys expire on their own: dailies live long enough to
 // compute a trailing week plus a debugging margin, monthlies long enough for
 // a year-over-year look. Event counters are tiny, bounded, and deliberately

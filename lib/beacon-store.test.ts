@@ -87,6 +87,14 @@ describe("memory beacon store aggregation", () => {
     // The window rolling over resets the count.
     expect(await store.allow("bucket-1", NOW + RATE_LIMIT_WINDOW_MS)).toBe(true);
   });
+
+  it("honors a per-call max (the public summary GET's tighter budget)", async () => {
+    const store = createMemoryBeaconStore();
+    for (let i = 0; i < 10; i++) {
+      expect(await store.allow("summary:bucket", NOW, 10)).toBe(true);
+    }
+    expect(await store.allow("summary:bucket", NOW, 10)).toBe(false);
+  });
 });
 
 // Glue-level tests for the Redis flavor: a fake pipeline plays the Upstash
@@ -172,6 +180,9 @@ describe("redis beacon store", () => {
     expect(await under.allow("bucket")).toBe(true);
     const over = createRedisBeaconStore(fakePipeline([RATE_LIMIT_MAX + 1]).pipeline);
     expect(await over.allow("bucket")).toBe(false);
+    // A per-call max overrides the default POST budget.
+    const custom = createRedisBeaconStore(fakePipeline([11]).pipeline);
+    expect(await custom.allow("summary:bucket", undefined, 10)).toBe(false);
   });
 });
 
