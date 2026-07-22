@@ -30,7 +30,9 @@ const { createTray } = require("./tray");
 const { createUpdateCheck } = require("./update-check");
 const { logCrash, crashLogPath } = require("./crash-log");
 const { maybeOfferMoveToApplications, offerMoveToApplications } = require("./first-run");
-const { createTelemetry } = require("./telemetry");
+const { createTelemetry, readSettings, writeSettings } = require("./telemetry");
+const { normalizeVoiceLocale, appleSpeechLocale } = require("./gen/voice-locale");
+const { normalizeCameraPreference } = require("./gen/camera-select");
 const speechHelper = require("./speech-helper");
 const {
   isTrustedSender,
@@ -287,6 +289,30 @@ function registerIpc() {
       return hostedBilling.activate(code);
     })
   );
+  // No payload to validate (the call carries none); guarded() gates the
+  // caller and main authenticates with the keychain JWT itself.
+  ipcMain.handle(
+    "billing:usage",
+    guarded(() => hostedBilling.getUsage())
+  );
+  // Server-side seat release only: the renderer follows up with the normal
+  // keys:clear("capturia-hosted"), which routes to deactivateLocal above, so
+  // the vault clear has exactly one path (issue #10 self-serve deactivation).
+  ipcMain.handle(
+    "billing:deactivate",
+    guarded(() => hostedBilling.deactivateRemote())
+  );
+  // Stripe customer portal (issue #48): like checkout, the URL opens in the
+  // OS browser from main and never crosses to the renderer; getPortalUrl
+  // enforces https before shell.openExternal sees anything.
+  ipcMain.handle(
+    "billing:portal",
+    guarded(async () => {
+      const url = await hostedBilling.getPortalUrl();
+      await shell.openExternal(url);
+      return { ok: true };
+    })
+  );
 
   // On-device streaming speech (macOS 26+ helper). One session at a time;
   // events flow back over the "speech" channel. Availability is a cheap
@@ -303,7 +329,10 @@ function registerIpc() {
       // session's id and orphan the mic).
       let sessionId;
       sessionId = speechHelper.startSpeechSession({
-        locale: typeof locale === "string" ? locale : "en_US",
+        // Whatever the renderer sends lands on a curated language in the
+        // helper's underscore form; a stale or hostile payload cannot put
+        // an arbitrary string on the helper's command line.
+        locale: appleSpeechLocale(locale),
         onEvent: (e) => {
           if (!sender.isDestroyed()) sender.send("speech", { ...e, sessionId });
         },
@@ -357,6 +386,50 @@ function registerIpc() {
   // in an earlier session). Releases the first-run consent gate holding the
   // launch ping (electron/telemetry.js); idempotent on later runs.
   ipcMain.handle("telemetry:ack", guarded(() => ({ enabled: telemetry.ackDisclosure() })));
+
+  // Voice recognition language (issue #53): the renderer reads and sets the
+  // canonical BCP-47 tag; it persists in the same userData/settings.json as
+  // the telemetry consent. Both directions run through the curated-list
+  // normalizer, so a hand-edited or stale file can only ever yield a tag the
+  // speech engines actually support.
+  ipcMain.handle(
+    "voice-locale:get",
+    guarded(() => ({ locale: normalizeVoiceLocale(readSettings().voiceLocale) }))
+  );
+  ipcMain.handle(
+    "voice-locale:set",
+    guarded((_event, tag) => {
+      if (typeof tag !== "string") {
+        throw new Error("Capturia: voice-locale:set expects a string.");
+      }
+      const locale = normalizeVoiceLocale(tag);
+      writeSettings({ voiceLocale: locale });
+      return { locale };
+    })
+  );
+
+  // Camera pick (issue #12): the renderer reads and sets the persisted
+  // {deviceId, label} the stage should capture; null means automatic (the
+  // physical-input heuristic). Normalized both ways so a hand-edited
+  // settings.json can never aim the stage at the Capturia camera itself. A
+  // set is pushed straight into the offscreen Program Output page, so the
+  // published feed re-aims live without a camera restart.
+  ipcMain.handle(
+    "camera-device:get",
+    guarded(() => ({ preference: normalizeCameraPreference(readSettings().cameraDevice) }))
+  );
+  ipcMain.handle(
+    "camera-device:set",
+    guarded((_event, raw) => {
+      const preference = normalizeCameraPreference(raw);
+      if (raw !== null && preference === null) {
+        throw new Error("Capturia: camera-device:set expects { deviceId, label } or null.");
+      }
+      writeSettings({ cameraDevice: preference });
+      cameraFeed?.applyCameraDevice();
+      return { preference };
+    })
+  );
 
   // Renderer -> main: voice state for the tray (listening on/off, whether the
   // speech engine exists) plus the loaded deck size for the cue hotkeys.
@@ -877,6 +950,9 @@ if (!gotTheLock) {
       cameraFeed = createCameraFeed({
         studioUrl: STUDIO_URL,
         isAllowedNavigation: (url) => isAllowedUrl(url, trustOpts),
+        // The persisted camera pick, read fresh per injection so a set that
+        // just wrote settings.json threads the new value.
+        getCameraDevice: () => normalizeCameraPreference(readSettings().cameraDevice),
         onStateChange: (state) => {
           tray?.update();
           // Fires on lifecycle transitions only (not per frame), so this is a

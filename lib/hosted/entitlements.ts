@@ -235,9 +235,9 @@ export type DeviceRegistration =
   | { ok: true; devices: number }
   | { ok: false; error: "device_limit" };
 
-// Idempotent per device id; refuses the 4th distinct device. (The proposal's
-// auto-deactivate-oldest UX belongs to the desktop entitlement slice; the
-// hard cap is what protects the metered backend today.) Add-first then
+// Idempotent per device id; refuses the 4th distinct device. (Freeing a seat
+// is self-serve: deactivateDevice below, driven by Settings on the old Mac;
+// the hard cap is what protects the metered backend.) Add-first then
 // self-correct: two racing activations can both SADD past the cap for a
 // moment, but each rolls back its own overflow, so the set converges to at
 // most MAX_DEVICES under any interleaving without needing Lua.
@@ -291,7 +291,8 @@ export async function redeemActivationCode(
     return {
       ok: false,
       status: 403,
-      error: "Device limit reached (3). Deactivate another device first.",
+      error:
+        "Device limit reached (3). Free a seat first: on an old Mac, open Settings and choose Deactivate this device.",
     };
   }
 
@@ -309,6 +310,30 @@ export async function isDeviceRegistered(
   deviceId: string
 ): Promise<boolean> {
   return Number(await run(["SISMEMBER", devicesKey(customer), deviceId])) === 1;
+}
+
+export interface DeviceDeactivation {
+  removed: boolean;
+  devices: number;
+}
+
+// Self-serve seat release (issue #10): a device gives its own slot back so
+// the buyer can activate a newer Mac without support. Idempotent by
+// construction: SREM of an absent member is a no-op, so a retried
+// deactivation converges on the same state instead of failing. The device's
+// refresh token is deliberately NOT hunted down here (the store only holds
+// hashes, there is no per-device index): the token endpoint re-checks
+// registration on every mint, so an unregistered device stops minting
+// within one JWT lifetime, and re-activating the same device later simply
+// takes a seat again.
+export async function deactivateDevice(
+  run: RedisRunner,
+  customer: string,
+  deviceId: string
+): Promise<DeviceDeactivation> {
+  const removed = Number(await run(["SREM", devicesKey(customer), deviceId])) === 1;
+  const devices = Number(await run(["SCARD", devicesKey(customer)])) || 0;
+  return { removed, devices };
 }
 
 export interface RefreshRecord {

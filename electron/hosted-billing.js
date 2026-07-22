@@ -25,6 +25,7 @@ const {
   normalizeActivationCode,
   parseActivateResponse,
   parseTokenResponse,
+  parseUsageResponse,
   RETRY_TRANSIENT_MS,
   RETRY_UNENTITLED_MS,
 } = require("./gen/hosted-billing");
@@ -179,6 +180,80 @@ function createHostedBilling({ keychain, env = process.env, log = console } = {}
     return { refreshed: false, reason: `http_${status}` };
   }
 
+  // Current-period usage for the Settings hours meter. The stored JWT
+  // authenticates the read exactly like a generation (same header the proxy
+  // takes); only the validated counters cross back to the renderer, never
+  // the token. Throws a human-readable message; the modal shows nothing on
+  // failure (a meter is not worth an error dialog).
+  async function getUsage() {
+    const token = keychain.getKey(HOSTED_SLOT);
+    if (!token) throw new Error("Capturia Pro is not active on this Mac.");
+    const res = await fetch(`${origin()}/api/hosted/usage`, {
+      headers: { authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok) {
+      const detail = json && typeof json.error === "string" ? json.error : `HTTP ${res.status}`;
+      throw new Error(`Could not read usage: ${detail}`);
+    }
+    const usage = parseUsageResponse(json);
+    if (!usage) throw new Error("Usage returned an unexpected response; try again.");
+    return usage;
+  }
+
+  // Server-side seat release for THIS device (issue #10): POSTs the
+  // deactivation endpoint with the stored JWT, which names the device, so
+  // main sends no id and the server can only free the caller's own slot.
+  // Deliberately does NOT touch the vault: the local clear stays with the
+  // keys:clear routing (classifyVaultClear -> deactivateLocal), so there is
+  // exactly one local-deactivation path and the renderer drives both steps.
+  // Throws a human-readable message on failure; nothing is cleared then, so
+  // the seat and the credentials stay consistent and the user can retry.
+  async function deactivateRemote() {
+    const token = keychain.getKey(HOSTED_SLOT);
+    if (!token) throw new Error("Capturia Pro is not active on this Mac.");
+    let res;
+    let json = null;
+    try {
+      res = await fetch(`${origin()}/api/billing/deactivate`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      json = await res.json().catch(() => null);
+    } catch {
+      throw new Error("Could not reach the Capturia server; check your connection and try again.");
+    }
+    if (!res.ok) {
+      const detail = json && typeof json.error === "string" ? json.error : `HTTP ${res.status}`;
+      throw new Error(`Could not deactivate this device: ${detail}`);
+    }
+    return { ok: true };
+  }
+
+  // Stripe Billing Portal for this customer (card, invoices, cancel). Same
+  // https-only rule as startCheckout: the URL goes straight to
+  // shell.openExternal, so a compromised or misconfigured billing origin
+  // must not be able to hand the OS an arbitrary scheme.
+  async function getPortalUrl() {
+    const token = keychain.getKey(HOSTED_SLOT);
+    if (!token) throw new Error("Capturia Pro is not active on this Mac.");
+    const res = await fetch(`${origin()}/api/billing/portal`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    const json = await res.json().catch(() => null);
+    const url =
+      json && typeof json.url === "string" && /^https:\/\//i.test(json.url) ? json.url : null;
+    if (!res.ok || !url) {
+      const detail = json && typeof json.error === "string" ? json.error : `HTTP ${res.status}`;
+      throw new Error(`Could not open the subscription portal: ${detail}`);
+    }
+    return url;
+  }
+
   // App boot: if an install has a refresh token, get a fresh JWT right away
   // (the stored one may have expired while the app was closed).
   function start() {
@@ -201,7 +276,17 @@ function createHostedBilling({ keychain, env = process.env, log = console } = {}
     clearTimeout(refreshTimer);
   }
 
-  return { startCheckout, activate, refreshNow, start, deactivateLocal, stop };
+  return {
+    startCheckout,
+    activate,
+    getUsage,
+    getPortalUrl,
+    refreshNow,
+    start,
+    deactivateLocal,
+    deactivateRemote,
+    stop,
+  };
 }
 
 module.exports = { createHostedBilling, HOSTED_SLOT };

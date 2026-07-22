@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { voteOriginUsable, voteUrlLocalhostOnly } from "./vote-url";
+import { voteApiBase, voteOriginUsable, voteUrlLocalhostOnly } from "./vote-url";
 
 describe("voteOriginUsable", () => {
   it("accepts http and https origins", () => {
@@ -38,5 +38,27 @@ describe("voteUrlLocalhostOnly", () => {
     expect(voteUrlLocalhostOnly("https://capturia.example/vote/abc")).toBe(false);
     // a path that merely contains the word localhost is not a loopback host
     expect(voteUrlLocalhostOnly("https://capturia.example/vote/localhost")).toBe(false);
+  });
+});
+
+describe("voteApiBase", () => {
+  it("keeps room traffic same-origin on any http(s) studio", () => {
+    expect(voteApiBase("", "http://localhost:3000")).toBe("");
+    expect(voteApiBase("", "https://www.capturia.dev")).toBe("");
+    // Advertising a tunnel/public origin must NOT reroute the studio's own
+    // publishes: that origin fronts this very server end to end.
+    expect(voteApiBase("https://tunnel.example", "http://localhost:3000")).toBe("");
+  });
+
+  it("routes the packaged app's file:// traffic to the baked hosted origin", () => {
+    expect(voteApiBase("https://www.capturia.dev", "file://")).toBe("https://www.capturia.dev");
+    expect(voteApiBase("https://www.capturia.dev", "null")).toBe("https://www.capturia.dev");
+    expect(voteApiBase("https://www.capturia.dev", "")).toBe("https://www.capturia.dev");
+  });
+
+  it("yields no base when neither origin is usable (voting is gated off)", () => {
+    expect(voteApiBase("", "file://")).toBe("");
+    expect(voteApiBase("file://", "null")).toBe("");
+    expect(voteApiBase("", "")).toBe("");
   });
 });

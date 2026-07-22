@@ -10,6 +10,7 @@ import {
   ACTIVATION_CODE_RE,
   applyStripeEvent,
   consumeActivationCode,
+  deactivateDevice,
   isDeviceRegistered,
   isValidDeviceId,
   lookupRefreshToken,
@@ -187,12 +188,29 @@ describe("redeemActivationCode (the full activation decision)", () => {
     const { run, code } = await seeded();
     await writeEntitlement(run, CUSTOMER, "active", "sub_1", T0);
     for (let i = 1; i <= MAX_DEVICES; i++) await registerDevice(run, CUSTOMER, `device-${i}`);
+    const refused = await redeemActivationCode(run, code, "device-4th-seat");
+    expect(refused).toMatchObject({ ok: false, status: 403 });
+    // The refusal must tell the buyer the way out: self-serve deactivation
+    // lives in Settings on the old device.
+    if (!refused.ok) expect(refused.error).toMatch(/Settings.*[Dd]eactivate/);
+    // An already-registered device redeeming the same code still succeeds.
+    expect(await redeemActivationCode(run, code, "device-2")).toMatchObject({ ok: true });
+  });
+
+  it("lets the refused 4th device redeem once a seat is freed the self-serve way", async () => {
+    const { run, code } = await seeded();
+    await writeEntitlement(run, CUSTOMER, "active", "sub_1", T0);
+    for (let i = 1; i <= MAX_DEVICES; i++) await registerDevice(run, CUSTOMER, `device-${i}`);
     expect(await redeemActivationCode(run, code, "device-4th-seat")).toMatchObject({
       ok: false,
       status: 403,
     });
-    // An already-registered device redeeming the same code still succeeds.
-    expect(await redeemActivationCode(run, code, "device-2")).toMatchObject({ ok: true });
+    await deactivateDevice(run, CUSTOMER, "device-1");
+    // The refusal put the code back, so the SAME code now redeems.
+    expect(await redeemActivationCode(run, code, "device-4th-seat")).toMatchObject({
+      ok: true,
+      devices: MAX_DEVICES,
+    });
   });
 });
 
@@ -219,6 +237,29 @@ describe("device registration", () => {
     // Re-registering an existing device is not a new seat.
     expect(await registerDevice(run, CUSTOMER, "device-2")).toEqual({ ok: true, devices: 3 });
     expect(await isDeviceRegistered(run, CUSTOMER, "device-2")).toBe(true);
+  });
+
+  it("deactivation frees a seat and reports what remains", async () => {
+    const { run } = world();
+    for (let i = 1; i <= MAX_DEVICES; i++) await registerDevice(run, CUSTOMER, `device-${i}`);
+    expect(await deactivateDevice(run, CUSTOMER, "device-2")).toEqual({ removed: true, devices: 2 });
+    expect(await isDeviceRegistered(run, CUSTOMER, "device-2")).toBe(false);
+    // The other seats are untouched, and the freed one is reusable.
+    expect(await isDeviceRegistered(run, CUSTOMER, "device-1")).toBe(true);
+    expect(await registerDevice(run, CUSTOMER, "device-4")).toEqual({ ok: true, devices: 3 });
+  });
+
+  it("deactivation is idempotent: absent devices and empty sets are calm no-ops", async () => {
+    const { run } = world();
+    await registerDevice(run, CUSTOMER, "device-1");
+    expect(await deactivateDevice(run, CUSTOMER, "device-1")).toEqual({ removed: true, devices: 0 });
+    // A retry (lost response, double click) reports the same free state.
+    expect(await deactivateDevice(run, CUSTOMER, "device-1")).toEqual({ removed: false, devices: 0 });
+    // A device that was never registered cannot corrupt anyone's seats.
+    expect(await deactivateDevice(run, CUSTOMER, "device-never")).toEqual({
+      removed: false,
+      devices: 0,
+    });
   });
 
   it("self-corrects an over-cap set instead of letting racers keep extra seats", async () => {

@@ -7,6 +7,7 @@ import { getVoteBackend } from "@/lib/vote-backend";
 //   POST { type: "poll", hostKey, poll }      (studio publishes the live poll)
 //   POST { type: "vote", viewerId, action }   (a viewer's phone votes)
 //   POST { type: "unpublish", hostKey }       (studio's voting toggle turned off)
+//   OPTIONS                         -> CORS preflight (packaged desktop studio)
 //
 // Backend is picked by env (lib/vote-backend.ts): in-memory single-process by
 // default (operator's machine / self-host; see lib/vote-store.ts header), or
@@ -22,9 +23,49 @@ export const dynamic = "force-dynamic";
 const BRIDGE_POLL_MS = 1500;
 const BRIDGE_MAX_MS = 25_000;
 
+// CORS, wide open, and deliberately so (issue #52): the packaged desktop
+// studio loads from file:// and reaches this route on the hosted deploy with
+// Origin: null, so without these headers the browser hides every response
+// from it (and preflight-blocks the JSON POSTs outright). This widens
+// nothing server-side: the route never checked Origin, because Origin was
+// never load-bearing here. Anything speaking HTTP already reached it, and the
+// real protections all remain: rooms are claimed by first publish with a
+// secret hostKey (pre-claim tracked in issue #12), and the phone-voter POST
+// path keeps its per-viewer rate limit, voter cap, and room cap. No cookies
+// or credentials ride on these requests, so "*" leaks nothing; allowlisting
+// the literal "null" origin instead would be no tighter (every sandboxed
+// iframe is "null" too) and would break self-hosters fronting the API from
+// a second origin.
+function withVoteCors(res: Response): Response {
+  res.headers.set("access-control-allow-origin", "*");
+  return res;
+}
+
+// Preflight for the desktop studio's cross-origin JSON POSTs; EventSource
+// GETs are simple requests and skip it.
+export function OPTIONS(): Response {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, POST, OPTIONS",
+      "access-control-allow-headers": "content-type",
+      "access-control-max-age": "86400",
+    },
+  });
+}
+
 type Params = { params: Promise<{ room: string }> };
 
-export async function GET(request: Request, { params }: Params): Promise<Response> {
+export async function GET(request: Request, ctx: Params): Promise<Response> {
+  return withVoteCors(await handleGet(request, ctx));
+}
+
+export async function POST(request: Request, ctx: Params): Promise<Response> {
+  return withVoteCors(await handlePost(request, ctx));
+}
+
+async function handleGet(request: Request, { params }: Params): Promise<Response> {
   const { room } = await params;
   if (!ROOM_ID_RE.test(room)) {
     return Response.json({ error: "invalid room" }, { status: 422 });
@@ -162,7 +203,7 @@ function sseResponse(stream: ReadableStream): Response {
   });
 }
 
-export async function POST(request: Request, { params }: Params): Promise<Response> {
+async function handlePost(request: Request, { params }: Params): Promise<Response> {
   const { room } = await params;
   if (!ROOM_ID_RE.test(room)) {
     return Response.json({ error: "invalid room" }, { status: 422 });
@@ -183,12 +224,6 @@ export async function POST(request: Request, { params }: Params): Promise<Respon
   }
 
   if (body?.type === "unpublish") {
-    // Backend-optional (see VoteBackend.unpublishPoll): the studio fires this
-    // best-effort and ignores failures, so a backend without teardown keeps
-    // exactly its old TTL-only behavior.
-    if (!backend.unpublishPoll) {
-      return Response.json({ error: "unpublish unsupported on this backend" }, { status: 501 });
-    }
     const result = await backend.unpublishPoll(room, String(body.hostKey ?? ""));
     return result.ok
       ? Response.json(result.event)

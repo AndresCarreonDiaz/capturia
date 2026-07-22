@@ -48,6 +48,9 @@ import type { PollOption } from "@/lib/vote-store";
 import { useRecorder } from "@/hooks/useRecorder";
 import { useCameraExtension, useDesktopHotkey, useDesktopStateReport } from "@/hooks/useDesktopHotkey";
 import { useKeyVault } from "@/hooks/useKeyVault";
+import { useVoiceLocale } from "@/hooks/useVoiceLocale";
+import { useCameraDevice } from "@/hooks/useCameraDevice";
+import { voiceLanguageName } from "@/lib/voice-locale";
 import type { KeyProvider } from "@/hooks/useDesktopHotkey";
 import SettingsModal from "@/components/SettingsModal";
 import OnboardingFlow from "@/components/OnboardingFlow";
@@ -58,6 +61,7 @@ import { sanitizeSurfaceTree } from "@/lib/a2ui-validate";
 import { coerceArrayArg, coerceRecordArg, toolArgText } from "@/lib/extract-json";
 import { oversizedToolArg } from "@/lib/limits";
 import { isPlaceableOverlayType } from "@/lib/catalog";
+import { classifyHostedExhaustion, hostedExhaustionNotice } from "@/lib/desktop-runtime";
 import { matchCue, matchInterimCue, type InterimCueState } from "@/lib/deck/cues";
 import { advanceCuePointer, nextCueIndex } from "@/lib/deck/pointer";
 import type { CueCard, DeckFacts } from "@/lib/deck/types";
@@ -194,6 +198,15 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
   const [lastSent, setLastSent] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const firstRunCheckedRef = useRef(false);
+  // Speech-recognition language (issue #53): one canonical tag, persisted in
+  // main's settings.json on desktop and localStorage on web, threaded to
+  // every speech engine below and to the agent context so overlay copy
+  // follows the speaker's language.
+  const { locale: voiceLocale, setLocale: setVoiceLocale } = useVoiceLocale();
+  // The capture camera (issue #12): a persisted {deviceId, label} pick, null
+  // for automatic. Resolved at acquisition time inside WebcamFeed; the
+  // Settings picker writes it, and a rotated deviceId is persisted back.
+  const { preference: cameraPreference, setPreference: setCameraPreference } = useCameraDevice();
   // The full-screen stage; audio-reactivity publishes --mic-energy onto it.
   const stageRef = useRef<HTMLDivElement>(null);
   // v2 agent driver: sends the user turn through the AG-UI agent + core runAgent
@@ -494,7 +507,8 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
         // state either.
         interimCueRef.current = null;
         parkedCueRef.current = null;
-      }
+      },
+      voiceLocale
     );
 
   // Listening transitions are segment boundaries with one nuance: both
@@ -825,6 +839,15 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
     description:
       "Loaded pitch deck (if any). Slide titles, bullets, detected numbers (label/value), and names. When the speaker mentions something that appears here, render it using THESE exact values. Never invent numbers that contradict the deck.",
     value: (deckFacts ?? null) as unknown as Parameters<typeof useAgentContext>[0]["value"],
+  });
+
+  // Spoken language (issue #53): overlay copy must follow the speaker's
+  // language because they CHOSE it, not because the model guessed from
+  // whatever script the transcript arrived in.
+  useAgentContext({
+    description:
+      "The language the speaker is presenting in (their speech-recognition setting). Write ALL overlay text (titles, labels, ticker items, chat bubbles) in this language unless the speaker explicitly asks for another.",
+    value: voiceLanguageName(voiceLocale),
   });
 
   // NOTE on all 8 tool registrations below:
@@ -1161,7 +1184,14 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
           visible Control Room starts with the camera OFF so launching the
           app to prep a deck or buy Pro never lights the LED (the stage's
           "Go on camera" is the intent signal). */}
-      <WebcamFeed autoStart={isMirrorReceiver} />
+      <WebcamFeed
+        autoStart={isMirrorReceiver}
+        preferredDevice={cameraPreference}
+        // A receiver never writes stores: on desktop the pick lives in
+        // main's settings.json, and a receiver-side localStorage write
+        // would fork the source of truth.
+        onPreferredDeviceResolved={isMirrorReceiver ? undefined : setCameraPreference}
+      />
 
       {/* Layer 0.4: audio-reactive vignette. Breathes with --mic-energy (set by
           useSpeechEnergy from speech results, or from mirrored speak pings on
@@ -1234,6 +1264,9 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
             const voteUrlUnreachable =
               voteOn && (voteOriginUnusable || (!!voteUrl && voteUrlLocalhostOnly(voteUrl)));
             const publishError = voteOn ? votePublishError : null;
+            // A hosted budget-exhausted run is a plan state, not a failure:
+            // it gets the calm notice below instead of the amber error.
+            const hostedExhaustion = classifyHostedExhaustion(runError);
             if (!(!isSupported || agentOfflineError || voteUrlUnreachable || publishError || runError))
               return null;
             return (
@@ -1243,11 +1276,26 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
                 {agentOfflineError && <ModelKeyBanner message={agentOfflineError} />}
                 {/* Honest heads-up when voice can't run here (Firefox/Brave/desktop). */}
                 {!isSupported && <BrowserBanner />}
+                {/* The included hosted allowance ran out mid-show: say so
+                    calmly, in hours, and promise what keeps working. The
+                    show on screen is unaffected; only new AI runs stop. */}
+                {runError && hostedExhaustion && (
+                  <div className="flex items-start gap-3 rounded-xl border border-white/20 bg-black/70 px-4 py-3 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.4)]">
+                    <span
+                      aria-hidden
+                      className="mt-0.5 h-2 w-2 flex-none rounded-full bg-cyan-300"
+                      style={{ boxShadow: "0 0 8px #67e8f9" }}
+                    />
+                    <div className="text-[13px] leading-snug text-white/80">
+                      {hostedExhaustionNotice(hostedExhaustion)}
+                    </div>
+                  </div>
+                )}
                 {/* An agent run failed (rate limit, revoked key, server 503).
                     runAgent swallows these into subscribers, so without this
                     notice the loop just goes silently dead mid-show. Cleared
                     by the next successful send. */}
-                {runError && (
+                {runError && !hostedExhaustion && (
                   <div className="flex items-start gap-3 rounded-xl border border-amber-400/30 bg-black/70 px-4 py-3 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.4)]">
                     <span
                       aria-hidden
@@ -1469,6 +1517,10 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
             activeProvider={activeProvider}
             onSelectProvider={setActiveProvider}
             onRefreshKeys={vault.refresh}
+            voiceLocale={voiceLocale}
+            onSelectVoiceLocale={setVoiceLocale}
+            cameraPreference={cameraPreference}
+            onSelectCamera={setCameraPreference}
           />
         </>
       )}

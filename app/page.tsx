@@ -838,41 +838,34 @@ function Pricing() {
             </DownloadLink>
           </div>
 
-          {/* Pro (coming soon) */}
+          {/* Pro */}
           <div className="pro-card rounded-2xl p-8 reveal-up [animation-delay:120ms] flex flex-col">
             <div className="flex items-center justify-between">
               <h3 className="text-[var(--studio-ink)] text-xl font-semibold tracking-tight">Pro</h3>
-              <span className="rounded-full border border-[var(--phosphor)]/40 px-2.5 py-1 font-mono text-[9px] tracking-[0.22em] uppercase text-[var(--phosphor)]">
-                Coming soon
+              <span className="font-mono text-[9px] tracking-[0.22em] uppercase text-[var(--phosphor)]">
+                Hosted AI
               </span>
             </div>
             <p className="mt-2 text-[var(--studio-graphite)] text-[14px]">
-              Hosted AI: sign in and talk. No key, no setup.
+              Hosted AI: upgrade and talk. No key, no setup.
             </p>
             <ul className="mt-7 space-y-3.5 text-[14.5px] text-[var(--studio-graphite)]">
-              <Feature accent="var(--phosphor)">Hosted AI keys, no API setup at all</Feature>
-              <Feature accent="var(--phosphor)">Hosted audience voting for any crowd size</Feature>
+              <Feature accent="var(--phosphor)">No API key. No setup. Unlimited poll participants.</Feature>
               <Feature accent="var(--phosphor)">Premium features as they ship</Feature>
             </ul>
-            {/* PLACEHOLDER: Pro pricing is being decided. Replace this block
-                with the real price once it is locked. No numbers until then. */}
             <div className="mt-7 flex-1 flex flex-col justify-end">
-              <div className="rounded-xl border border-dashed border-white/[0.16] px-5 py-4 text-center">
-                <p className="font-mono text-[9px] tracking-[0.24em] uppercase text-[var(--studio-fade)]">
-                  Placeholder · pricing not final
-                </p>
-                <p className="display-serif mt-1.5 text-2xl text-[var(--studio-graphite)]">
-                  To be announced
-                </p>
-              </div>
+              <p className="display-serif text-4xl text-[var(--studio-ink)]">
+                $19<span className="text-xl text-[var(--studio-graphite)]">/mo</span>
+              </p>
+              <p className="mt-1.5 text-[14px] text-[var(--studio-graphite)]">
+                20 presentation hours of hosted AI. About $1 per hour on stage.
+              </p>
             </div>
             <a
-              href={RELEASES}
-              target="_blank"
-              rel="noopener noreferrer"
+              href={DOWNLOAD}
               className="ghost-btn mt-6 inline-flex items-center justify-center gap-2 rounded-full px-6 py-3.5 text-[15px] font-medium"
             >
-              Get notified on GitHub
+              Download and upgrade in the app
               <span aria-hidden>→</span>
             </a>
           </div>

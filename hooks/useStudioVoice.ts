@@ -24,11 +24,16 @@ import { useAppleSpeechCapture } from "./useAppleSpeechCapture";
 export function useStudioVoice(
   onFinalResult: (text: string) => void,
   onInterimResult?: (text: string) => void,
-  onSegmentEnd?: () => void
+  onSegmentEnd?: () => void,
+  // Canonical BCP-47 tag (lib/voice-locale.ts). Web Speech and apple-speech
+  // both honor it, restarting live on a change. The whisper engine does NOT:
+  // its shipped model (base.en) is English-only, so the Settings picker pins
+  // English whenever whisper is the engine rather than pretending.
+  locale?: string
 ): VoiceCaptureState {
-  const web = useVoiceCapture(onFinalResult, onInterimResult, onSegmentEnd);
+  const web = useVoiceCapture(onFinalResult, onInterimResult, onSegmentEnd, locale);
   const whisper = useDesktopVoiceCapture(onFinalResult);
-  const apple = useAppleSpeechCapture(onFinalResult, onInterimResult, onSegmentEnd);
+  const apple = useAppleSpeechCapture(onFinalResult, onInterimResult, onSegmentEnd, locale);
 
   const isDesktop =
     typeof window !== "undefined" && window.capturia?.isDesktop === true;

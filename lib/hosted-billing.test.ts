@@ -15,6 +15,7 @@ import {
   normalizeActivationCode,
   parseActivateResponse,
   parseTokenResponse,
+  parseUsageResponse,
 } from "./hosted-billing";
 import { ACTIVATION_CODE_RE as SERVER_RE, mintActivationCode } from "./hosted/entitlements";
 
@@ -66,6 +67,47 @@ describe("response parsing", () => {
     expect(parseActivateResponse({ refreshToken: "crt", token: "jwt", expiresAt: "soon" })).toBeNull();
     expect(parseTokenResponse({ token: "jwt" })).toBeNull();
     expect(parseTokenResponse({ token: "jwt", expiresAt: 5 })).toEqual({ token: "jwt", expiresAt: 5 });
+  });
+
+  it("accepts the usage contract and drops extra fields", () => {
+    const wire = {
+      tokensUsed: 275_000,
+      monthlyTokenBudget: 5_500_000,
+      flashTokensUsed: 0,
+      flashTokenBudget: 500_000,
+      periodEnd: 1_800_000_000_000,
+      someFutureField: "ignored",
+    };
+    expect(parseUsageResponse(wire)).toEqual({
+      tokensUsed: 275_000,
+      monthlyTokenBudget: 5_500_000,
+      flashTokensUsed: 0,
+      flashTokenBudget: 500_000,
+      periodEnd: 1_800_000_000_000,
+    });
+  });
+
+  it("rejects partial, negative, or malformed usage bodies", () => {
+    expect(parseUsageResponse(null)).toBeNull();
+    expect(parseUsageResponse({})).toBeNull();
+    expect(
+      parseUsageResponse({
+        tokensUsed: "many",
+        monthlyTokenBudget: 5_500_000,
+        flashTokensUsed: 0,
+        flashTokenBudget: 500_000,
+        periodEnd: 1,
+      })
+    ).toBeNull();
+    expect(
+      parseUsageResponse({
+        tokensUsed: -1,
+        monthlyTokenBudget: 5_500_000,
+        flashTokensUsed: 0,
+        flashTokenBudget: 500_000,
+        periodEnd: 1,
+      })
+    ).toBeNull();
   });
 });
 

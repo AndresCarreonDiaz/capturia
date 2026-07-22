@@ -94,6 +94,15 @@ try {
   }
   status = run(join(root, "node_modules", ".bin", "next"), ["build"], {
     CAPTURIA_ELECTRON_BUILD: "1",
+    // The packaged studio runs on file://, where relative /api/vote fetches
+    // have no server behind them, so its vote rooms live on the hosted
+    // deploy: bake that origin into the export (NEXT_PUBLIC_ vars inline at
+    // build time). ?? not ||: an env var that is SET wins, even set to
+    // empty, so a self-hoster can point their build at their own deploy or
+    // disable desktop voting outright (the studio then shows its origin
+    // notice instead of a QR).
+    NEXT_PUBLIC_CAPTURIA_ORIGIN:
+      process.env.NEXT_PUBLIC_CAPTURIA_ORIGIN ?? "https://www.capturia.dev",
   });
 } finally {
   restore();

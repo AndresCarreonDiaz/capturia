@@ -70,6 +70,23 @@ contextBridge.exposeInMainWorld("capturia", {
     activate(code) {
       return ipcRenderer.invoke("billing:activate", { code: String(code ?? "") });
     },
+    // Current-period hosted usage counters for the Settings hours meter.
+    // Read-only; main fetches with the keychain JWT, which never crosses.
+    getUsage() {
+      return ipcRenderer.invoke("billing:usage");
+    },
+    // Releases this device's hosted seat server-side (main authenticates
+    // with the keychain JWT). The renderer follows up with
+    // keys.clear("capturia-hosted") so the local clear rides the existing
+    // vault-clear routing.
+    deactivate() {
+      return ipcRenderer.invoke("billing:deactivate");
+    },
+    // Opens the Stripe customer portal (card, invoices, cancel) in the OS
+    // browser from main; only { ok } ever crosses back.
+    portal() {
+      return ipcRenderer.invoke("billing:portal");
+    },
   },
   // Deck codegen: run a prompt on the user's stored key in main, return raw
   // model text. Used by the deck dropzone to design overlays from a PDF.
@@ -144,6 +161,29 @@ contextBridge.exposeInMainWorld("capturia", {
     },
     ackDisclosure() {
       return ipcRenderer.invoke("telemetry:ack");
+    },
+  },
+  // Voice recognition language (issue #53): the renderer reads and sets the
+  // canonical BCP-47 tag; main validates against the curated list and
+  // persists it in settings.json alongside the telemetry consent.
+  voiceLocale: {
+    get() {
+      return ipcRenderer.invoke("voice-locale:get");
+    },
+    set(tag) {
+      return ipcRenderer.invoke("voice-locale:set", String(tag ?? ""));
+    },
+  },
+  // Camera pick (issue #12): the renderer reads and sets the persisted
+  // {deviceId, label} the stage should capture (null = automatic). Main
+  // validates against lib/camera-select.ts, persists it in settings.json,
+  // and threads it into the offscreen Program Output page.
+  cameraDevice: {
+    get() {
+      return ipcRenderer.invoke("camera-device:get");
+    },
+    set(preference) {
+      return ipcRenderer.invoke("camera-device:set", preference ?? null);
     },
   },
   // On-device streaming speech (macOS 26+): start/stop the mic helper and

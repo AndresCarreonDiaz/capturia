@@ -14,7 +14,9 @@ requires their env. The studio, `/api/copilotkit`, the vote flow, and the
 desktop BYOK providers are untouched; every hosted/billing endpoint answers
 503 when its env is absent and spends nothing without a valid Capturia JWT.
 Adding a dependency from any free path onto `/api/hosted` or `/api/billing`
-is a regression.
+is a regression. Hosted audience voting (the `/api/vote` rooms the packaged
+app publishes to on www.capturia.dev, issue #52) currently ships free with
+no entitlement check; gating it under Pro is a future decision.
 
 ## Request path
 
@@ -27,6 +29,10 @@ Desktop app (Capturia JWT from keychain)
             entitlement cache          hosted:ent:<customer>
             rate limit                 ~10/min sliding window
             monthly token budget       hosted:usage:<customer>:<YYYY-MM>
+            flash sub-budget           hosted:usage-flash:<customer>:<YYYY-MM>
+                                       (gemini-2.5-flash only, checked after
+                                       the body names the model; deck codegen
+                                       stops while lite traffic continues)
             per-lane lease             hosted:lease:<customer>:<stream|batch>
                                        (live overlay stream and deck codegen
                                        never 409 each other)
@@ -56,6 +62,9 @@ Stripe Checkout (test mode)
        one-time code -> long-lived refresh token (device cap: 3)
   -> POST /api/billing/token { refreshToken }
        -> Ed25519 JWT (~1h) held in the keychain "capturia-hosted" slot
+  -> POST /api/billing/deactivate (device JWT)
+       frees the calling device's seat; its refresh token stops minting
+       on the next /api/billing/token check
 ```
 
 ## Endpoints
@@ -65,10 +74,13 @@ Stripe Checkout (test mode)
 | `POST /api/hosted/v1/generate` | Stable alias: `{ model?, stream?, request }` where `request` is a Gemini `generateContent` payload; streams SSE back |
 | `POST /api/hosted/v1beta/models/<id>:streamGenerateContent` | The exact wire shape `@ai-sdk/google` emits; lets the desktop runtime point at the proxy by swapping `baseURL` + key slot only |
 | `POST /api/hosted/v1beta/models/<id>:generateContent` | Non-streaming variant |
+| `GET /api/hosted/usage` | Current-period usage for the authenticated customer (same JWT check as the proxy): `{ tokensUsed, monthlyTokenBudget, flashTokensUsed, flashTokenBudget, periodEnd }`. Feeds the in-app hours meter |
 | `POST /api/billing/checkout` | Creates the Stripe Checkout session (subscription, `STRIPE_PRICE_ID`) |
 | `POST /api/billing/webhook` | Stripe events -> Redis entitlement cache + activation codes (deduplicated on event.id, ordered by event.created with revocations winning same-second ties, one code per checkout session; dedup markers commit only after effects land, so a mid-apply fault answers 500 and the Stripe retry re-processes instead of being swallowed) |
 | `POST /api/billing/activate` | `{ code, deviceId }` -> `{ refreshToken, token, expiresAt, devices }` |
 | `POST /api/billing/token` | `{ refreshToken }` -> `{ token, expiresAt }` |
+| `POST /api/billing/deactivate` | Frees the calling device's seat (same device-JWT auth as the proxy; the JWT names customer AND device, so a caller can only ever free its own slot). Idempotent; answers `{ ok, devices }`. The device's refresh token stops minting on its next refresh |
+| `POST /api/billing/portal` | Creates a Stripe Billing Portal session (card, invoices, cancel) for the authenticated customer and answers only its URL. Device-JWT auth; the JWT `sub` IS the Stripe customer id, so no lookup exists to drift. Rate-braked at 5/min per customer before the outbound Stripe write, mirroring checkout's per-IP cap |
 | `GET /api/billing/activation-code?session_id=cs_...&pickup=...` | One-time code pickup for the checkout success page; the pickup nonce is minted per checkout, travels only in the success URL, and the code is filed under hash(session, nonce), so a bare session id retrieves nothing |
 
 The JWT rides in `x-goog-api-key` (what `@ai-sdk/google` sends) or a
@@ -96,6 +108,16 @@ clamped; 401/403 drop credentials, 402 retries hourly, transient errors every
 Decision logic lives in lib/hosted-billing.ts and lib/checkout-success.ts,
 fully unit-tested; Electron consumes the gen build.
 
+An active Pro row also manages itself (issues #10/#48): "Manage
+subscription" asks /api/billing/portal for a Stripe customer portal URL and
+opens it in the OS browser (https-only, same rule as checkout URLs), so
+card updates, invoices, and cancellation all live on Stripe's page.
+"Deactivate this device" (with a confirm step) frees this Mac's seat via
+/api/billing/deactivate, then clears the local credentials through the
+same vault-clear routing as the Clear button, dropping the app back to
+BYOK; the freed seat lets a new Mac activate, which is also what the
+4th-device refusal message now points at.
+
 ## Env contract
 
 | Variable | Where | Meaning |
@@ -111,7 +133,8 @@ fully unit-tested; Electron consumes the gen build.
 | `CAPTURIA_JWT_PRIVATE_KEY` | server | base64 PKCS8 DER Ed25519 (PEM also accepted). Mints JWTs. NEVER commit |
 | `CAPTURIA_JWT_PUBLIC_KEY` | server | base64 SPKI DER. Verifies JWTs at the proxy |
 | `CAPTURIA_HOSTED_MODELS` | server | Optional csv override of the model allowlist |
-| `CAPTURIA_HOSTED_RATE_LIMIT` / `_MONTHLY_TOKENS` / `_LEASE_TTL_MS` | server | Brake tuning (defaults 10/min, 5M tokens, 120s) |
+| `CAPTURIA_HOSTED_RATE_LIMIT` / `_MONTHLY_TOKENS` / `_LEASE_TTL_MS` | server | Brake tuning (defaults 10/min, 5.5M tokens = 20 presentation hours at 275k/hour, 120s) |
+| `CAPTURIA_HOSTED_FLASH_MONTHLY_TOKENS` | server | Monthly `gemini-2.5-flash` sub-budget within the overall allowance (default 500k; deck codegen is the flash consumer). Exhaustion answers 429 with a distinct marker-tagged body in the Gemini error shape, which the desktop app renders as the calm deck-allowance state; lite-tier calls continue |
 | `CAPTURIA_HOSTED_MAX_OUTPUT_TOKENS` | server | Per-request output clamp injected into every forwarded generationConfig (default 8192) |
 | `CAPTURIA_HOSTED_DEV_ENTITLEMENT` | dev only | Seeds an active entitlement + the fixed dev activation code for that customer id. Seeded only into the in-memory backend: ignored in production builds AND whenever real Upstash env is present |
 | `CAPTURIA_HOSTED_URL` | desktop | Proxy origin override for the desktop runtime (dev: `http://localhost:3000/api/hosted`) |
