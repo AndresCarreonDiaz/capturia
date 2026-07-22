@@ -31,6 +31,7 @@ const { logCrash, crashLogPath } = require("./crash-log");
 const { maybeOfferMoveToApplications, offerMoveToApplications } = require("./first-run");
 const { createTelemetry, readSettings, writeSettings } = require("./telemetry");
 const { normalizeVoiceLocale, appleSpeechLocale } = require("./gen/voice-locale");
+const { normalizeCameraPreference } = require("./gen/camera-select");
 const speechHelper = require("./speech-helper");
 const {
   isTrustedSender,
@@ -399,6 +400,29 @@ function registerIpc() {
       const locale = normalizeVoiceLocale(tag);
       writeSettings({ voiceLocale: locale });
       return { locale };
+    })
+  );
+
+  // Camera pick (issue #12): the renderer reads and sets the persisted
+  // {deviceId, label} the stage should capture; null means automatic (the
+  // physical-input heuristic). Normalized both ways so a hand-edited
+  // settings.json can never aim the stage at the Capturia camera itself. A
+  // set is pushed straight into the offscreen Program Output page, so the
+  // published feed re-aims live without a camera restart.
+  ipcMain.handle(
+    "camera-device:get",
+    guarded(() => ({ preference: normalizeCameraPreference(readSettings().cameraDevice) }))
+  );
+  ipcMain.handle(
+    "camera-device:set",
+    guarded((_event, raw) => {
+      const preference = normalizeCameraPreference(raw);
+      if (raw !== null && preference === null) {
+        throw new Error("Capturia: camera-device:set expects { deviceId, label } or null.");
+      }
+      writeSettings({ cameraDevice: preference });
+      cameraFeed?.applyCameraDevice();
+      return { preference };
     })
   );
 
@@ -921,6 +945,9 @@ if (!gotTheLock) {
       cameraFeed = createCameraFeed({
         studioUrl: STUDIO_URL,
         isAllowedNavigation: (url) => isAllowedUrl(url, trustOpts),
+        // The persisted camera pick, read fresh per injection so a set that
+        // just wrote settings.json threads the new value.
+        getCameraDevice: () => normalizeCameraPreference(readSettings().cameraDevice),
         onStateChange: (state) => {
           tray?.update();
           // Fires on lifecycle transitions only (not per frame), so this is a

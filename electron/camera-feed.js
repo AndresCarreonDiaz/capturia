@@ -72,6 +72,7 @@ const {
   cameraToggleAction,
   webcamControlScript,
 } = require("./gen/camera-feed");
+const { cameraPickControlScript } = require("./gen/camera-select");
 
 // Where the addon lives per layout. Dev: the node-gyp output inside the
 // checkout. Packaged: Contents/Resources/capturia_frames.node, placed there
@@ -110,8 +111,16 @@ function loadAddon(retryAfterFailure = false) {
 // allowlist, reused so the offscreen window has the same navigation lockdown
 // as the visible one. onStateChange fires on lifecycle transitions (connect,
 // stop, load failure, frozen flips, give-up), NOT once per second, so it is
-// safe to rebuild the tray menu from it.
-function createCameraFeed({ studioUrl, isAllowedNavigation, onStateChange, log = console }) {
+// safe to rebuild the tray menu from it. getCameraDevice returns the
+// persisted camera pick ({deviceId, label} or null), read fresh per
+// injection so a Settings change threads the new value.
+function createCameraFeed({
+  studioUrl,
+  isAllowedNavigation,
+  onStateChange,
+  getCameraDevice,
+  log = console,
+}) {
   let win = null;
   let wantRunning = false;
   let disposed = false;
@@ -213,6 +222,18 @@ function createCameraFeed({ studioUrl, isAllowedNavigation, onStateChange, log =
     win.webContents.executeJavaScript(webcamControlScript(webcamIdle.paused)).catch(() => {});
   }
 
+  // Thread the persisted camera pick (issue #12) into the offscreen page the
+  // same way the pause control travels: a sticky flag plus an event via
+  // executeJavaScript, since this window has no preload. Applied on every
+  // successful load (reloads and crash recoveries keep the pick) and pushed
+  // by main when Settings changes it; the page's guarded re-check makes a
+  // same-device push a no-op, so this is safe to call whenever.
+  function applyCameraDevice() {
+    if (!win || win.isDestroyed()) return;
+    const preference = typeof getCameraDevice === "function" ? getCameraDevice() : null;
+    win.webContents.executeJavaScript(cameraPickControlScript(preference)).catch(() => {});
+  }
+
   // Keep the fast resume poll running exactly while it can do something:
   // webcam paused AND a connected sink to read the consumer count through.
   function syncWebcamResumePoll() {
@@ -282,6 +303,9 @@ function createCameraFeed({ studioUrl, isAllowedNavigation, onStateChange, log =
     // a reload (load retry, crash recovery) cannot relight the LED while
     // nobody is watching. The injected flag lands before React mounts.
     if (webcamIdle.paused) applyWebcamControl();
+    // The camera pick rides the same before-React-mounts timing; a page
+    // already mounted re-resolves on the event instead.
+    applyCameraDevice();
     const hadLoadError = error !== null && error.startsWith("Program Output");
     if (hadLoadError) {
       error = null;
@@ -617,7 +641,7 @@ function createCameraFeed({ studioUrl, isAllowedNavigation, onStateChange, log =
     disposed = true;
   }
 
-  return { start, stop, toggle, getState, dispose };
+  return { start, stop, toggle, getState, applyCameraDevice, dispose };
 }
 
 module.exports = { createCameraFeed };
