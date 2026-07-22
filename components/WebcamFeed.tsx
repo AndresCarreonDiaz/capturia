@@ -203,10 +203,13 @@ export default function WebcamFeed({
   // Re-resolve against the live device list and restart the acquisition
   // series ONLY when the outcome would differ from what is open right now:
   // the current track died (its camera unplugged), or the resolution now
-  // lands on a different device (the pick changed, or the picked camera came
-  // back after an unplug fallback). The no-op guard is what keeps an
-  // unrelated devicechange (headphones) and the persist-back write (same
-  // camera, rotated id) from ever blinking a healthy stream.
+  // lands on the PICKED device and it differs (the pick changed, or the
+  // picked camera came back after an unplug fallback). A fallback resolution
+  // never re-aims a healthy stream: in Automatic mode a hotplug can change
+  // the heuristic winner (a Continuity iPhone appearing mid-call), and
+  // yanking the stage to it would blink a camera nobody asked to switch.
+  // The same guard keeps an unrelated devicechange (headphones) and the
+  // persist-back write (same camera, rotated id) no-ops.
   const reacquireIfChanged = useCallback(() => {
     const media = navigator.mediaDevices;
     if (!media?.enumerateDevices) return;
@@ -218,7 +221,9 @@ export default function WebcamFeed({
         const live = track ? track.readyState === "live" : false;
         const currentId = track?.getSettings?.().deviceId;
         const wantsDifferent =
-          resolved.device !== null && resolved.device.deviceId !== currentId;
+          resolved.source === "preference" &&
+          resolved.device !== null &&
+          resolved.device.deviceId !== currentId;
         if (live && !wantsDifferent) return;
         if (!streamRef.current && !resolved.device) return;
         setAcquireRequest((n) => n + 1);
