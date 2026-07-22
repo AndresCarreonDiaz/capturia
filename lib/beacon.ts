@@ -155,9 +155,10 @@ export const beaconKeys = {
   rateLimit: (bucket: string) => `beacon:rl:${bucket}`,
 };
 
-// What the owner-only summary endpoint returns. All aggregates, no per-user
-// records: unique counts come from HyperLogLogs, so individual installIds
-// are not even recoverable from storage.
+// What the public summary endpoint returns (and /metrics renders). All
+// aggregates, no per-user records: unique counts come from HyperLogLogs, so
+// individual installIds are not even recoverable from storage, which is why
+// serving this to anyone is safe by construction.
 export interface BeaconSummary {
   backend: "memory" | "redis";
   day: string;
