@@ -117,8 +117,9 @@ ever wanted back, the old bearer-token gate lives in the git history of
 Two ways to read it:
 
 - `https://www.capturia.dev/metrics`: the dashboard (beacon aggregates plus
-  GitHub release downloads, auto-refreshing while visible). Unlisted (no
-  page links to it) and noindexed, but anyone with the URL can open it.
+  GitHub release downloads, auto-refreshing while visible). Noindexed and
+  absent from the landing nav; the privacy page links it as part of the
+  transparency promise, and anyone with the URL can open it.
 - The raw endpoint, no headers needed:
 
 ```sh

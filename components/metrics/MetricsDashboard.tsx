@@ -22,8 +22,12 @@ import {
 const RELEASES_API = "https://api.github.com/repos/AndresCarreonDiaz/capturia/releases";
 // Data refetches once it is a minute old; a 10s heartbeat keeps the
 // "updated Ns ago" caption honest between refetches. Both exist only while
-// the tab is visible: a hidden tab holds no timer at all.
+// the tab is visible: a hidden tab holds no timer at all. Releases refetch
+// on their own slower clock: GitHub's unauthenticated quota is 60/hr per
+// IP, so a tab left open must not spend it (manual Refresh still forces
+// both feeds).
 const REFRESH_MS = 60_000;
+const RELEASES_REFRESH_MS = 600_000;
 const HEARTBEAT_MS = 10_000;
 
 type SummaryState =
@@ -76,17 +80,26 @@ export default function MetricsDashboard() {
   // callback, which must read current values without re-arming the timer.
   const inFlight = useRef(false);
   const fetchedAtRef = useRef<number | null>(null);
+  const releasesFetchedAtRef = useRef<number | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
     if (inFlight.current) return;
     inFlight.current = true;
     setRefreshing(true);
-    const [s, r] = await Promise.all([loadSummary(), loadReleases()]);
+    const rAt = releasesFetchedAtRef.current;
+    const wantReleases = force || rAt === null || Date.now() - rAt >= RELEASES_REFRESH_MS;
+    const [s, r] = await Promise.all([
+      loadSummary(),
+      wantReleases ? loadReleases() : Promise.resolve(null),
+    ]);
     const t = Date.now();
     inFlight.current = false;
     fetchedAtRef.current = t;
     setSummary(s);
-    setReleases(r);
+    if (r !== null) {
+      releasesFetchedAtRef.current = t;
+      setReleases(r);
+    }
     setFetchedAt(t);
     setNow(t);
     setRefreshing(false);
@@ -140,7 +153,7 @@ export default function MetricsDashboard() {
           )}
         </div>
         <button
-          onClick={() => void load()}
+          onClick={() => void load(true)}
           disabled={refreshing}
           className="ghost-btn rounded-full px-5 py-2 font-mono text-[10px] tracking-[0.2em] uppercase disabled:opacity-50"
         >

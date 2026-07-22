@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { SUMMARY_RATE_LIMIT_MAX } from "@/lib/beacon";
+import { RATE_LIMIT_WINDOW_MS, SUMMARY_RATE_LIMIT_MAX } from "@/lib/beacon";
 import { getBeaconStore } from "@/lib/beacon-store";
 
 // Public aggregate readout for the desktop beacon (docs/telemetry.md):
@@ -45,7 +45,10 @@ export async function GET(request: Request): Promise<Response> {
     // below hits the same backend and reports the real failure.
   }
   if (!allowed) {
-    return Response.json({ error: "too many requests" }, { status: 429 });
+    return Response.json(
+      { error: "too many requests" },
+      { status: 429, headers: { "retry-after": String(RATE_LIMIT_WINDOW_MS / 1000) } }
+    );
   }
 
   try {
