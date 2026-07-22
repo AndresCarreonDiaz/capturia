@@ -1,9 +1,9 @@
 // Redis-backed vote rooms (M10, issue #9): the same contract as the
-// in-memory lib/vote-store.ts, atomically enforced by two Lua scripts so a
-// serverless deploy (Vercel + Upstash) keeps exactly the semantics the
-// in-memory store defines: hostKey claims the room, rounds key on the
-// option SET (label edits keep counts), one live vote per viewer with
-// switching, per-viewer rate limit, voter cap, TTL.
+// in-memory lib/vote-store.ts, atomically enforced by per-operation Lua
+// scripts so a serverless deploy (Vercel + Upstash) keeps exactly the
+// semantics the in-memory store defines: hostKey claims the room, rounds key
+// on the option SET (label edits keep counts), one live vote per viewer with
+// switching, per-viewer rate limit, voter cap, TTL, host teardown.
 //
 // No SSE listeners here: serverless invocations share nothing, so the route
 // bridges watch-mode by polling getRoomState (the host tally animates
@@ -11,6 +11,7 @@
 // deployments build one from env via lib/upstash.ts.
 
 import type { RedisRunner } from "./upstash";
+import { randomToken } from "./random-id";
 import {
   ROOM_ID_RE,
   MAX_VOTERS,
@@ -33,13 +34,15 @@ const MAX_ROOMS = 100;
 const ROOMS_INDEX_KEY = "vote:rooms";
 
 // KEYS: meta hash, counts hash, voters hash, rooms index zset
-// ARGV: hostKey, pollJson, optionSetKey, ttlMs, actionsJson, roomId, nowMs, maxRooms
-// Returns: {"403"} | {"503"} | {"ok", round, countsJson}
+// ARGV: hostKey, pollJson, optionSetKey, ttlMs, actionsJson, roomId, nowMs,
+//       maxRooms, nonceCandidate
+// Returns: {"403"} | {"503"} | {"ok", round, nonce, countsJson}
 const PUBLISH_LUA = `
 local meta, counts, voters, roomsIdx = KEYS[1], KEYS[2], KEYS[3], KEYS[4]
 local hostKey, pollJson, optKey, ttl = ARGV[1], ARGV[2], ARGV[3], tonumber(ARGV[4])
 local actions = cjson.decode(ARGV[5])
 local roomId, now, maxRooms = ARGV[6], tonumber(ARGV[7]), tonumber(ARGV[8])
+local nonceCandidate = ARGV[9]
 
 local owner = redis.call('HGET', meta, 'hostKey')
 if owner and owner ~= hostKey then
@@ -56,6 +59,17 @@ if not owner then
   end
   redis.call('HSET', meta, 'hostKey', hostKey)
   redis.call('HSET', meta, 'round', 0)
+end
+-- Instance nonce (see VoteEvent.nonce): stored once at claim time so a room
+-- recreated after an unpublish carries a different marker even though its
+-- rounds restart at 1, exactly like the in-memory store. The randomness is
+-- minted by the caller and rides in as an ARGV because Redis scripts must
+-- stay deterministic. The backfill branch also stamps rooms claimed by a
+-- pre-nonce deploy on their next publish.
+local nonce = redis.call('HGET', meta, 'nonce')
+if not nonce then
+  redis.call('HSET', meta, 'nonce', nonceCandidate)
+  nonce = nonceCandidate
 end
 redis.call('ZADD', roomsIdx, now, roomId)
 
@@ -75,12 +89,12 @@ redis.call('PEXPIRE', voters, ttl)
 
 local round = redis.call('HGET', meta, 'round')
 local raw = redis.call('HGETALL', counts)
-return {'ok', round, cjson.encode(raw)}
+return {'ok', round, nonce, cjson.encode(raw)}
 `;
 
 // KEYS: meta hash, counts hash, voters hash, rate-limit key, rooms index zset
 // ARGV: viewerId, action, minIntervalMs, maxVoters, ttlMs, roomId, nowMs
-// Returns: {status, round, pollJson|'', countsJson}
+// Returns: {status, round, nonce|'', pollJson|'', countsJson}
 //   status: ok | 404 | 422 | 429 | 409 | 503
 const VOTE_LUA = `
 local meta, counts, voters, rl = KEYS[1], KEYS[2], KEYS[3], KEYS[4]
@@ -91,12 +105,13 @@ local roomId, now = ARGV[6], tonumber(ARGV[7])
 
 local pollJson = redis.call('HGET', meta, 'poll')
 if not pollJson then
-  return {'404', '0', '', '{}'}
+  return {'404', '0', '', '', '{}'}
 end
 local round = redis.call('HGET', meta, 'round') or '0'
+local nonce = redis.call('HGET', meta, 'nonce') or ''
 
 local function snapshot(status)
-  return {status, round, pollJson, cjson.encode(redis.call('HGETALL', counts))}
+  return {status, round, nonce, pollJson, cjson.encode(redis.call('HGETALL', counts))}
 end
 
 if redis.call('HEXISTS', counts, action) == 0 then
@@ -130,6 +145,35 @@ return snapshot('ok')
 `;
 
 // KEYS: meta hash, counts hash, voters hash, rooms index zset
+// ARGV: hostKey, roomId
+// Returns: {"403"} | {"ok", round, nonce|''}
+// Host teardown, mirroring the in-memory unpublishPoll: only the claiming
+// hostKey may close the room, and closing one that is already gone succeeds
+// so the studio's fire-and-forget toggle stays quiet on a double toggle or a
+// TTL race. Deleting the hashes is what closes the room for phones within
+// seconds: the SSE polling bridge reads the empty state on its next tick and
+// each phone falls back to its waiting screen. Per-viewer rate-limit keys
+// are left to their own sub-second PX expiry. The dying instance's nonce is
+// read before the DEL so the terminal frame carries it, matching the
+// in-memory closed event.
+const UNPUBLISH_LUA = `
+local meta, counts, voters, roomsIdx = KEYS[1], KEYS[2], KEYS[3], KEYS[4]
+local hostKey, roomId = ARGV[1], ARGV[2]
+local owner = redis.call('HGET', meta, 'hostKey')
+if not owner then
+  return {'ok', '0', ''}
+end
+if owner ~= hostKey then
+  return {'403'}
+end
+local round = redis.call('HGET', meta, 'round') or '0'
+local nonce = redis.call('HGET', meta, 'nonce') or ''
+redis.call('DEL', meta, counts, voters)
+redis.call('ZREM', roomsIdx, roomId)
+return {'ok', round, nonce}
+`;
+
+// KEYS: meta hash, counts hash, voters hash, rooms index zset
 // ARGV: ttlMs, roomId, nowMs
 // One atomic snapshot (no torn read between meta and counts) that also
 // refreshes the TTL, mirroring the in-memory touchedAt-on-read semantics so
@@ -140,14 +184,15 @@ local meta, counts, voters, roomsIdx = KEYS[1], KEYS[2], KEYS[3], KEYS[4]
 local ttl, roomId, now = tonumber(ARGV[1]), ARGV[2], tonumber(ARGV[3])
 local pollJson = redis.call('HGET', meta, 'poll')
 if not pollJson then
-  return {'0', '', '{}'}
+  return {'0', '', '', '{}'}
 end
 local round = redis.call('HGET', meta, 'round') or '0'
+local nonce = redis.call('HGET', meta, 'nonce') or ''
 redis.call('PEXPIRE', meta, ttl)
 redis.call('PEXPIRE', counts, ttl)
 redis.call('PEXPIRE', voters, ttl)
 redis.call('ZADD', roomsIdx, now, roomId)
-return {round, pollJson, cjson.encode(redis.call('HGETALL', counts))}
+return {round, nonce, pollJson, cjson.encode(redis.call('HGETALL', counts))}
 `;
 
 function keys(roomId: string) {
@@ -176,6 +221,12 @@ function countsFromJson(json: unknown): Record<string, number> {
   }
 }
 
+// The scripts encode a missing nonce as '' (a Lua reply table cannot carry a
+// nil mid-array); map it back to absent so events match the in-memory shape.
+function nonceFrom(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
+}
+
 // Same whitelist validation as the in-memory store; duplicated deliberately
 // (the in-memory validPoll is module-private) and pinned by shared tests.
 function validPoll(poll: unknown): poll is PollDef {
@@ -202,6 +253,7 @@ function optionSetKey(options: PollOption[]): string {
 
 export interface RedisVoteStore {
   publishPoll(roomId: string, hostKey: string, poll: unknown): Promise<StoreResult>;
+  unpublishPoll(roomId: string, hostKey: string): Promise<StoreResult>;
   castVote(roomId: string, viewerId: string, action: string): Promise<StoreResult>;
   getRoomState(roomId: string): Promise<VoteEvent>;
 }
@@ -234,6 +286,10 @@ export function createRedisVoteStore(run: RedisRunner): RedisVoteStore {
         roomId,
         Date.now(),
         MAX_ROOMS,
+        // Instance nonce candidate; the script keeps the first one stored,
+        // so only the publish that claims the room actually mints it. Same
+        // length as the in-memory store's.
+        randomToken(12),
       ])) as unknown[];
       if (!Array.isArray(res)) {
         return { ok: false, status: 500, error: "bad store reply" };
@@ -243,10 +299,48 @@ export function createRedisVoteStore(run: RedisRunner): RedisVoteStore {
       const event: VoteEvent = {
         type: "state",
         round: Number(res[1]) || 0,
+        nonce: nonceFrom(res[2]),
         poll: cleanPoll,
-        counts: countsFromJson(res[2]),
+        counts: countsFromJson(res[3]),
       };
       return { ok: true, event };
+    },
+
+    async unpublishPoll(roomId, hostKey) {
+      if (!ROOM_ID_RE.test(roomId) || !KEY_RE.test(hostKey)) {
+        return { ok: false, status: 422, error: "invalid room or key" };
+      }
+      const k = keys(roomId);
+      const res = (await run([
+        "EVAL",
+        UNPUBLISH_LUA,
+        4,
+        k.meta,
+        k.counts,
+        k.voters,
+        ROOMS_INDEX_KEY,
+        hostKey,
+        roomId,
+      ])) as unknown[];
+      if (!Array.isArray(res)) {
+        return { ok: false, status: 500, error: "bad store reply" };
+      }
+      if (res[0] === "403") return { ok: false, status: 403, error: "not the host" };
+      // Same terminal shape the in-memory store answers with, including the
+      // dying instance's nonce (see VoteEvent.nonce): a phone that keyed its
+      // "already voted" lock on this instance must not restore it into a
+      // recreated room whose rounds also start at 1. Absent (empty in the
+      // reply) only when the room was already gone.
+      return {
+        ok: true,
+        event: {
+          type: "closed",
+          round: Number(res[1]) || 0,
+          nonce: nonceFrom(res[2]),
+          poll: null,
+          counts: {},
+        },
+      };
     },
 
     async castVote(roomId, viewerId, action) {
@@ -274,7 +368,7 @@ export function createRedisVoteStore(run: RedisRunner): RedisVoteStore {
       if (!Array.isArray(res)) {
         return { ok: false, status: 500, error: "bad store reply" };
       }
-      const [status, round, pollJson, countsJson] = res;
+      const [status, round, nonce, pollJson, countsJson] = res;
       if (status === "404") return { ok: false, status: 404, error: "no active poll" };
 
       let poll: PollDef | null = null;
@@ -286,6 +380,7 @@ export function createRedisVoteStore(run: RedisRunner): RedisVoteStore {
       const event: VoteEvent = {
         type: "vote",
         round: Number(round) || 0,
+        nonce: nonceFrom(nonce),
         poll,
         counts: countsFromJson(countsJson),
       };
@@ -317,7 +412,7 @@ export function createRedisVoteStore(run: RedisRunner): RedisVoteStore {
       if (!Array.isArray(res)) {
         return { type: "state", round: 0, poll: null, counts: {} };
       }
-      const [round, pollJson, countsJson] = res;
+      const [round, nonce, pollJson, countsJson] = res;
       let poll: PollDef | null = null;
       try {
         poll = pollJson ? (JSON.parse(String(pollJson)) as PollDef) : null;
@@ -327,6 +422,7 @@ export function createRedisVoteStore(run: RedisRunner): RedisVoteStore {
       return {
         type: "state",
         round: Number(round) || 0,
+        nonce: nonceFrom(nonce),
         poll,
         counts: countsFromJson(countsJson),
       };
