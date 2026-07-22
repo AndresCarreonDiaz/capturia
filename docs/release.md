@@ -95,6 +95,12 @@ URL only while the latest release carries an asset with that exact name. A
 release published without it breaks the landing's Download button until the
 copy is uploaded.
 
+Packaged apps also watch this feed themselves: once per launch and via the
+menu bar's Check for Updates, the app compares its version against the
+`releases/latest` tag and offers `/download` when a newer one exists
+(electron/update-check.js; the full electron-updater path is issue #50), so
+publishing the release is what reaches installed apps.
+
 ## One-time portal setup: the Developer ID provisioning profile
 
 Release builds of `com.capturia.desktop` need a **Developer ID** provisioning
