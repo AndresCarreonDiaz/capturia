@@ -77,9 +77,13 @@ describe("GET /api/beacon/summary", () => {
       await GET(summaryRequest("203.0.113.7"));
     }
     // The POST route's bucket for the same IP is the bare truncated hash;
-    // exhausting the summary budget must leave it untouched.
+    // exhausting the summary budget must leave it untouched. Probe with a
+    // per-call max of 1 so the check discriminates: it only passes when this
+    // is the bucket's very first hit. Under the default max of 30, a route
+    // that leaked its GETs into the bare hash (count 11 here) would still
+    // get a true back and the test would pin nothing.
     const postBucket = createHash("sha256").update("203.0.113.7").digest("hex").slice(0, 16);
-    expect(await store.allow(postBucket)).toBe(true);
+    expect(await store.allow(postBucket, undefined, 1)).toBe(true);
   });
 
   it("fails open when the limiter backend hiccups", async () => {
