@@ -20,7 +20,15 @@ export function parseSummary(body: unknown): BeaconSummary | null {
   const record = body as Record<string, unknown>;
   if (record.backend !== "memory" && record.backend !== "redis") return null;
   const { dau, wau, mau, activations, versionsOverflow } = record;
-  if (![dau, wau, mau, activations, versionsOverflow].every(isCount)) return null;
+  if (
+    !isCount(dau) ||
+    !isCount(wau) ||
+    !isCount(mau) ||
+    !isCount(activations) ||
+    !isCount(versionsOverflow)
+  ) {
+    return null;
+  }
   if (typeof record.events !== "object" || record.events === null) return null;
   const eventsRaw = record.events as Record<string, unknown>;
   const events = {} as Record<BeaconEvent, number>;
