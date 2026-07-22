@@ -5,6 +5,7 @@ import { useTelemetry } from "@/hooks/useTelemetry";
 import { ipcErrorMessage } from "@/lib/ipc-error";
 import type { HostedUsage } from "@/lib/hosted-billing";
 import { hoursMeterFraction, hoursMeterLabel } from "@/lib/hosted-hours";
+import { DEFAULT_VOICE_LOCALE, VOICE_LOCALES } from "@/lib/voice-locale";
 
 interface Props {
   open: boolean;
@@ -18,6 +19,9 @@ interface Props {
   /** Re-pulls the vault list; activation stores tokens in MAIN, so the modal
    *  cannot learn about them from save()'s return value. */
   onRefreshKeys?: () => Promise<void>;
+  /** Speech-recognition language: the canonical BCP-47 tag (lib/voice-locale.ts). */
+  voiceLocale: string;
+  onSelectVoiceLocale: (tag: string) => void;
 }
 
 const PROVIDER_META: Record<
@@ -70,6 +74,8 @@ export default function SettingsModal({
   activeProvider,
   onSelectProvider,
   onRefreshKeys,
+  voiceLocale,
+  onSelectVoiceLocale,
 }: Props) {
   const [drafts, setDrafts] = useState<Partial<Record<KeyProvider, string>>>({});
   const [busy, setBusy] = useState<KeyProvider | null>(null);
@@ -77,9 +83,36 @@ export default function SettingsModal({
   // Upgrade-flow feedback: "checkout opened" hint and the activate spinner.
   const [billingInfo, setBillingInfo] = useState<string | null>(null);
   const [upgradeBusy, setUpgradeBusy] = useState(false);
+  // Self-serve deactivation (issue #10): armed = the confirm step is showing.
+  // Deactivation is destructive-ish (this Mac loses Pro until reactivated),
+  // so it never fires on the first click.
+  const [deactivateArmed, setDeactivateArmed] = useState(false);
+  const [deactivateBusy, setDeactivateBusy] = useState(false);
+  const [portalBusy, setPortalBusy] = useState(false);
   // Desktop-only anonymous beacon toggle; unsupported (web, stale preload)
   // hides the whole Privacy section.
   const telemetry = useTelemetry();
+  // Non-English disabled where it would be a lie: desktop below macOS 26
+  // (and stale preloads without the speech bridge) transcribes with the
+  // local English-only Whisper model, so a non-English pick there would
+  // silently produce garbage. Web Speech and the macOS 26+ apple-speech
+  // helper handle the whole curated list. Defaults open until the probe
+  // answers; the probe is a sync check in main, so the window is tiny.
+  const [englishOnly, setEnglishOnly] = useState(false);
+  useEffect(() => {
+    const bridge = window.capturia;
+    if (!bridge?.isDesktop) return;
+    let cancelled = false;
+    const appleAvailable = bridge.speech
+      ? bridge.speech.available().catch(() => false)
+      : Promise.resolve(false);
+    appleAvailable.then((ok) => {
+      if (!cancelled) setEnglishOnly(!ok);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   // Guided upgrade needs the desktop billing bridge; without it (web, stale
   // preload) the Pro row keeps the paste-a-token input.
   const billing = typeof window !== "undefined" ? window.capturia?.billing : undefined;
@@ -143,6 +176,54 @@ export default function SettingsModal({
       setError(ipcErrorMessage(err));
     } finally {
       setBusy(null);
+    }
+  };
+
+  // Server first, vault second: the seat release needs the JWT that the
+  // local clear destroys. The clear itself goes through the normal clear()
+  // prop (keys:clear -> classifyVaultClear -> deactivate_hosted), so the
+  // refresh loop and both keychain slots go together, exactly like the
+  // plain Clear button. On failure nothing is cleared: seat and credentials
+  // stay consistent and the user can retry.
+  const handleDeactivate = async () => {
+    if (!billing?.deactivate) return;
+    setDeactivateBusy(true);
+    setError(null);
+    setBillingInfo(null);
+    try {
+      await billing.deactivate();
+      await clear("capturia-hosted");
+      setDeactivateArmed(false);
+      // Degrade to BYOK: hand the active slot to the first remaining key so
+      // the studio never keeps aiming at the credentials we just cleared.
+      const fallback =
+        keys.find((k) => k.has && k.provider !== "capturia-hosted")?.provider ?? "gemini";
+      onSelectProvider(fallback);
+      setBillingInfo(
+        "This Mac is deactivated; its seat is free for another device. Commands now run on your own keys."
+      );
+    } catch (err) {
+      setError(ipcErrorMessage(err));
+    } finally {
+      setDeactivateBusy(false);
+    }
+  };
+
+  // Stripe hosts the whole subscription surface (card, invoices, cancel);
+  // main opens the portal in the OS browser, so the modal only reports that
+  // it did.
+  const handlePortal = async () => {
+    if (!billing?.portal) return;
+    setPortalBusy(true);
+    setError(null);
+    setBillingInfo(null);
+    try {
+      await billing.portal();
+      setBillingInfo("Subscription portal opened in your browser.");
+    } catch (err) {
+      setError(ipcErrorMessage(err));
+    } finally {
+      setPortalBusy(false);
     }
   };
 
@@ -318,6 +399,64 @@ export default function SettingsModal({
                           </p>
                         </div>
                       )}
+                      {/* Plan management (issues #10/#48): the Stripe-hosted
+                          portal for the subscription itself, and self-serve
+                          seat release for this Mac (confirm step first). */}
+                      {provider === "capturia-hosted" &&
+                        (billing?.portal || billing?.deactivate) && (
+                          <div className="mt-2">
+                            {deactivateArmed ? (
+                              <div className="flex items-center gap-2">
+                                <span className="flex-1 text-white/50 text-[11px] leading-relaxed">
+                                  Free this Mac&apos;s seat? Pro stops on this device and commands
+                                  switch to your own keys; your other devices keep working.
+                                </span>
+                                <button
+                                  onClick={handleDeactivate}
+                                  disabled={deactivateBusy}
+                                  className="bg-red-500/15 hover:bg-red-500/25 border border-red-500/40 disabled:opacity-40 text-red-300 text-[11px] font-medium px-3 py-1.5 rounded-lg transition-colors"
+                                >
+                                  {deactivateBusy ? "Deactivating…" : "Deactivate"}
+                                </button>
+                                <button
+                                  onClick={() => setDeactivateArmed(false)}
+                                  disabled={deactivateBusy}
+                                  className="text-white/50 hover:text-white disabled:opacity-40 text-[11px] font-mono px-2 py-1.5 rounded-lg transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-4">
+                                {billing?.portal && (
+                                  <button
+                                    onClick={handlePortal}
+                                    disabled={portalBusy}
+                                    className="text-white/40 hover:text-white disabled:opacity-40 text-[11px] font-mono transition-colors"
+                                  >
+                                    {portalBusy ? "Opening portal…" : "Manage subscription ↗"}
+                                  </button>
+                                )}
+                                {billing?.deactivate && (
+                                  <button
+                                    onClick={() => setDeactivateArmed(true)}
+                                    className="text-white/40 hover:text-red-400 text-[11px] font-mono transition-colors"
+                                  >
+                                    Deactivate this device
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      {/* The upgrade branch below renders billingInfo for an
+                          inactive row; an ACTIVE row needs its own outlet for
+                          the portal hint. */}
+                      {provider === "capturia-hosted" && billingInfo && (
+                        <p className="mt-1.5 text-emerald-300/80 text-[11px] leading-relaxed">
+                          {billingInfo}
+                        </p>
+                      )}
                     </div>
                   ) : provider === "capturia-hosted" && billing ? (
                     <div>
@@ -395,6 +534,43 @@ export default function SettingsModal({
               {error}
             </div>
           )}
+
+          <div className="mt-6 pt-5 border-t border-white/10">
+            <div className="mb-1.5 text-white/40 text-[10px] font-mono uppercase tracking-[0.2em]">
+              Voice
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <p className="text-white/50 text-xs leading-relaxed">
+                The language Capturia listens in. Switching applies
+                immediately, even mid-session, and the agent writes overlay
+                text in the same language.
+              </p>
+              <select
+                value={voiceLocale}
+                onChange={(e) => onSelectVoiceLocale(e.target.value)}
+                aria-label="Voice recognition language"
+                className="shrink-0 bg-white/5 border border-white/10 focus:border-white/30 rounded-lg px-3 py-2 text-xs text-white outline-none transition-colors"
+              >
+                {VOICE_LOCALES.map((l) => (
+                  <option
+                    key={l.tag}
+                    value={l.tag}
+                    disabled={englishOnly && l.tag !== DEFAULT_VOICE_LOCALE}
+                    className="bg-neutral-900 text-white"
+                  >
+                    {l.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {englishOnly && (
+              <p className="mt-1.5 text-white/35 text-[11px] leading-relaxed">
+                This Mac transcribes with a local English-only Whisper model
+                (streaming multilingual speech needs macOS 26), so other
+                languages are disabled here.
+              </p>
+            )}
+          </div>
 
           {telemetry.supported && (
             <div className="mt-6 pt-5 border-t border-white/10">

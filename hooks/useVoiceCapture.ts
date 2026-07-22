@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { webSpeechLang } from "@/lib/voice-locale";
 
 // Web Speech API types (not in all TS DOM lib versions)
 interface SpeechRecognitionEvent extends Event {
@@ -52,7 +53,11 @@ export interface VoiceCaptureState {
 export function useVoiceCapture(
   onFinalResult: (text: string) => void,
   onInterimResult?: (text: string) => void,
-  onSegmentEnd?: () => void
+  onSegmentEnd?: () => void,
+  // Canonical BCP-47 tag from lib/voice-locale.ts; anything else lands on
+  // the default. A change rebuilds the recognizer (recognition.lang is fixed
+  // at start), restarting it live if a session is running.
+  locale?: string
 ): VoiceCaptureState {
   const [isListening, setIsListening] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState("");
@@ -108,10 +113,17 @@ export function useVoiceCapture(
       setIsSupported(true);
     }
 
+    // A language switch disposes this recognizer and builds a fresh one (the
+    // effect re-runs on `locale`). The old one's onend fires AFTER the swap,
+    // when isListeningRef is true again for the successor, so without this
+    // flag it would schedule a restart of ITSELF: two recognizers on one
+    // mic, the stale one still in the old language.
+    let disposed = false;
+
     const recognition = new SR();
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.lang = "en-US";
+    recognition.lang = webSpeechLang(locale);
 
     // Pipeline stages: each one logs so we know exactly where it breaks
     recognition.onstart = () => setSpeechStatus("started, waiting for audio…");
@@ -146,6 +158,7 @@ export function useVoiceCapture(
       // a final: interims never survive a restart, so consumers must not
       // carry this cycle's cue-dedup state into the next one.
       onSegmentEndRef.current?.();
+      if (disposed) return;
       if (isListeningRef.current) {
         // 600ms pause before restarting. Stops the crazy rapid cycling and
         // gives the status text time to be readable between attempts
@@ -172,12 +185,16 @@ export function useVoiceCapture(
 
     recognitionRef.current = recognition;
     return () => {
+      disposed = true;
       isListeningRef.current = false;
       if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
       recognition.stop();
     };
-  }, []);
+  }, [locale]);
 
+  // `locale` is a dep so a language switch restarts a live session on the
+  // freshly built recognizer above (effects re-run in order: rebuild, then
+  // start). Idle, the extra run just re-asserts the idle state.
   useEffect(() => {
     isListeningRef.current = isListening;
     const rec = recognitionRef.current;
@@ -190,7 +207,7 @@ export function useVoiceCapture(
       setInterimTranscript("");
       setSpeechStatus("idle");
     }
-  }, [isListening]);
+  }, [isListening, locale]);
 
   const startListening = useCallback(() => setIsListening(true), []);
   const stopListening = useCallback(() => setIsListening(false), []);

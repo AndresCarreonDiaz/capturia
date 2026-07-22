@@ -80,6 +80,15 @@ interface CapturiaBridge {
     // checkout/activate. Rejects when Pro is inactive or the endpoint is
     // unreachable; callers treat that as "no meter", never an error state.
     getUsage?: () => Promise<HostedUsage>;
+    // Releases this device's hosted seat server-side (issue #10); optional
+    // because it shipped later than checkout/activate. The caller follows a
+    // resolved deactivation with keys.clear("capturia-hosted") so the local
+    // clear rides the existing vault-clear routing. Rejects with a
+    // human-readable message and clears NOTHING on failure.
+    deactivate?: () => Promise<{ ok: boolean }>;
+    // Opens the Stripe customer portal (card, invoices, cancel) in the OS
+    // browser; optional for the same stale-preload reason.
+    portal?: () => Promise<{ ok: boolean }>;
   };
   // Deck codegen: run a prompt on the stored key in main, return raw model text.
   generateCues: (prompt: string, provider: KeyProvider) => Promise<string>;
@@ -113,6 +122,14 @@ interface CapturiaBridge {
     get: () => Promise<{ enabled: boolean } | null>;
     set: (enabled: boolean) => Promise<{ enabled: boolean } | null>;
     ackDisclosure?: () => Promise<{ enabled: boolean } | null>;
+  };
+  // Voice recognition language (issue #53); optional for the same
+  // stale-preload reason. Only the canonical BCP-47 tag crosses the bridge;
+  // main validates against the curated list (lib/voice-locale.ts) and
+  // persists it in settings.json.
+  voiceLocale?: {
+    get: () => Promise<{ locale: string } | null>;
+    set: (tag: string) => Promise<{ locale: string } | null>;
   };
   // On-device streaming speech (macOS 26+ helper); optional for the same
   // stale-preload reason. Events: ready | downloading-model | interim |

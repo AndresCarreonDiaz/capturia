@@ -20,6 +20,7 @@ const files = [
   "lib/camera-feed.ts",
   "lib/sysext.ts",
   "lib/crash-log.ts",
+  "lib/voice-locale.ts",
 ];
 const outDir = join(root, "electron", "gen");
 
