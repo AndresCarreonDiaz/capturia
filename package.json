@@ -36,7 +36,7 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.76",
-    "@ai-sdk/google": "^3.0.71",
+    "@ai-sdk/google": "^4.0.44",
     "@ai-sdk/openai": "^3.0.63",
     "@copilotkit/a2ui-renderer": "^1.57.1",
     "@copilotkit/react-core": "^1.57.1",
