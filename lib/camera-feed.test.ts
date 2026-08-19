@@ -213,9 +213,9 @@ describe("physical camera selection", () => {
     expect(picked?.label).toBe("FaceTime HD Camera");
     const continuity = pickPhysicalVideoInput([
       input("Weird Capture Thing"),
-      input("Andres iPhone Camera"),
+      input("My iPhone Camera"),
     ]);
-    expect(continuity?.label).toBe("Andres iPhone Camera");
+    expect(continuity?.label).toBe("My iPhone Camera");
   });
 
   it("never picks an unlabeled device", () => {

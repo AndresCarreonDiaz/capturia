@@ -18,37 +18,9 @@ import {
   envKeysForSpec,
 } from "./server-keys";
 
-// The hosted-tier pseudo-provider (M11, issue #10): the vault slot holds a
-// Capturia access token instead of a vendor API key, and the runtime points
-// the Gemini wire at Capturia's proxy with that token in the key slot. The
-// proxy speaks the exact @ai-sdk/google shape (see lib/hosted/proxy.ts), so
-// hosted mode is a baseURL + key swap, not a new client.
-export const HOSTED_PROVIDER = "capturia-hosted";
-const DEFAULT_HOSTED_BASE = "https://www.capturia.dev/api/hosted";
-const DEFAULT_HOSTED_MODEL_ID = "gemini-2.5-flash-lite";
-
-export interface HostedRoute {
-  /** baseURL for createGoogleGenerativeAI: <hosted base>/v1beta. */
-  baseUrl: string;
-  /** Bare Gemini model id; the proxy enforces its own allowlist anyway. */
-  modelId: string;
-}
-
 export interface DesktopAgentSpec {
   model: string;
   apiKey: string | undefined;
-  /** Present only for the capturia-hosted provider. */
-  hosted?: HostedRoute;
-}
-
-// CAPTURIA_HOSTED_URL overrides the proxy origin (dev: http://localhost:3000
-// /api/hosted); CAPTURIA_HOSTED_MODEL picks among the proxy's allowed ids.
-export function hostedRouteFromEnv(env: Record<string, string | undefined>): HostedRoute {
-  const base = (env.CAPTURIA_HOSTED_URL || DEFAULT_HOSTED_BASE).replace(/\/+$/, "");
-  return {
-    baseUrl: `${base}/v1beta`,
-    modelId: env.CAPTURIA_HOSTED_MODEL || DEFAULT_HOSTED_MODEL_ID,
-  };
 }
 
 export interface DesktopKeyInput {
@@ -71,15 +43,6 @@ export interface DesktopKeyInput {
 // run fails. Unmapped specs (vertex, unknown) still return undefined for
 // resolveModel to handle itself.
 export function resolveDesktopAgentSpec({ provider, storedKey, env }: DesktopKeyInput): DesktopAgentSpec {
-  // Hosted tier first: the stored value is the Capturia token (slice 1 keeps
-  // the raw JWT in the vault; the refresh loop is the desktop entitlement
-  // slice). The model string stays a google/<id> spec so shared logic like
-  // isNoThinkingModel keeps working; runtime-server builds the actual
-  // proxy-pointed model instance from `hosted`.
-  if (provider === HOSTED_PROVIDER && storedKey) {
-    const hosted = hostedRouteFromEnv(env);
-    return { model: `google/${hosted.modelId}`, apiKey: storedKey, hosted };
-  }
   if (provider && storedKey) {
     const fallback = providerModelSpec(provider);
     const override = env.CAPTURIA_MODEL;
@@ -99,65 +62,13 @@ export function resolveDesktopAgentSpec({ provider, storedKey, env }: DesktopKey
 // Missing-key fail-fast sharing the DECISION with the web route (via
 // missingModelKeyError) but not the words: the web copy says "set X in
 // .env.local", which is meaningless inside a packaged app where the fix is
-// Settings. The hosted provider gets its own message: telling a Pro user to
-// go set GOOGLE_API_KEY would be exactly the setup the hosted tier exists
-// to remove.
+// Settings.
 export function desktopKeyError({ provider, storedKey, env }: DesktopKeyInput): string | null {
   const error = missingModelKeyError({ byokProvider: provider, byokKey: storedKey, env });
   if (!error) return null;
-  // Only rewrite a REAL failure: with a usable env fallback the agents
-  // factory would run anyway (hosted-without-token falls through to the env
-  // spec), and blocking a run that would succeed forks keycheck from run.
-  if (provider === HOSTED_PROVIDER && !storedKey) {
-    return (
-      "Capturia Pro is selected but no access token is stored. " +
-      "Paste your token in Settings, or switch to a BYOK provider."
-    );
-  }
   return (
     "Capturia has no AI key yet. Open Settings (⌘,), pick Google Gemini, " +
-    "and paste a free key from https://aistudio.google.com (about a minute), " +
-    "or upgrade to Capturia Pro for hosted keys."
-  );
-}
-
-// Wire markers for the hosted proxy's budget refusals (issue #10 slice 4).
-// The proxy embeds one of these in the refusal message it sends in the
-// Gemini error shape, so the exact text survives the trip through
-// @ai-sdk/google (APICallError.message), CopilotKit's RUN_ERROR event, and
-// Electron's IPC rejection wrapper. The renderer then matches the marker
-// instead of parsing status codes it never sees. Defined here (not in
-// lib/hosted/gate.ts) so the electron/gen build stays free of server code,
-// mirroring how lib/hosted/entitlements.ts re-exports ACTIVATION_CODE_RE.
-export const HOSTED_BUDGET_EXHAUSTED_MARKER = "capturia:hosted-budget-exhausted";
-export const HOSTED_FLASH_BUDGET_EXHAUSTED_MARKER = "capturia:hosted-flash-budget-exhausted";
-
-export type HostedExhaustion = "hosted_monthly" | "hosted_flash";
-
-// Flash first: its marker does not contain the monthly one, but checking the
-// more specific state first keeps that true even if the tokens ever change.
-export function classifyHostedExhaustion(text: string | null | undefined): HostedExhaustion | null {
-  if (!text) return null;
-  if (text.includes(HOSTED_FLASH_BUDGET_EXHAUSTED_MARKER)) return "hosted_flash";
-  if (text.includes(HOSTED_BUDGET_EXHAUSTED_MARKER)) return "hosted_monthly";
-  return null;
-}
-
-// The calm operator copy for a budget-exhausted run. Hours, never tokens
-// (the pricing decision on issue #49): Pro is sold as 20 presentation hours
-// a month, and the flash sub-budget is sold as the deck creation allowance.
-// Both promise what KEEPS working, because the failure is only the new run:
-// the camera, the overlays already on screen, and the cue decks stay live.
-export function hostedExhaustionNotice(kind: HostedExhaustion): string {
-  if (kind === "hosted_flash") {
-    return (
-      "Your deck creation allowance for this month is used up. Decks still " +
-      "load with the built-in cue builder, and live overlays keep running."
-    );
-  }
-  return (
-    "You have used your 20 included hours this month. Your camera and the " +
-    "overlays on screen keep working; new AI runs resume when your month renews."
+    "and paste a free key from https://aistudio.google.com (about a minute)."
   );
 }
 

@@ -10,10 +10,10 @@ import { getVoteBackend } from "@/lib/vote-backend";
 //   OPTIONS                         -> CORS preflight (packaged desktop studio)
 //
 // Backend is picked by env (lib/vote-backend.ts): in-memory single-process by
-// default (operator's machine / self-host; see lib/vote-store.ts header), or
-// Upstash Redis when its env vars exist (hosted serverless deploys). With
-// Redis there is no in-process push, so watch-mode becomes a short-lived
-// polling bridge: snapshot every POLL_MS, emit on change, close before the
+// default (see lib/vote-store.ts header), or the deployer's own Upstash-REST
+// Redis when its env vars exist (for serverless / multi-instance deploys
+// where one process can't hold room state). With Redis there is no in-process
+// push, so watch-mode becomes a short-lived polling bridge: snapshot every POLL_MS, emit on change, close before the
 // function's time budget; EventSource's native reconnect resumes seamlessly
 // and the clients never know the difference.
 
@@ -24,9 +24,10 @@ const BRIDGE_POLL_MS = 1500;
 const BRIDGE_MAX_MS = 25_000;
 
 // CORS, wide open, and deliberately so (issue #52): the packaged desktop
-// studio loads from file:// and reaches this route on the hosted deploy with
-// Origin: null, so without these headers the browser hides every response
-// from it (and preflight-blocks the JSON POSTs outright). This widens
+// studio loads from file:// and reaches this route on whatever origin its
+// deployer configured with Origin: null, so without these headers the browser
+// hides every response from it (and preflight-blocks the JSON POSTs
+// outright). This widens
 // nothing server-side: the route never checked Origin, because Origin was
 // never load-bearing here. Anything speaking HTTP already reached it, and the
 // real protections all remain: rooms are claimed by first publish with a

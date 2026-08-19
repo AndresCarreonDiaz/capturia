@@ -89,24 +89,11 @@ async function startRuntimeServer({ keychain, isDev, env = process.env, host = "
   const token = crypto.randomBytes(32).toString("hex");
 
   // Same agent shape as the web route (see that file for the reasoning behind
-  // maxSteps/temperature/thinkingBudget); only the key SOURCE differs. For
-  // the hosted tier (spec.hosted set, M11 issue #10) the model is built here
-  // as a concrete @ai-sdk/google instance pointed at Capturia's proxy, with
-  // the vault's Capturia JWT in the key slot; resolveModel passes non-string
-  // models through untouched, so BuiltInAgent behaves identically. The spec
-  // string is still consulted for the thinking allowlist.
-  function buildAgent({ model, apiKey, hosted }) {
-    let resolvedModel = model;
-    if (hosted) {
-      const { createGoogleGenerativeAI } = require("@ai-sdk/google");
-      resolvedModel = createGoogleGenerativeAI({
-        baseURL: hosted.baseUrl,
-        apiKey,
-      })(hosted.modelId);
-    }
+  // maxSteps/temperature/thinkingBudget); only the key SOURCE differs.
+  function buildAgent({ model, apiKey }) {
     return new BuiltInAgent({
-      model: resolvedModel,
-      apiKey: hosted ? undefined : apiKey,
+      model,
+      apiKey,
       prompt: SYSTEM_PROMPT,
       maxSteps: 1,
       temperature: 0,
@@ -117,12 +104,11 @@ async function startRuntimeServer({ keychain, isDev, env = process.env, host = "
   }
 
   // The provider header is client-supplied, so it is validated against the
-  // RENDERER-NAMEABLE provider list (electron/ipc-schemas.js), not against
-  // every slot the keychain can hold: the vault also stores main-internal
-  // slots (the capturia-hosted-refresh token), and a hostile header naming
-  // one of those must read as "no stored key", never as a key that
-  // resolveDesktopAgentSpec would then ship upstream. keychain.getKey still
-  // throws on unknown providers; that also maps to null, not a 500.
+  // RENDERER-NAMEABLE provider list (electron/ipc-schemas.js): a hostile or
+  // stale header naming anything else must read as "no stored key", never as
+  // a key that resolveDesktopAgentSpec would then ship upstream.
+  // keychain.getKey still throws on unknown providers; that also maps to
+  // null, not a 500.
   // Deliberately unmemoized even though a run request consults it twice
   // (guard + agents factory): each check should see the live vault, and two
   // keychain reads are noise next to a model call.

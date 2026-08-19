@@ -4,10 +4,9 @@ import { DEFAULT_VOICE_LOCALE, normalizeVoiceLocale } from "@/lib/voice-locale";
 
 // The chosen speech-recognition language (issue #53): one canonical BCP-47
 // tag from the curated list in lib/voice-locale.ts. Desktop persists it in
-// main's settings.json through the voiceLocale bridge (the same store as the
-// telemetry consent); web keeps it in localStorage. Writes are optimistic
-// like the telemetry toggle: the IPC reply reconciles, and a rejected invoke
-// must never break the studio.
+// main's settings.json through the voiceLocale bridge; web keeps it in
+// localStorage. Writes are optimistic: the IPC reply reconciles, and a
+// rejected invoke must never break the studio.
 
 const STORAGE_KEY = "capturia:voice-locale";
 

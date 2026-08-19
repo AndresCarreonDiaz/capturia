@@ -60,34 +60,6 @@ contextBridge.exposeInMainWorld("capturia", {
   runtimeInfo() {
     return ipcRenderer.invoke("runtime:info");
   },
-  // Capturia Pro upgrade flow (M11 slice 2): checkout opens the OS browser
-  // from main; activate trades the pasted one-time code for keychain-held
-  // credentials. Only { ok, devices } or an error message ever crosses back.
-  billing: {
-    checkout() {
-      return ipcRenderer.invoke("billing:checkout");
-    },
-    activate(code) {
-      return ipcRenderer.invoke("billing:activate", { code: String(code ?? "") });
-    },
-    // Current-period hosted usage counters for the Settings hours meter.
-    // Read-only; main fetches with the keychain JWT, which never crosses.
-    getUsage() {
-      return ipcRenderer.invoke("billing:usage");
-    },
-    // Releases this device's hosted seat server-side (main authenticates
-    // with the keychain JWT). The renderer follows up with
-    // keys.clear("capturia-hosted") so the local clear rides the existing
-    // vault-clear routing.
-    deactivate() {
-      return ipcRenderer.invoke("billing:deactivate");
-    },
-    // Opens the Stripe customer portal (card, invoices, cancel) in the OS
-    // browser from main; only { ok } ever crosses back.
-    portal() {
-      return ipcRenderer.invoke("billing:portal");
-    },
-  },
   // Deck codegen: run a prompt on the user's stored key in main, return raw
   // model text. Used by the deck dropzone to design overlays from a PDF.
   generateCues(prompt, provider) {
@@ -148,24 +120,9 @@ contextBridge.exposeInMainWorld("capturia", {
       return () => ipcRenderer.off("sysext", listener);
     },
   },
-  // Anonymous usage beacon toggle (electron/telemetry.js): the renderer
-  // reads and flips the boolean; the installId and the sending stay in main.
-  // ackDisclosure releases the first-run consent gate once the onboarding
-  // disclosure has been resolved (or was already completed in a past run).
-  telemetry: {
-    get() {
-      return ipcRenderer.invoke("telemetry:get");
-    },
-    set(enabled) {
-      return ipcRenderer.invoke("telemetry:set", Boolean(enabled));
-    },
-    ackDisclosure() {
-      return ipcRenderer.invoke("telemetry:ack");
-    },
-  },
   // Voice recognition language (issue #53): the renderer reads and sets the
   // canonical BCP-47 tag; main validates against the curated list and
-  // persists it in settings.json alongside the telemetry consent.
+  // persists it in settings.json (electron/settings.js).
   voiceLocale: {
     get() {
       return ipcRenderer.invoke("voice-locale:get");

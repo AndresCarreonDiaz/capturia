@@ -57,9 +57,9 @@ See [README.md](README.md) for the full architecture.
 ## Easy first contributions
 
 1. **Add a new overlay component.** Zod schema in `lib/catalog.ts`, React component in `components/overlays/`, register in `lib/a2ui-catalog.tsx`. Match the broadcast-subtle animation language (entrance under 400ms, ease-out cubic, white/10 borders, backdrop blur).
-2. **Speech recognition improvements.** Add VAD streaming for desktop, or a hosted-STT path for browsers without Web Speech.
+2. **Speech recognition improvements.** Add VAD streaming for desktop, or a cloud-STT path (Deepgram, Groq Whisper) for browsers without Web Speech.
 3. **Localize the agent prompt** in `lib/system-prompt.ts` for non-English input.
-4. **Wire a real data source** into MetricsPanel or BigCounter (Stripe, PostHog, Twitch viewer count).
+4. **Wire a real data source** into MetricsPanel or BigCounter (PostHog, Twitch viewer count, anything live).
 
 ## Reporting bugs
 

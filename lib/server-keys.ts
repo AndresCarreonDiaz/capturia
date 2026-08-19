@@ -15,7 +15,7 @@
 // affected by the Gemini-3.x thought_signature gap, so they are safe to use
 // today with maxSteps:1.
 export const PROVIDER_MODELS: Record<string, string> = {
-  gemini: "google/gemini-2.5-flash-lite", // fast, cheap; the free web-demo default
+  gemini: "google/gemini-2.5-flash-lite", // fast, cheap; the self-host default
   claude: "anthropic/claude-sonnet-4-6", // strong tree authoring (Haiku 4.5 / Opus 4.8 via CAPTURIA_MODEL)
   openai: "openai/gpt-4o",
 };

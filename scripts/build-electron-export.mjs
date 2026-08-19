@@ -5,12 +5,12 @@
 // Next's output:"export" hard-errors on any server-only surface, and the
 // desktop bundle must not ship one anyway: app/api/* (POST/SSE route handlers)
 // is replaced by the runtime hosted in Electron main, app/vote/* (dynamic
-// room route) lives on the hosted web deployment that phones reach via the QR
-// origin (NEXT_PUBLIC_CAPTURIA_ORIGIN), and app/download (the landing's
-// redirect route) belongs to the hosted deployment too. There is no config
-// switch to exclude routes from a build, so this script relocates those
-// directories aside for the duration of the build and restores them
-// afterwards, even on Ctrl-C.
+// room route) needs a server, so it only works on a self-hosted web deploy
+// that phones reach via the QR origin (NEXT_PUBLIC_CAPTURIA_ORIGIN), and
+// app/download (the landing's redirect route) belongs to such a deploy too.
+// There is no config switch to exclude routes from a build, so this script
+// relocates those directories aside for the duration of the build and
+// restores them afterwards, even on Ctrl-C.
 // Do not run it while `next dev` is serving this checkout.
 
 import { spawnSync } from "node:child_process";
@@ -95,14 +95,13 @@ try {
   status = run(join(root, "node_modules", ".bin", "next"), ["build"], {
     CAPTURIA_ELECTRON_BUILD: "1",
     // The packaged studio runs on file://, where relative /api/vote fetches
-    // have no server behind them, so its vote rooms live on the hosted
+    // have no server behind them, so its vote rooms need a self-hosted web
     // deploy: bake that origin into the export (NEXT_PUBLIC_ vars inline at
-    // build time). ?? not ||: an env var that is SET wins, even set to
-    // empty, so a self-hoster can point their build at their own deploy or
-    // disable desktop voting outright (the studio then shows its origin
-    // notice instead of a QR).
-    NEXT_PUBLIC_CAPTURIA_ORIGIN:
-      process.env.NEXT_PUBLIC_CAPTURIA_ORIGIN ?? "https://www.capturia.dev",
+    // build time). The default is empty — no origin, no traffic to anyone's
+    // server, and the studio shows its self-host notice instead of a QR.
+    // ?? not ||: an env var that is SET wins, even set to empty, so setting
+    // NEXT_PUBLIC_CAPTURIA_ORIGIN points the build at your own deploy.
+    NEXT_PUBLIC_CAPTURIA_ORIGIN: process.env.NEXT_PUBLIC_CAPTURIA_ORIGIN ?? "",
   });
 } finally {
   restore();

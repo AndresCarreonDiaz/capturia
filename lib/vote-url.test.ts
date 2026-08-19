@@ -44,16 +44,16 @@ describe("voteUrlLocalhostOnly", () => {
 describe("voteApiBase", () => {
   it("keeps room traffic same-origin on any http(s) studio", () => {
     expect(voteApiBase("", "http://localhost:3000")).toBe("");
-    expect(voteApiBase("", "https://www.capturia.dev")).toBe("");
+    expect(voteApiBase("", "https://www.example.com")).toBe("");
     // Advertising a tunnel/public origin must NOT reroute the studio's own
     // publishes: that origin fronts this very server end to end.
     expect(voteApiBase("https://tunnel.example", "http://localhost:3000")).toBe("");
   });
 
-  it("routes the packaged app's file:// traffic to the baked hosted origin", () => {
-    expect(voteApiBase("https://www.capturia.dev", "file://")).toBe("https://www.capturia.dev");
-    expect(voteApiBase("https://www.capturia.dev", "null")).toBe("https://www.capturia.dev");
-    expect(voteApiBase("https://www.capturia.dev", "")).toBe("https://www.capturia.dev");
+  it("routes the packaged app's file:// traffic to the baked origin", () => {
+    expect(voteApiBase("https://www.example.com", "file://")).toBe("https://www.example.com");
+    expect(voteApiBase("https://www.example.com", "null")).toBe("https://www.example.com");
+    expect(voteApiBase("https://www.example.com", "")).toBe("https://www.example.com");
   });
 
   it("yields no base when neither origin is usable (voting is gated off)", () => {

@@ -61,7 +61,6 @@ import { sanitizeSurfaceTree } from "@/lib/a2ui-validate";
 import { coerceArrayArg, coerceRecordArg, toolArgText } from "@/lib/extract-json";
 import { oversizedToolArg } from "@/lib/limits";
 import { isPlaceableOverlayType } from "@/lib/catalog";
-import { classifyHostedExhaustion, hostedExhaustionNotice } from "@/lib/desktop-runtime";
 import { matchCue, matchInterimCue, type InterimCueState } from "@/lib/deck/cues";
 import { advanceCuePointer, nextCueIndex } from "@/lib/deck/pointer";
 import type { CueCard, DeckFacts } from "@/lib/deck/types";
@@ -1182,7 +1181,7 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
       {/* Layer 0: webcam. Receivers (the desktop app's offscreen camera
           window, a ?out=1 mirror tab) capture the moment main allows it; the
           visible Control Room starts with the camera OFF so launching the
-          app to prep a deck or buy Pro never lights the LED (the stage's
+          app just to prep a deck never lights the LED (the stage's
           "Go on camera" is the intent signal). */}
       <WebcamFeed
         autoStart={isMirrorReceiver}
@@ -1264,9 +1263,6 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
             const voteUrlUnreachable =
               voteOn && (voteOriginUnusable || (!!voteUrl && voteUrlLocalhostOnly(voteUrl)));
             const publishError = voteOn ? votePublishError : null;
-            // A hosted budget-exhausted run is a plan state, not a failure:
-            // it gets the calm notice below instead of the amber error.
-            const hostedExhaustion = classifyHostedExhaustion(runError);
             if (!(!isSupported || agentOfflineError || voteUrlUnreachable || publishError || runError))
               return null;
             return (
@@ -1276,26 +1272,11 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
                 {agentOfflineError && <ModelKeyBanner message={agentOfflineError} />}
                 {/* Honest heads-up when voice can't run here (Firefox/Brave/desktop). */}
                 {!isSupported && <BrowserBanner />}
-                {/* The included hosted allowance ran out mid-show: say so
-                    calmly, in hours, and promise what keeps working. The
-                    show on screen is unaffected; only new AI runs stop. */}
-                {runError && hostedExhaustion && (
-                  <div className="flex items-start gap-3 rounded-xl border border-white/20 bg-black/70 px-4 py-3 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.4)]">
-                    <span
-                      aria-hidden
-                      className="mt-0.5 h-2 w-2 flex-none rounded-full bg-cyan-300"
-                      style={{ boxShadow: "0 0 8px #67e8f9" }}
-                    />
-                    <div className="text-[13px] leading-snug text-white/80">
-                      {hostedExhaustionNotice(hostedExhaustion)}
-                    </div>
-                  </div>
-                )}
                 {/* An agent run failed (rate limit, revoked key, server 503).
                     runAgent swallows these into subscribers, so without this
                     notice the loop just goes silently dead mid-show. Cleared
                     by the next successful send. */}
-                {runError && !hostedExhaustion && (
+                {runError && (
                   <div className="flex items-start gap-3 rounded-xl border border-amber-400/30 bg-black/70 px-4 py-3 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.4)]">
                     <span
                       aria-hidden
@@ -1516,7 +1497,6 @@ function Capturia({ vault, activeProvider, setActiveProvider, headers, runtimeUr
             clear={vault.clear}
             activeProvider={activeProvider}
             onSelectProvider={setActiveProvider}
-            onRefreshKeys={vault.refresh}
             voiceLocale={voiceLocale}
             onSelectVoiceLocale={setVoiceLocale}
             cameraPreference={cameraPreference}

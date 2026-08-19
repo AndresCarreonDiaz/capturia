@@ -20,17 +20,12 @@ const path = require("path");
 const { transcribeWav } = require("./whisper");
 const keychain = require("./keychain");
 const deckGen = require("./deck-generate");
-const { startRuntimeServer, loadDevEnvFiles } = require("./runtime-server");
-const { createHostedBilling } = require("./hosted-billing");
-// Vault-clear routing decision, pinned by lib/hosted-billing.test.ts. Plain
-// require (no degrade path): ./hosted-billing above already hard-requires
-// this same gen module.
-const { classifyVaultClear } = require("./gen/hosted-billing");
+const { startRuntimeServer } = require("./runtime-server");
 const { createTray } = require("./tray");
 const { createUpdateCheck } = require("./update-check");
 const { logCrash, crashLogPath } = require("./crash-log");
 const { maybeOfferMoveToApplications, offerMoveToApplications } = require("./first-run");
-const { createTelemetry, readSettings, writeSettings } = require("./telemetry");
+const { readSettings, writeSettings } = require("./settings");
 const { normalizeVoiceLocale, appleSpeechLocale } = require("./gen/voice-locale");
 const { normalizeCameraPreference } = require("./gen/camera-select");
 const speechHelper = require("./speech-helper");
@@ -132,16 +127,6 @@ let rendererState = { reported: false, listening: false, voiceSupported: false, 
 // it parks here and flushes on the next state:report, which can only come
 // from a mounted page.
 let pendingRendererAction = null;
-// Capturia Pro billing (electron/hosted-billing.js): checkout, activation,
-// and the JWT refresh loop. Created in registerIpc (it shares the deck
-// codegen effective env) and started after boot.
-let hostedBilling = null;
-// Anonymous usage beacon (electron/telemetry.js, docs/telemetry.md): four
-// fields, opt-out, fire-and-forget. Hard-disabled in smoke mode so
-// unattended gate runs never pollute production counters. Created after the
-// CAPTURIA_USER_DATA override above so the settings store lands in the same
-// profile the run uses.
-const telemetry = createTelemetry({ disabled: isSmoke });
 
 // Main-process crash visibility (issue #51): without these, an escaped throw
 // or orphaned rejection in main dies in a console nobody attached. Log and
@@ -213,17 +198,7 @@ function registerIpc() {
   ipcMain.handle(
     "keys:clear",
     guarded((_event, provider) => {
-      const named = assertProvider(provider);
-      // Clearing the Pro row is a local deactivation: the refresh token and
-      // its pending timer must go with the JWT, or the refresh loop would
-      // quietly re-mint what the user just cleared (the why lives with
-      // classifyVaultClear in lib/hosted-billing.ts). With billing missing
-      // the row degrades to a plain key delete, as before.
-      if (classifyVaultClear(named) === "deactivate_hosted" && hostedBilling) {
-        hostedBilling.deactivateLocal();
-      } else {
-        keychain.clearKey(named);
-      }
+      keychain.clearKey(assertProvider(provider));
       return keychain.listKeys();
     })
   );
@@ -245,72 +220,12 @@ function registerIpc() {
 
   // Deck codegen on the user's key, in main. Returns raw model text (JSON the
   // renderer validates). The prompt is built in the renderer (lib/deck/prompt).
-  // Codegen sees the SAME effective env as the runtime server (dev .env files
-  // merged under the OS environment), so a dev CAPTURIA_HOSTED_URL override
-  // applies to both hosted call paths and the vault token can never be sent
-  // to production by only one of them.
-  let deckEnvCache = null;
-  const deckCodegenEnv = () => {
-    if (!deckEnvCache) {
-      deckEnvCache = isDev
-        ? { ...loadDevEnvFiles(path.join(__dirname, "..")), ...process.env }
-        : process.env;
-    }
-    return deckEnvCache;
-  };
   ipcMain.handle(
     "deck:generate",
     guarded((_event, payload) => {
       const provider = assertProvider(payload && payload.provider);
       const prompt = assertNonEmptyString(payload && payload.prompt, "Prompt");
-      return deckGen.generateCues(prompt, provider, deckCodegenEnv());
-    })
-  );
-
-  // Capturia Pro upgrade flow (M11 slice 2). Billing shares the deck
-  // codegen effective env so a dev CAPTURIA_HOSTED_URL override points
-  // checkout, activation, and token refresh at the same server as the
-  // proxy. The renderer only ever sees { ok, devices } or an error message;
-  // tokens live in the keychain and travel main -> proxy only.
-  hostedBilling = createHostedBilling({ keychain, env: deckCodegenEnv() });
-  hostedBilling.start();
-  ipcMain.handle(
-    "billing:checkout",
-    guarded(async () => {
-      const url = await hostedBilling.startCheckout();
-      await shell.openExternal(url);
-      return { ok: true };
-    })
-  );
-  ipcMain.handle(
-    "billing:activate",
-    guarded((_event, payload) => {
-      const code = assertNonEmptyString(payload && payload.code, "Activation code");
-      return hostedBilling.activate(code);
-    })
-  );
-  // No payload to validate (the call carries none); guarded() gates the
-  // caller and main authenticates with the keychain JWT itself.
-  ipcMain.handle(
-    "billing:usage",
-    guarded(() => hostedBilling.getUsage())
-  );
-  // Server-side seat release only: the renderer follows up with the normal
-  // keys:clear("capturia-hosted"), which routes to deactivateLocal above, so
-  // the vault clear has exactly one path (issue #10 self-serve deactivation).
-  ipcMain.handle(
-    "billing:deactivate",
-    guarded(() => hostedBilling.deactivateRemote())
-  );
-  // Stripe customer portal (issue #48): like checkout, the URL opens in the
-  // OS browser from main and never crosses to the renderer; getPortalUrl
-  // enforces https before shell.openExternal sees anything.
-  ipcMain.handle(
-    "billing:portal",
-    guarded(async () => {
-      const url = await hostedBilling.getPortalUrl();
-      await shell.openExternal(url);
-      return { ok: true };
+      return deckGen.generateCues(prompt, provider);
     })
   );
 
@@ -368,28 +283,9 @@ function registerIpc() {
   );
   ipcMain.handle("sysext:install", guarded(() => (sysext ? sysext.install() : null)));
 
-  // Telemetry toggle for the Settings modal and onboarding: read the current
-  // state, or set it. The renderer only ever sees the boolean; the installId
-  // and the sending itself stay in main (electron/telemetry.js).
-  ipcMain.handle("telemetry:get", guarded(() => ({ enabled: telemetry.isEnabled() })));
-  ipcMain.handle(
-    "telemetry:set",
-    guarded((_event, enabled) => {
-      if (typeof enabled !== "boolean") {
-        throw new Error("Capturia: telemetry:set expects a boolean.");
-      }
-      return { enabled: telemetry.setEnabled(enabled) };
-    })
-  );
-  // Renderer -> main: the onboarding disclosure was resolved (welcome step
-  // dismissed with the toggle state known, or onboarding already completed
-  // in an earlier session). Releases the first-run consent gate holding the
-  // launch ping (electron/telemetry.js); idempotent on later runs.
-  ipcMain.handle("telemetry:ack", guarded(() => ({ enabled: telemetry.ackDisclosure() })));
-
   // Voice recognition language (issue #53): the renderer reads and sets the
-  // canonical BCP-47 tag; it persists in the same userData/settings.json as
-  // the telemetry consent. Both directions run through the curated-list
+  // canonical BCP-47 tag; it persists in userData/settings.json
+  // (electron/settings.js). Both directions run through the curated-list
   // normalizer, so a hand-edited or stale file can only ever yield a tag the
   // speech engines actually support.
   ipcMain.handle(
@@ -983,14 +879,9 @@ if (!gotTheLock) {
         },
         // The install completed: the extension can enumerate now, so nudge
         // the feed to (re)connect. Not in smoke mode, whose camera lifecycle
-        // must stay owned by the smoke gate. Also the activation step of the
-        // funnel: one anonymous camera-installed ping, reported at most once
-        // per install (telemetry dedupes, and covers the out-of-band
-        // System Settings approval landing later because this callback fires
-        // on the list poll's enabled flip too).
+        // must stay owned by the smoke gate.
         onInstalled: () => {
           if (!isSmoke) cameraFeed?.start();
-          telemetry.send("camera-installed");
         },
         // Never a dialog in smoke mode: unattended runs must stay unattended
         // (the forced sysext smoke leg can hit the needs-move preempt when
@@ -1013,14 +904,6 @@ if (!gotTheLock) {
 
     registerIpc();
     createWindow();
-
-    // One anonymous launch ping per run (the DAU/MAU signal). Async and
-    // fire-and-forget: a dead or unreachable endpoint costs one swallowed
-    // fetch, never a slower start. On a FIRST run this parks behind the
-    // consent gate until the renderer acks the onboarding disclosure
-    // (telemetry:ack above); it is dropped silently if the user opts out
-    // there, and every later run sends immediately.
-    telemetry.send("launch");
 
     // Menu-bar tray: live status plus the same actions the window offers, so
     // the shell stays usable while hidden behind a call. Voice toggling rides
@@ -1172,7 +1055,6 @@ app.on("before-quit", () => {
 // sink stream, handing the extension back to its splash) and before the tray
 // so its final state change updates a live menu.
 app.on("will-quit", () => {
-  hostedBilling?.stop();
   globalShortcut.unregisterAll();
   speechHelper.stopAllSpeechSessions();
   cameraFeed?.dispose();

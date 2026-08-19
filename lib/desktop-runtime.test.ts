@@ -8,11 +8,6 @@ import {
   resolveDesktopAgentSpec,
   desktopKeyError,
   isAllowedRuntimeOrigin,
-  classifyHostedExhaustion,
-  hostedExhaustionNotice,
-  HOSTED_BUDGET_EXHAUSTED_MARKER,
-  HOSTED_FLASH_BUDGET_EXHAUSTED_MARKER,
-  HOSTED_PROVIDER,
 } from "./desktop-runtime";
 
 const NO_ENV = {} as Record<string, string | undefined>;
@@ -97,48 +92,6 @@ describe("resolveDesktopAgentSpec", () => {
     expect(spec.model).toBe("vertex/gemini-2.5-pro");
     expect(spec.apiKey).toBeUndefined();
   });
-
-  it("routes the hosted provider at Capturia's proxy with the vault token in the key slot", () => {
-    const spec = resolveDesktopAgentSpec({
-      provider: HOSTED_PROVIDER,
-      storedKey: "capturia-jwt",
-      env: NO_ENV,
-    });
-    expect(spec.model).toBe("google/gemini-2.5-flash-lite");
-    expect(spec.apiKey).toBe("capturia-jwt");
-    expect(spec.hosted).toEqual({
-      baseUrl: "https://www.capturia.dev/api/hosted/v1beta",
-      modelId: "gemini-2.5-flash-lite",
-    });
-  });
-
-  it("honors the CAPTURIA_HOSTED_URL and CAPTURIA_HOSTED_MODEL env overrides", () => {
-    // The env override is the slice-1 test hook for hosted wiring: point the
-    // desktop runtime at a local dev proxy without touching the default.
-    const spec = resolveDesktopAgentSpec({
-      provider: HOSTED_PROVIDER,
-      storedKey: "capturia-jwt",
-      env: {
-        CAPTURIA_HOSTED_URL: "http://localhost:3000/api/hosted/",
-        CAPTURIA_HOSTED_MODEL: "gemini-2.5-flash",
-      },
-    });
-    expect(spec.hosted).toEqual({
-      baseUrl: "http://localhost:3000/api/hosted/v1beta",
-      modelId: "gemini-2.5-flash",
-    });
-    expect(spec.model).toBe("google/gemini-2.5-flash");
-  });
-
-  it("falls back to the env spec when the hosted slot has no token", () => {
-    const spec = resolveDesktopAgentSpec({
-      provider: HOSTED_PROVIDER,
-      storedKey: null,
-      env: { GOOGLE_API_KEY: "aistudio-key" },
-    });
-    expect(spec.hosted).toBeUndefined();
-    expect(spec.apiKey).toBe("aistudio-key");
-  });
 });
 
 describe("desktopKeyError", () => {
@@ -160,58 +113,6 @@ describe("desktopKeyError", () => {
     expect(
       desktopKeyError({ provider: null, storedKey: null, env: { GOOGLE_API_KEY: "k" } })
     ).toBeNull();
-  });
-
-  it("is null when the hosted slot holds a token", () => {
-    expect(desktopKeyError({ provider: HOSTED_PROVIDER, storedKey: "jwt", env: NO_ENV })).toBeNull();
-  });
-
-  it("stays null for hosted-without-token when the env fallback would run anyway", () => {
-    // Mirrors the agents factory: no token means the request falls through to
-    // the env spec, so a usable env key must not trip the fail-fast.
-    expect(
-      desktopKeyError({ provider: HOSTED_PROVIDER, storedKey: null, env: { GOOGLE_API_KEY: "k" } })
-    ).toBeNull();
-  });
-
-  it("names the missing Capturia token instead of suggesting env API keys", () => {
-    const err = desktopKeyError({ provider: HOSTED_PROVIDER, storedKey: null, env: NO_ENV });
-    expect(err).toMatch(/Capturia Pro/);
-    expect(err).not.toMatch(/GOOGLE_API_KEY/);
-  });
-});
-
-describe("hosted exhaustion classification", () => {
-  it("finds the markers anywhere in an error string, however wrapped", () => {
-    // The message travels through APICallError, CopilotKit's RUN_ERROR, the
-    // client's "code: message" formatting, and Electron's IPC wrapper; the
-    // classifier must only care that the marker survived.
-    expect(
-      classifyHostedExhaustion(
-        `CKError: Monthly included usage is used up. [${HOSTED_BUDGET_EXHAUSTED_MARKER}]`
-      )
-    ).toBe("hosted_monthly");
-    expect(
-      classifyHostedExhaustion(
-        `Error invoking remote method 'deck:generate': Error: refused [${HOSTED_FLASH_BUDGET_EXHAUSTED_MARKER}]`
-      )
-    ).toBe("hosted_flash");
-  });
-
-  it("never classifies ordinary errors or empty input", () => {
-    expect(classifyHostedExhaustion("429: Rate limit exceeded, slow down.")).toBeNull();
-    expect(classifyHostedExhaustion("")).toBeNull();
-    expect(classifyHostedExhaustion(null)).toBeNull();
-    expect(classifyHostedExhaustion(undefined)).toBeNull();
-  });
-
-  it("speaks hours (never tokens) and says what keeps working", () => {
-    const monthly = hostedExhaustionNotice("hosted_monthly");
-    expect(monthly).toContain("You have used your 20 included hours this month");
-    expect(monthly).not.toMatch(/token/i);
-    const flash = hostedExhaustionNotice("hosted_flash");
-    expect(flash).toMatch(/deck creation allowance/i);
-    expect(flash).not.toMatch(/token/i);
   });
 });
 

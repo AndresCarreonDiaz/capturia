@@ -55,31 +55,25 @@ Environment summary (the first two are the pack:mac contract, see
 | `CAPTURIA_EXT_SIGN_IDENTITY_SHA1` | Optional. Pins the exact Developer ID Application certificate (its SHA-1 from `security find-identity -v -p codesigning`) for the extension re-sign when two distinct certificates share a name, e.g. a renewed certificate coexisting with its predecessor; the build refuses to pick one by surprise and names this variable. |
 | `CAPTURIA_NOTARY_PROFILE` | Name of a `notarytool store-credentials` keychain profile (below). Unset: notarization is skipped with a clear log line. Set: the DMG is submitted with `--wait`, rejection fails the build loudly (the developer log is printed), then app and DMG are stapled and `spctl --assess` must accept the app. |
 
-## Before any release: the hosted vote backend must exist first
+## The vote origin baked into the DMG (optional)
 
-Order matters, and it is deploy-then-release, never the reverse. The
-packaged app bakes `NEXT_PUBLIC_CAPTURIA_ORIGIN=https://www.capturia.dev`
-into its export (`scripts/build-electron-export.mjs`), so every shipped
-DMG's audience voting lives on that deploy. Voting there only works once
-the Upstash Redis integration is enabled on the Vercel project: without its
-env vars, `lib/vote-backend.ts` falls back to the in-memory store, which
-does not survive serverless invocations, so the desktop publish lands in
-one lambda while phone GETs and votes hit others. The symptom is nasty
-precisely because it is quiet: the studio renders a confident QR, phones
-sit on the waiting screen forever, and votes 404 intermittently.
-
-So, before cutting a DMG:
-
-1. Enable the Upstash Redis integration on the Vercel project (the
-   `UPSTASH_REDIS_REST_*` or `KV_REST_API_*` env vars appear).
-2. Certify the live deploy:
-   `CAPTURIA_BASE_URL=https://www.capturia.dev node scripts/verify-vote-redis.mjs`
-   (all 15 checks must pass).
-3. Only then build and publish the release.
+The packaged app runs from `file://`, so audience voting needs a reachable
+deploy baked into the export at build time: set
+`NEXT_PUBLIC_CAPTURIA_ORIGIN=https://your-deploy` in the environment when
+building (`scripts/build-electron-export.mjs` picks it up). Leave it unset
+for a QR-less build: the default origin is empty and the studio shows an
+in-app notice instead of rendering a vote QR. If the deploy you bake in is
+serverless, provision its Redis vote backend first and certify it with
+`CAPTURIA_BASE_URL=https://your-deploy node scripts/verify-vote-redis.mjs`
+(all 15 checks must pass): without Redis, `lib/vote-backend.ts` falls back
+to the in-memory store, which does not survive serverless invocations, so
+phones sit on the waiting screen under a confident-looking QR.
 
 ## Publishing the release: the stable-named DMG copy
 
-Every GitHub release carries the DMG twice: the versioned artifact
+The canonical download link is the GitHub releases page:
+<https://github.com/AndresCarreonDiaz/capturia/releases/latest>. Every
+release carries the DMG twice: the versioned artifact
 (`Capturia-<version>-arm64.dmg`) and a copy named exactly
 `Capturia-arm64.dmg` uploaded alongside it:
 
@@ -88,18 +82,18 @@ cp dist-app/Capturia-<version>-arm64.dmg Capturia-arm64.dmg
 gh release upload <tag> Capturia-arm64.dmg
 ```
 
-The stable name is load-bearing: the landing's one-click download route
-(`app/download/route.ts`, served at `/download`) 302s to
-`.../releases/latest/download/Capturia-arm64.dmg`, and GitHub resolves that
-URL only while the latest release carries an asset with that exact name. A
-release published without it breaks the landing's Download button until the
-copy is uploaded.
+The stable name keeps `/download` working: the repo's one-click download
+route (`app/download/route.ts`, served at `/download` on any self-hosted
+deploy) 302s to `.../releases/latest/download/Capturia-arm64.dmg`, and
+GitHub resolves that URL only while the latest release carries an asset
+with that exact name. A release published without it breaks that route
+until the copy is uploaded.
 
 Packaged apps also watch this feed themselves: once per launch and via the
 menu bar's Check for Updates, the app compares its version against the
-`releases/latest` tag and offers `/download` when a newer one exists
-(electron/update-check.js; the full electron-updater path is issue #50), so
-publishing the release is what reaches installed apps.
+`releases/latest` tag and offers the GitHub releases page when a newer one
+exists (electron/update-check.js; the full electron-updater path is issue
+#50), so publishing the release is what reaches installed apps.
 
 ## One-time portal setup: the Developer ID provisioning profile
 

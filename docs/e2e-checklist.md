@@ -13,7 +13,7 @@ or human judgment; run them before a release-worthy merge.
 2. Click **Go on camera**, allow the camera prompt, and expect your live feed
    to attach.
 3. Enable voice (mic button or the hotkey hint), allow the mic prompt.
-4. Speak: "add a lower third with the name Andres Carreon". Expect the overlay
+4. Speak: "add a lower third with the name Jordan Lee". Expect the overlay
    within ~2s, live captions while speaking, and the audio-reactive vignette
    breathing with your voice (FX pill on).
 5. Say "remove everything". Stage clears with exit animations.
@@ -132,19 +132,20 @@ Then by hand:
 1. `npm run build:electron`, then `CAPTURIA_STATIC_UI=1 npm run electron`
    (no Next server running). The studio must load and the agent loop must run
    BYOK exactly like the dev path.
-2. Voting from the packaged app targets the hosted deploy (issue #52):
-   `npm run build:electron` bakes `NEXT_PUBLIC_CAPTURIA_ORIGIN` as
-   `https://www.capturia.dev` unless the env sets it (a SET-but-empty var
-   disables it). Prerequisite: that deploy must have its Redis vote backend
-   provisioned and certified FIRST (docs/release.md, "Before any release");
-   a serverless deploy without it falls back to the in-memory store, which
-   does not survive across invocations, so this whole step fails with
-   phones stuck on the waiting screen under a confident-looking QR.
-   Toggle Vote on: the QR must render over the feed, a phone
-   scanning it lands on `www.capturia.dev/vote/<room>` and its votes move
-   the on-feed tally; toggling Vote off returns the phone to its waiting
-   screen within a few seconds. A build with the var explicitly emptied
-   must still surface the origin notice instead of silently dropping votes.
+2. Voting from the packaged app targets a self-hosted origin baked at build
+   time: `NEXT_PUBLIC_CAPTURIA_ORIGIN=https://your-deploy npm run
+   build:electron`. First check the default: a build with the var unset (or
+   empty) must surface the in-app origin notice when Vote toggles on, and
+   never render a QR (nothing may silently drop votes). Then bake your own
+   deploy in. Prerequisite for a serverless deploy: its Redis vote backend
+   must be provisioned and certified FIRST (docs/release.md, "The vote
+   origin baked into the DMG"); without it the in-memory store does not
+   survive across invocations, so this whole step fails with phones stuck
+   on the waiting screen under a confident-looking QR. Toggle Vote on: the
+   QR must render over the feed, a phone scanning it lands on
+   `<your-deploy>/vote/<room>` and its votes move the on-feed tally;
+   toggling Vote off returns the phone to its waiting screen within a few
+   seconds.
 
 ## Menu-bar shell (M8, tray)
 
@@ -186,34 +187,3 @@ authenticated loopback keycheck). Then by hand:
    provisioning error from the mic path, and everything else keeps working.
 3. Keys saved in the packaged app persist across relaunches (safeStorage
    vault lives in the packaged app's userData, separate from dev's).
-
-## Capturia Pro upgrade flow (M11 slice 2)
-
-Local rails first: dev server on :3000 with the Stripe env (secret key,
-price id, webhook secret) plus the JWT keypair, a webhook route reachable by
-Stripe (tunnel or deployed), and the app launched with
-`CAPTURIA_HOSTED_URL=http://localhost:3000/api/hosted` so checkout,
-activation, token refresh, and the proxy all hit the same server.
-
-1. Settings (Cmd+,) > Capturia Pro row shows "Upgrade to Pro". Click: the
-   Stripe Checkout page opens in the default browser and the row reports
-   that checkout opened.
-2. Pay. Stripe redirects to the landing, which overlays "Payment received"
-   and then the activation code with a Copy button (webhook lag of a few
-   seconds is absorbed; the code appears without a refresh).
-3. Refresh that success page: the overlay now says the code was already
-   collected (pickup is exactly-once), with the support path spelled out.
-4. Paste the code in the Capturia Pro row and Activate: the row flips to
-   the stored-credential mask, Capturia Pro becomes the active model, and
-   no token was ever visible or pasted by hand.
-5. Talk to the camera: overlays render through the hosted proxy on
-   Capturia's key (no BYOK key stored for the session). The webhook log on
-   the dev server shows `activation_minted`; Stripe Dashboard > Billing >
-   Meters accumulates capturia_hosted_tokens after generations.
-6. Clear the Capturia Pro row: hosted calls stop within one JWT lifetime
-   (the refresh token and its timer are dropped with the JWT), and
-   re-activating requires a fresh code (402/403 responses put a still-valid
-   code back for retry).
-7. Relaunch the app: the JWT is refreshed from the stored refresh token at
-   boot with no user action (check the row is still active after a restart
-   that outlives the ~1h token).

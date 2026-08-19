@@ -51,8 +51,8 @@ function createUpdateCheck({ getParentWindow }) {
       cancelId: 1,
       message: `Capturia ${latestVersion} is available`,
       detail:
-        `You are running ${app.getVersion()}. Download opens capturia.dev ` +
-        "in your browser; installing the new version replaces this one.",
+        `You are running ${app.getVersion()}. Download opens the GitHub ` +
+        "releases page in your browser; installing the new version replaces this one.",
     });
     // The target is a pinned https constant (lib/update-check.ts); nothing
     // user- or server-controlled ever reaches openExternal here.
@@ -108,7 +108,7 @@ function createUpdateCheck({ getParentWindow }) {
         message: "Could not check for updates",
         detail:
           `${(err && err.message) || String(err)}\n\n` +
-          "The latest release is always at capturia.dev/download.",
+          "The latest release is always on the GitHub releases page.",
       });
     } finally {
       manualCheckRunning = false;

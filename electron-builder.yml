@@ -57,7 +57,8 @@ files:
   - "!node_modules/pdfjs-dist/**"
   - "!node_modules/pptx-text-parser/**"
   - "!node_modules/qrcode/**"
-  # Not imported anywhere in main (models go through ai + @ai-sdk/*).
+  # Installed as an optional peer of @copilotkit/runtime but never imported
+  # by main (models go through ai + @ai-sdk/*).
   - "!node_modules/@anthropic-ai/sdk/**"
   # Shipped via extraResources instead (see below), never through the asar.
   - "!node_modules/nodejs-whisper/**"

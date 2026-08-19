@@ -1,15 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
-import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
-
-// Cookieless pageview tracking for the hosted web surfaces (landing, /studio
-// demo, /vote phone pages). The Electron static export must NOT mount it: the
-// desktop app is measured by the anonymous beacon instead (docs/telemetry.md)
-// and an analytics script is dead weight on file://. Same build-time switch
-// next.config.ts keys the export on; next.config also aliases the package to
-// a no-op stub in that build so no analytics code lands in the bundle at all.
-const isElectronBuild = process.env.CAPTURIA_ELECTRON_BUILD === "1";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -28,11 +19,17 @@ const instrumentSerif = Instrument_Serif({
   subsets: ["latin"],
 });
 
+// metadataBase (absolute-URL prefix for og:/canonical fields) comes from the
+// deployer's own origin. When NEXT_PUBLIC_CAPTURIA_ORIGIN is unset (the
+// default, including packaged builds) it is omitted: no page here uses a
+// relative URL-based metadata field, so nothing defaults to anyone's domain.
+const deployOrigin = process.env.NEXT_PUBLIC_CAPTURIA_ORIGIN;
+
 export const metadata: Metadata = {
-  metadataBase: new URL("https://www.capturia.dev"),
+  ...(deployOrigin ? { metadataBase: new URL(deployOrigin) } : {}),
   title: "Capturia · Broadcast-grade graphics on your camera, just by talking",
   description:
-    "Speak your numbers, your name, your headline, and Capturia puts broadcast-grade graphics on your camera instantly. For founders, speakers, and creators on Zoom, Teams, and Meet. Free to start.",
+    "Speak your numbers, your name, your headline, and Capturia puts broadcast-grade graphics on your camera instantly. For founders, speakers, and creators on Zoom, Teams, and Meet. Free and open source.",
   openGraph: {
     title: "Capturia · Broadcast-grade graphics on your camera, just by talking",
     description:
@@ -51,10 +48,7 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} ${instrumentSerif.variable} antialiased`}
     >
-      <body>
-        {children}
-        {!isElectronBuild && <Analytics />}
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

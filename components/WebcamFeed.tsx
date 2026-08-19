@@ -135,7 +135,7 @@ interface WebcamFeedProps {
    * Program-output surfaces (the desktop app's offscreen camera window, a
    * ?out=1 mirror tab) capture as soon as main un-pauses them; the VISIBLE
    * stage instead starts with the camera off and waits for the user. Opening
-   * the app to buy Pro or prep a deck must not light the camera LED or fire
+   * the app just to prep a deck must not light the camera LED or fire
    * the OS permission prompt: capture is intent, launch is not.
    */
   autoStart?: boolean;
@@ -332,8 +332,8 @@ export default function WebcamFeed({
       <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 bg-neutral-950 px-8 text-center">
         <p className="text-neutral-100 text-2xl font-semibold">Your camera is off</p>
         <p className="max-w-sm text-neutral-500 text-sm leading-relaxed">
-          Nothing is captured until you turn it on. Decks, Settings, and
-          Capturia Pro all work without it.
+          Nothing is captured until you turn it on. Decks and Settings
+          work without it.
         </p>
         <button
           onClick={() => setWanted(true)}

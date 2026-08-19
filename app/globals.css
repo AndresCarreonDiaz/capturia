@@ -563,9 +563,3 @@ html { scroll-behavior: smooth; }
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.02);
 }
-
-/* Featured (Pro) pricing card outline glow */
-.pro-card {
-  background: linear-gradient(180deg, rgba(82, 255, 139, 0.045) 0%, rgba(82, 255, 139, 0.008) 100%);
-  border: 1px solid rgba(82, 255, 139, 0.28);
-}

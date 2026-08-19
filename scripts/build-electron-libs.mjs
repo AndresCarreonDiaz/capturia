@@ -14,7 +14,6 @@ const files = [
   "lib/server-keys.ts",
   "lib/system-prompt.ts",
   "lib/desktop-runtime.ts",
-  "lib/hosted-billing.ts",
   "lib/tray-menu.ts",
   "lib/speech-events.ts",
   "lib/camera-feed.ts",

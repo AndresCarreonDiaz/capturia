@@ -7,8 +7,6 @@ import VotePreview from "@/components/landing/VotePreview";
 import DownloadLink from "@/components/landing/DownloadLink";
 import { CapturiaLogo, CapturiaMark } from "@/components/landing/Brand";
 import styles from "@/components/landing/relaunch.module.css";
-import CheckoutSuccess from "@/components/landing/CheckoutSuccess";
-import { Suspense } from "react";
 
 /* ─────────────────────────────────────────────────────────────
    Capturia landing, the native camera era. Capturia is a real,
@@ -42,12 +40,6 @@ export const metadata: Metadata = {
 export default function Landing() {
   return (
     <main className="min-h-screen bg-[var(--studio-black)] text-[var(--studio-ink)] selection:bg-[var(--phosphor)]/30 selection:text-white">
-      {/* Stripe redirects paid checkouts back here with the code-pickup
-          params; the overlay renders nothing otherwise. Suspense because
-          useSearchParams opts the boundary out of prerendering. */}
-      <Suspense fallback={null}>
-        <CheckoutSuccess />
-      </Suspense>
       <TopNav />
       <Hero />
       <HumanCaption />
@@ -58,7 +50,7 @@ export default function Landing() {
       <PrivacySection />
       <Differentiators />
       <UseCases />
-      <Pricing />
+      <OpenSource />
       <Faq />
       <FinalCta />
       <SiteFooter />
@@ -118,7 +110,7 @@ function TopNav() {
           <a href="#how" className="hover:text-white transition-colors">How it works</a>
           <a href="#voting" className="hover:text-white transition-colors">Audience voting</a>
           <a href="#privacy" className="hover:text-white transition-colors">Privacy</a>
-          <a href="#pricing" className="hover:text-white transition-colors">Pricing</a>
+          <a href="#open-source" className="hover:text-white transition-colors">Open source</a>
           <a href="#faq" className="hover:text-white transition-colors">FAQ</a>
         </nav>
 
@@ -517,7 +509,7 @@ function OnScreen() {
   );
 }
 
-/* ───── 7. Audience voting (the Pro flagship) ───── */
+/* ───── 7. Audience voting ───── */
 
 function VotingSection() {
   return (
@@ -528,9 +520,6 @@ function VotingSection() {
             <div className="flex items-center gap-3">
               <span className="font-mono text-[10px] tracking-[0.24em] uppercase text-[var(--phosphor)]">
                 Audience voting
-              </span>
-              <span className="rounded-full border border-[var(--phosphor)]/40 px-2.5 py-1 font-mono text-[9px] tracking-[0.22em] uppercase text-[var(--phosphor)]">
-                Pro flagship
               </span>
             </div>
             <h2 className="display-serif mt-4 text-[clamp(2rem,5vw,3.75rem)] leading-[1.04] text-[var(--studio-ink)]">
@@ -555,8 +544,11 @@ function VotingSection() {
                 Results render on your feed, so every eye stays on you
               </Feature>
             </ul>
-            <p className="mt-7 font-mono text-[10px] tracking-[0.18em] uppercase text-[var(--studio-fade)]">
-              Hosted voting for any crowd size ships with Pro
+            <p className="mt-5 text-[13px] leading-relaxed text-[var(--studio-graphite)]/80">
+              Voting needs a web origin your audience&rsquo;s phones can reach:
+              run the studio with <code>next dev</code> on your LAN, or
+              self-host it and bake your origin into the desktop build. The
+              default DMG ships without one and says so in-app.
             </p>
           </div>
 
@@ -632,18 +624,9 @@ function PrivacySection() {
       </div>
 
       <p className="mt-8 text-center text-[13px] text-[var(--studio-graphite)] leading-relaxed max-w-2xl mx-auto">
-        The one thing the app does send: an anonymous launch ping, four fields
-        (a random install id connected to nothing, the event name, app version,
-        macOS version). The switch to turn it off is in Settings, and{" "}
-        <a
-          href="https://github.com/AndresCarreonDiaz/capturia/blob/main/docs/telemetry.md"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="cue-link"
-        >
-          docs/telemetry.md
-        </a>{" "}
-        shows the exact bytes.
+        The app phones home to no one: no telemetry, no analytics, no usage
+        pings. Its only outbound calls are your model calls, on your own key,
+        and a version check against the public GitHub API.
       </p>
     </section>
   );
@@ -793,87 +776,63 @@ function UseCases() {
   );
 }
 
-/* ───── 11. Pricing ───── */
+/* ───── 11. Free & open source ───── */
 
-function Pricing() {
+function OpenSource() {
   return (
-    <section id="pricing" className="border-y border-white/[0.06] bg-[var(--studio-mist)]">
+    <section id="open-source" className="border-y border-white/[0.06] bg-[var(--studio-mist)]">
       <div className="mx-auto max-w-5xl px-4 sm:px-6 py-20 sm:py-28">
         <SectionHead
-          eyebrow="Pricing"
+          eyebrow="Free & open source"
           title={
             <>
               Free with your key.{" "}
               <span className="italic text-[var(--phosphor)]">Forever.</span>
             </>
           }
-          kicker="The free tier is the whole product, not a trial. Pro adds hosted everything for people who never want to think about API keys."
+          kicker="Capturia is free and open source under MIT: the whole product, not a trial. Bring your own AI key (Gemini's free tier works) and everything runs between your Mac and your model provider."
         />
 
-        <div className="mt-12 sm:mt-16 grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6">
-          {/* Free */}
-          <div className="product-card rounded-2xl p-8 reveal-up flex flex-col">
-            <div className="flex items-center justify-between">
-              <h3 className="text-[var(--studio-ink)] text-xl font-semibold tracking-tight">Free</h3>
-              <span className="font-mono text-[9px] tracking-[0.22em] uppercase text-[var(--studio-fade)]">
-                Bring your own key
-              </span>
-            </div>
-            <p className="mt-2 text-[var(--studio-graphite)] text-[14px]">
-              Everything Capturia does, powered by your own AI key. Free forever.
-            </p>
-            <ul className="mt-7 space-y-3.5 text-[14.5px] text-[var(--studio-graphite)] flex-1">
-              <Feature>The native Capturia camera, deck priming, silent hotkeys, voice control</Feature>
-              <Feature>Your key is encrypted on your Mac with a key held in the macOS Keychain, never on our servers</Feature>
-              <Feature>The browser demo, free to try with zero installs</Feature>
-              <Feature>Open source under MIT</Feature>
-            </ul>
+        <div className="mt-12 sm:mt-16 product-card rounded-2xl p-8 reveal-up">
+          <ul className="space-y-3.5 text-[14.5px] text-[var(--studio-graphite)]">
+            <Feature accent="var(--phosphor)">
+              Everything Capturia does: the native camera, deck priming, silent
+              hotkeys, voice control, audience voting
+            </Feature>
+            <Feature accent="var(--phosphor)">
+              Bring your own AI key; a free-tier Gemini key is enough
+            </Feature>
+            <Feature accent="var(--phosphor)">
+              Your key is encrypted on your Mac with a key held in the macOS
+              Keychain, and never leaves it except to reach your provider
+            </Feature>
+            <Feature accent="var(--phosphor)">
+              MIT-licensed, with the full source on{" "}
+              <a href={GITHUB} target="_blank" rel="noopener noreferrer" className="cue-link">
+                GitHub
+              </a>
+            </Feature>
+          </ul>
+          <div className="mt-8 flex flex-col sm:flex-row items-center gap-3">
             <DownloadLink
-              location="pricing"
+              location="open-source"
               href={DOWNLOAD}
-              className="cta-solid mt-8 inline-flex items-center justify-center gap-2 rounded-full px-6 py-3.5 text-[15px] font-semibold"
+              className="cta-solid inline-flex items-center justify-center gap-2 rounded-full px-6 py-3.5 text-[15px] font-semibold w-full sm:w-auto"
             >
               <DownloadIcon />
               Download for macOS
             </DownloadLink>
-          </div>
-
-          {/* Pro */}
-          <div className="pro-card rounded-2xl p-8 reveal-up [animation-delay:120ms] flex flex-col">
-            <div className="flex items-center justify-between">
-              <h3 className="text-[var(--studio-ink)] text-xl font-semibold tracking-tight">Pro</h3>
-              <span className="font-mono text-[9px] tracking-[0.22em] uppercase text-[var(--phosphor)]">
-                Hosted AI
-              </span>
-            </div>
-            <p className="mt-2 text-[var(--studio-graphite)] text-[14px]">
-              Hosted AI: upgrade and talk. No key, no setup.
-            </p>
-            <ul className="mt-7 space-y-3.5 text-[14.5px] text-[var(--studio-graphite)]">
-              <Feature accent="var(--phosphor)">No API key. No setup. Unlimited poll participants.</Feature>
-              <Feature accent="var(--phosphor)">Premium features as they ship</Feature>
-            </ul>
-            <div className="mt-7 flex-1 flex flex-col justify-end">
-              <p className="display-serif text-4xl text-[var(--studio-ink)]">
-                $19<span className="text-xl text-[var(--studio-graphite)]">/mo</span>
-              </p>
-              <p className="mt-1.5 text-[14px] text-[var(--studio-graphite)]">
-                20 presentation hours of hosted AI. About $1 per hour on stage.
-              </p>
-            </div>
             <a
-              href={DOWNLOAD}
-              className="ghost-btn mt-6 inline-flex items-center justify-center gap-2 rounded-full px-6 py-3.5 text-[15px] font-medium"
+              href={GITHUB}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ghost-btn inline-flex items-center justify-center gap-2 rounded-full px-6 py-3.5 text-[15px] font-medium w-full sm:w-auto"
             >
-              Download and upgrade in the app
-              <span aria-hidden>→</span>
+              <StarIcon />
+              Star it on GitHub
             </a>
           </div>
         </div>
-
-        <p className="mt-6 text-center font-mono text-[10px] tracking-[0.18em] uppercase text-[var(--studio-fade)]">
-          The free tier stays free when Pro lands
-        </p>
       </div>
     </section>
   );
@@ -1129,7 +1088,7 @@ function SiteFooter() {
             Try the browser demo
           </Link>
           <a href="#how" className="hover:text-white transition-colors">How it works</a>
-          <a href="#pricing" className="hover:text-white transition-colors">Pricing</a>
+          <a href="#open-source" className="hover:text-white transition-colors">Open source</a>
           <a href={GITHUB} target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
             GitHub
           </a>

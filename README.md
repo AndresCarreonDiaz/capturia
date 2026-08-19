@@ -6,14 +6,17 @@ Capturia is a live video overlay tool for talks, streams, and product demos. The
 
 Built solo for the **Generative UI Global Hackathon**, May 2026.
 
+**Free, open source, bring your own key.** Capturia is MIT-licensed with no accounts, no paid tier, and no telemetry. The agent runs on your own Gemini API key (Claude and OpenAI work too): on desktop the key lives encrypted in your OS keychain and never leaves your machine, and on a self-hosted web studio it is your own server env var. Nothing phones home.
+
 ---
 
 ## Download
 
-Capturia ships as a signed, notarized macOS app (latest release
-v0.1.3). Grab it at <https://www.capturia.dev>: install once and
-**Capturia** shows up as a camera in Zoom, Meet, and Slack. The free web
-studio lives on the same site and needs no download at all.
+Capturia ships as a signed, notarized macOS DMG on GitHub Releases:
+
+<https://github.com/AndresCarreonDiaz/capturia/releases/latest>
+
+Install once and **Capturia** shows up as a camera in Zoom, Meet, and Slack. Open Settings (`Cmd+,`), paste your own Gemini key (free at <https://aistudio.google.com>), and you're live. Prefer the browser? Run the web studio yourself with the Quick start below: three commands and the same free key.
 
 ---
 
@@ -51,6 +54,8 @@ npm run dev
 
 Get a free Gemini API key at <https://aistudio.google.com>.
 
+**Deploying the web studio publicly?** The env key above powers `/studio` for anyone who can reach the deployment, so use a free-tier key — one on a Google Cloud project with **no billing account**, which hits a hard quota instead of a bill — and set the demo spend brake: `CAPTURIA_DEMO_IP_RPM` (per-visitor requests/minute) and `CAPTURIA_DEMO_DAILY_REQUESTS` (total per UTC day). Both are off by default; see `.env.example`. Desktop/BYOK callers bring their own key and are never limited.
+
 Open <http://localhost:3000> in **Chrome** or **Edge**. (Brave Shields blocks the Web Speech API endpoint; Firefox doesn't implement it. The studio shows a dismissable heads-up in those browsers; typed commands still work.)
 
 Run the unit tests with `npm test` (vitest; covers the surface-tree sanitizer, prop coercion, JSON extraction, the energy envelope, and the server key guard).
@@ -66,7 +71,7 @@ Capturia also runs as a native Electron app, with extras the web demo cannot off
 - **Local STT via whisper.cpp** (audio never leaves your machine, works in any browser-equivalent environment)
 - **Global push-to-talk hotkey** `Cmd+Alt+Space` (toggles voice mid-Zoom-call without alt-tabbing)
 - **VAD auto-stop**: speak naturally, pause, transcription fires automatically
-- **BYOK key vault** stored in the OS Keychain (macOS) / Credential Manager (Windows)
+- **BYOK key vault** stored encrypted in the macOS Keychain (the shipped build is macOS-only; self-hosters on other platforms use env vars)
 
 ```bash
 # One-time setup (~1 to 2 minutes)
@@ -77,7 +82,7 @@ npx nodejs-whisper download    # pick base.en (142MB), decline CUDA
 npm run electron-dev
 ```
 
-Press `Cmd+,` to open Settings, paste your own API key (encrypted via OS Keychain), and pick which provider drives the agent. **The desktop agent now runs entirely on your key (BYOK)**: the renderer attaches it as a per-request header and the runtime builds the model per request, so Capturia incurs no LLM cost for you. The web demo still uses the project's env key. Prefer no key setup at all? **Capturia Pro** runs the agent on hosted keys; see [docs/hosted-tier.md](docs/hosted-tier.md).
+Press `Cmd+,` to open Settings, paste your own API key (encrypted via OS Keychain), and pick which provider drives the agent. **The desktop agent runs entirely on your key (BYOK)**: the renderer attaches it as a per-request header and the runtime builds the model per request, so the key never persists outside the vault. The web studio runs on whatever key you set in your own env (`.env.local` locally, or your deploy's variables).
 
 **Show Capturia in a real call today.** The desktop app ships a native "Capturia" camera device: install the bundled macOS camera extension once (onboarding or the tray's "Install camera" item walks you through it) and **Capturia** appears directly in every call app's camera picker, no OBS in between. On the web studio, click **Output** (or `Cmd+Shift+O`) for a chrome-free Program Output feed and publish it through OBS Virtual Camera instead. Both paths are covered in [docs/virtual-camera.md](docs/virtual-camera.md).
 
@@ -91,7 +96,7 @@ Press `Cmd+,` to open Settings, paste your own API key (encrypted via OS Keychai
 
 **Audio-reactive feed.** While voice is live, the whole frame breathes with the speaker: a cyan vignette and select overlays (BigCounter scale, LiveBadge glow) track a 0..1 "speaking energy" published as a `--mic-energy` CSS variable. There is **no AudioContext** involved (it cannot coexist with the Web Speech API); the energy is derived from speech-recognition result events with a time-based attack/decay envelope (`lib/energy.ts`), so 60Hz and 120Hz displays breathe identically and the per-frame work stays on the compositor. The **FX** HUD pill (or `?fx=0`) pins a static frame when the cyan accent clashes with your branding.
 
-**Audience voting.** Click the **Vote** HUD pill (or `?vote=1`) and a QR code lands on the published feed itself, so the people watching your fake camera in Zoom/Meet (or sitting in the room) can scan it and vote from their phones at `/vote/<room>`. The current poll is derived live from the authored surface's `ActionButton`s; phone votes hit an in-memory room on the same Next server (one switchable vote per viewer, rate-limited, host-key auth on the poll, SSE back out) and the on-feed tally mirrors the server's counts **deterministically**, no agent turn per vote, so a room of phones can't melt the one-turn-at-a-time agent loop. While voting is on, the operator's own taps count as votes through the same room, keeping one source of truth. Reachability is physics: phones must reach your server, so for in-room audiences open the studio via your LAN IP (the QR follows the URL you used), and for remote Zoom/Meet viewers self-host or tunnel Capturia and set `NEXT_PUBLIC_CAPTURIA_ORIGIN` to the public URL; the studio shows an operator-only warning when the QR would point at localhost. The packaged desktop app runs from `file://`, so `npm run build:electron` bakes `NEXT_PUBLIC_CAPTURIA_ORIGIN=https://www.capturia.dev` into the export: its vote rooms live on the hosted deploy, the QR points there, and the studio's own room traffic travels there too (set the variable yourself at build time to aim a self-built bundle at your own deploy instead). A deploy targeted this way MUST be running the Redis backend below; on a serverless host the in-memory fallback cannot hold desktop rooms across invocations, so phones would never leave the waiting screen. The vote room is in-memory and single-process by default, which is perfect for the operator's own machine and self-hosts but does not survive serverless invocations. For a hosted deploy (Vercel), enable the Upstash Redis integration on the project: as soon as its env vars exist (`UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`, or the `KV_REST_API_*` flavor), rooms move to Redis with identical semantics (atomic Lua, same auth/rate limits/caps) and live updates arrive over a short-lived SSE polling bridge. Certify a deploy any time with `CAPTURIA_BASE_URL=https://your-deploy node scripts/verify-vote-redis.mjs` (15 contract checks). The free local path never needs the paid dependency.
+**Audience voting.** Click the **Vote** HUD pill (or `?vote=1`) and a QR code lands on the published feed itself, so the people watching your fake camera in Zoom/Meet (or sitting in the room) can scan it and vote from their phones at `/vote/<room>`. The current poll is derived live from the authored surface's `ActionButton`s; phone votes hit an in-memory room on the same Next server (one switchable vote per viewer, rate-limited, host-key auth on the poll, SSE back out) and the on-feed tally mirrors the server's counts **deterministically**, no agent turn per vote, so a room of phones can't melt the one-turn-at-a-time agent loop. While voting is on, the operator's own taps count as votes through the same room, keeping one source of truth. Reachability is physics: phones must reach your server, so for in-room audiences open the studio via your LAN IP (the QR follows the URL you used), and for remote Zoom/Meet viewers self-host or tunnel Capturia and set `NEXT_PUBLIC_CAPTURIA_ORIGIN` to the public URL; the studio shows an operator-only warning when the QR would point at localhost. The packaged desktop app runs from `file://`, so it only gets voting if you bake your own deploy's origin in at build time: `NEXT_PUBLIC_CAPTURIA_ORIGIN=https://your-deploy npm run build:electron`. The default is empty, and an origin-less build suppresses the QR and shows an in-app notice instead of pointing phones at a dead address. The vote room is in-memory and single-process by default, which is perfect for the operator's own machine and long-lived self-hosts but does not survive serverless invocations. For a serverless deploy, bring your own Redis over the Upstash REST protocol (the free tier works): as soon as its env vars exist (`UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`, or the `KV_REST_API_*` flavor), rooms move to Redis with identical semantics (atomic Lua, same auth/rate limits/caps) and live updates arrive over a short-lived SSE polling bridge. Certify your own deploy any time with `CAPTURIA_BASE_URL=https://your-deploy node scripts/verify-vote-redis.mjs` (15 contract checks). The local path never needs Redis at all.
 
 ---
 
@@ -107,7 +112,6 @@ Press `Cmd+,` to open Settings, paste your own API key (encrypted via OS Keychai
 | Voice | Web Speech API (browser-native) |
 | Recording | MediaRecorder + getDisplayMedia (VP9+Opus webm) |
 | Schemas | Zod |
-| Hosting | Vercel |
 
 ---
 
@@ -247,7 +251,7 @@ lib/
 
 ## Roadmap
 
-**Shipped:** Desktop BYOK key vault, deck-aware cue cards, Program Output / OBS virtual-camera path, **Surface-mode A2UI rendering** (the registered catalog renders live through `<A2UIRenderer>`; `compose_scene` pushes a whole UI at once), **agent-authored A2UI surfaces** (`render_surface`: the model composes its own A2UI tree of branded overlays inside layout primitives, sanitized via `lib/a2ui-validate.ts` and rendered through the real A2UI v0.9 runtime), **interactive surfaces** (`ActionButton` taps loop back as `[ACTION]` turns, fully client-side, live on Gemini 2.5 today), the **audio-reactive feed** (speech-derived `--mic-energy`, no AudioContext), **audience voting** (on-feed QR, phones vote at `/vote/<room>`, deterministic live tally), the **native "Capturia" camera** (macOS camera extension, no OBS; installed by the app itself), the **desktop DMG** (Developer ID signed, notarized, stapled; latest release v0.1.3 at [capturia.dev](https://www.capturia.dev), runbook in [docs/release.md](docs/release.md)), the **consent-gated telemetry beacon** (four anonymous fields, nothing before the onboarding choice; [docs/telemetry.md](docs/telemetry.md)), and the **Capturia Pro hosted tier** (Stripe billing, activation codes, hosted-key LLM proxy; [docs/hosted-tier.md](docs/hosted-tier.md)).
+**Shipped:** Desktop BYOK key vault, deck-aware cue cards, Program Output / OBS virtual-camera path, **Surface-mode A2UI rendering** (the registered catalog renders live through `<A2UIRenderer>`; `compose_scene` pushes a whole UI at once), **agent-authored A2UI surfaces** (`render_surface`: the model composes its own A2UI tree of branded overlays inside layout primitives, sanitized via `lib/a2ui-validate.ts` and rendered through the real A2UI v0.9 runtime), **interactive surfaces** (`ActionButton` taps loop back as `[ACTION]` turns, fully client-side, live on Gemini 2.5 today), the **audio-reactive feed** (speech-derived `--mic-energy`, no AudioContext), **audience voting** (on-feed QR, phones vote at `/vote/<room>`, deterministic live tally), the **native "Capturia" camera** (macOS camera extension, no OBS; installed by the app itself), and the **desktop DMG** (Developer ID signed, notarized, stapled; runbook in [docs/release.md](docs/release.md)).
 
 Next:
 
@@ -265,9 +269,7 @@ Next:
 ## Docs
 
 - [docs/virtual-camera.md](docs/virtual-camera.md): both camera paths, the native extension and the OBS bridge
-- [docs/hosted-tier.md](docs/hosted-tier.md): the Capturia Pro hosted tier (billing, entitlements, LLM proxy)
 - [docs/release.md](docs/release.md): the DMG release runbook (signing, notarization, stapling)
-- [docs/telemetry.md](docs/telemetry.md): the consent-gated four-field beacon, and every way to turn it off
 - [docs/known-issues.md](docs/known-issues.md): the v1-vs-v2 CopilotKit client history and model quirks
 - [docs/e2e-checklist.md](docs/e2e-checklist.md): the manual passes that need real hardware or human judgment
 
@@ -282,7 +284,7 @@ Some easy first contributions:
 1. **Add a new overlay component.** Define the Zod schema in `lib/catalog.ts`, build the React component in `components/overlays/`, register the renderer in `lib/a2ui-catalog.tsx`. Match the broadcast-subtle animation language (entrance under 400ms, ease-out cubic, white/10 borders, backdrop blur).
 2. **VAD streaming + interim transcripts** for the desktop Whisper path so it feels continuous like Web Speech.
 3. **Localize the agent prompt** in `lib/system-prompt.ts` for non-English voice input.
-4. **Wire a real data source** into `MetricsPanel` or `BigCounter` (Stripe, PostHog, Twitch viewer count, anything live).
+4. **Wire a real data source** into `MetricsPanel` or `BigCounter` (PostHog, Twitch viewer count, anything live).
 
 For security issues, see [SECURITY.md](SECURITY.md) instead of public issues.
 
@@ -290,7 +292,7 @@ For security issues, see [SECURITY.md](SECURITY.md) instead of public issues.
 
 MIT. See [LICENSE](LICENSE).
 
-Capturia is open source under MIT. The commercial tier, **Capturia Pro** (the agent on hosted keys, no BYOK setup; see [docs/hosted-tier.md](docs/hosted-tier.md)), runs alongside it and its server code lives in this same repo. The core app stays free and open.
+Capturia is open source under MIT, all of it: the studio, the desktop wrapper, and the camera extension. There is no commercial tier. The whole app stays free and open.
 
 ---
 

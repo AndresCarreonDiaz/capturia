@@ -1,7 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import type { SysextStateReport } from "@/lib/sysext";
-import type { HostedUsage } from "@/lib/hosted-billing";
 import type { CameraPreference } from "@/lib/camera-select";
 
 // Actions main pushes on the "hotkey" channel. index rides along on the
@@ -12,9 +11,7 @@ type HotkeyPayload = { action: string; index?: number };
 // The full surface exposed by electron/preload.js via contextBridge. All
 // desktop hooks (hotkey, voice capture, key vault) reference this single
 // declaration so the global Window["capturia"] type stays in one place.
-// "capturia-hosted" holds the Capturia Pro access token (hosted tier, M11)
-// in the same vault slot shape as the BYOK vendor keys.
-export type KeyProvider = "gemini" | "claude" | "openai" | "capturia-hosted";
+export type KeyProvider = "gemini" | "claude" | "openai";
 export interface KeyEntry {
   provider: KeyProvider;
   has: boolean;
@@ -68,29 +65,6 @@ interface CapturiaBridge {
   // to the /api/copilotkit route, which Next serves); { disabled: true } when
   // it failed on the static build, where no fallback route exists.
   runtimeInfo: () => Promise<DesktopRuntimeInfo | null>;
-  // Capturia Pro upgrade flow (M11 slice 2); optional because a stale
-  // packaged preload may predate it. checkout() opens the Stripe page in
-  // the OS browser; activate() trades a pasted one-time code for
-  // keychain-held credentials, resolving { ok, devices } or rejecting with
-  // a human-readable message.
-  billing?: {
-    checkout: () => Promise<{ ok: boolean }>;
-    activate: (code: string) => Promise<{ ok: boolean; devices?: number }>;
-    // Current-period hosted usage for the Settings hours meter; optional
-    // within the optional bridge because it shipped later than
-    // checkout/activate. Rejects when Pro is inactive or the endpoint is
-    // unreachable; callers treat that as "no meter", never an error state.
-    getUsage?: () => Promise<HostedUsage>;
-    // Releases this device's hosted seat server-side (issue #10); optional
-    // because it shipped later than checkout/activate. The caller follows a
-    // resolved deactivation with keys.clear("capturia-hosted") so the local
-    // clear rides the existing vault-clear routing. Rejects with a
-    // human-readable message and clears NOTHING on failure.
-    deactivate?: () => Promise<{ ok: boolean }>;
-    // Opens the Stripe customer portal (card, invoices, cancel) in the OS
-    // browser; optional for the same stale-preload reason.
-    portal?: () => Promise<{ ok: boolean }>;
-  };
   // Deck codegen: run a prompt on the stored key in main, return raw model text.
   generateCues: (prompt: string, provider: KeyProvider) => Promise<string>;
   // Optional: a stale packaged preload may predate this method; callers must
@@ -113,16 +87,6 @@ interface CapturiaBridge {
     state: () => Promise<SysextStateReport | null>;
     install: () => Promise<SysextStateReport | null>;
     onState: (handler: (state: SysextStateReport) => void) => () => void;
-  };
-  // Anonymous usage beacon toggle (electron/telemetry.js); optional for the
-  // same stale-preload reason. Only the boolean crosses the bridge: the
-  // installId and the sending live in main. ackDisclosure (optional again,
-  // it shipped later than get/set) releases the first-run consent gate once
-  // the onboarding disclosure is resolved.
-  telemetry?: {
-    get: () => Promise<{ enabled: boolean } | null>;
-    set: (enabled: boolean) => Promise<{ enabled: boolean } | null>;
-    ackDisclosure?: () => Promise<{ enabled: boolean } | null>;
   };
   // Voice recognition language (issue #53); optional for the same
   // stale-preload reason. Only the canonical BCP-47 tag crosses the bridge;

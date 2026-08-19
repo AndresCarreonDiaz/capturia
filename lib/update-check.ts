@@ -10,10 +10,10 @@
 // which is exactly the "what should users run" question the check asks.
 export const UPDATE_FEED_URL =
   "https://api.github.com/repos/AndresCarreonDiaz/capturia/releases/latest";
-// The landing's one-click download route: it 302s to the stable-named DMG on
-// the latest release (docs/release.md), so it always serves the artifact the
-// feed above announced. Pinned https here, straight to shell.openExternal.
-export const UPDATE_DOWNLOAD_URL = "https://www.capturia.dev/download";
+// Where the "Download" button sends users: the GitHub releases page for the
+// same release the feed above announced. Pinned https here, straight to
+// shell.openExternal.
+export const UPDATE_DOWNLOAD_URL = "https://github.com/AndresCarreonDiaz/capturia/releases/latest";
 
 export interface UpdateDecision {
   /** True only when BOTH versions parse and the release is strictly ahead. */

@@ -3,7 +3,7 @@
 // against a real Upstash database. Run it once after enabling the Upstash
 // integration (or locally with the env vars exported):
 //
-//   CAPTURIA_BASE_URL=https://your-deploy.vercel.app node scripts/verify-vote-redis.mjs
+//   CAPTURIA_BASE_URL=https://your-deployment.example.com node scripts/verify-vote-redis.mjs
 //
 // It uses a throwaway room id and unpublishes it at the end, so no keys
 // linger beyond the run (the room TTL backstops a crashed run).
@@ -13,8 +13,8 @@ import { randomUUID } from "node:crypto";
 // The store is TS, so the script drives the HTTP route contract instead of
 // importing modules: point it at any running deploy (or next dev). It
 // verifies whichever backend that deploy selected, which is exactly what
-// matters; run it against the Vercel deploy after enabling Upstash to prove
-// the Redis path.
+// matters; run it against your deploy after enabling Upstash to prove the
+// Redis path.
 const base = process.env.CAPTURIA_BASE_URL;
 
 const room = randomUUID().replace(/-/g, "").slice(0, 16);
@@ -45,7 +45,7 @@ async function api(method, body) {
 
 if (!base) {
   console.error(
-    "verify-vote-redis: set CAPTURIA_BASE_URL to the deployed origin (e.g. https://capturia.vercel.app) so the script can exercise the live route."
+    "verify-vote-redis: set CAPTURIA_BASE_URL to the deployed origin (e.g. https://your-deployment.example.com) so the script can exercise the live route."
   );
   process.exit(2);
 }
@@ -136,7 +136,7 @@ try {
 }
 
 // Host teardown (issue #52): the desktop app's voting toggle must close
-// hosted rooms immediately, not leave them votable for the rest of the TTL.
+// published rooms immediately, not leave them votable for the rest of the TTL.
 const strangerClose = await api("POST", { type: "unpublish", hostKey: "host-imposter1" });
 check("stranger cannot unpublish", strangerClose.status === 403, JSON.stringify(strangerClose));
 

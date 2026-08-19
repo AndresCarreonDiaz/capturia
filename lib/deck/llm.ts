@@ -5,8 +5,6 @@ import { buildCodegenPrompt } from "./prompt";
 import { validateOrFallback } from "./fallback";
 import type { RawSpec } from "./validate";
 import { extractJsonArray } from "@/lib/extract-json";
-import { classifyHostedExhaustion, hostedExhaustionNotice } from "@/lib/desktop-runtime";
-import { ipcErrorMessage } from "@/lib/ipc-error";
 
 function aliasesFrom(item: Record<string, unknown>, label: string): string[] {
   const fromLLM = (Array.isArray(item.aliases) ? item.aliases : []).filter(
@@ -22,29 +20,17 @@ function aliasesFrom(item: Record<string, unknown>, label: string): string[] {
   ];
 }
 
-export interface LLMCueResult {
-  cards: CueCard[] | null;
-  /**
-   * Calm operator notice when the hosted tier refused the run because an
-   * allowance is used up (lib/desktop-runtime.ts markers). null for every
-   * other failure: those keep the silent deterministic fallback, but a spent
-   * allowance is a plan state the operator deserves to see.
-   */
-  notice: string | null;
-}
-
 // LLM-powered cue generation (desktop only). Builds the prompt, runs it on the
 // user's key in the Electron main process, then validates each returned spec
 // through the SAME catalog Zod gate the deterministic path uses (with the same
-// ChatBubble fallback). cards is null on any failure so the caller can fall
-// back to the deterministic builder. Never runs on web (no window.capturia),
-// which keeps the free path cost-free.
+// ChatBubble fallback). Returns null on any failure so the caller can fall
+// back to the deterministic builder. Never runs on web (no window.capturia).
 export async function generateCuesViaLLM(
   extract: DeckExtract,
   provider: KeyProvider
-): Promise<LLMCueResult> {
+): Promise<CueCard[] | null> {
   if (typeof window === "undefined" || !window.capturia?.generateCues) {
-    return { cards: null, notice: null };
+    return null;
   }
   try {
     const prompt = buildCodegenPrompt(toDeckFacts(extract));
@@ -73,9 +59,8 @@ export async function generateCuesViaLLM(
         adapted,
       });
     });
-    return { cards: cards.length ? cards : null, notice: null };
-  } catch (err) {
-    const exhaustion = classifyHostedExhaustion(ipcErrorMessage(err));
-    return { cards: null, notice: exhaustion ? hostedExhaustionNotice(exhaustion) : null };
+    return cards.length ? cards : null;
+  } catch {
+    return null;
   }
 }

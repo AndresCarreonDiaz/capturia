@@ -32,8 +32,8 @@ test("the studio loads camera-OFF: standby stage, command bar, quick actions", a
   page,
 }) => {
   // Launch is not camera intent: the visible stage starts dark with an
-  // explicit way on, so opening the app to prep a deck or buy Pro never
-  // lights the LED or fires the OS permission prompt.
+  // explicit way on, so opening the app just to prep a deck never lights
+  // the LED or fires the OS permission prompt.
   await page.goto("/studio");
   await expect(page.getByText("Your camera is off")).toBeVisible();
   await expect(page.getByRole("button", { name: "Go on camera" })).toBeVisible();

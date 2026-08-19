@@ -42,8 +42,8 @@ export function useVoteRoom({ enabled, poll, onCounts, onPublishError }: Args) {
   // be http(s) for phones. On any http(s) studio the room's own traffic is
   // same-origin relative fetches; on the packaged app's file:// origin it
   // travels to the advertised origin instead (apiBase, cross-origin against
-  // the hosted deploy, which build:electron bakes in). Only a file:// studio
-  // with NO baked origin has neither a scannable URL nor a reachable
+  // the origin the builder bakes in — your own deployment). Only a file://
+  // studio with NO baked origin has neither a scannable URL nor a reachable
   // /api/vote: everything below gates on originUsable so the feed never
   // carries a dead QR and the operator gets ONE clear notice instead of a
   // doomed publish loop's error noise.
@@ -179,9 +179,9 @@ export function useVoteRoom({ enabled, poll, onCounts, onPublishError }: Args) {
   // otherwise we fall back to however the operator opened the studio (a LAN
   // IP origin works for in-room audiences). Origin exists only in the
   // browser; null during prerender is fine because nothing renders the URL
-  // until the operator enables voting post-hydration. The packaged app bakes
-  // the hosted deploy's origin in at build time, so its QR points there; a
-  // non-http(s) origin with nothing baked (a stripped-down desktop build)
+  // until the operator enables voting post-hydration. A packaged build's QR
+  // points at the origin the builder bakes in (your own deployment); a
+  // non-http(s) origin with nothing baked (the default packaged build)
   // yields NO url at all rather than a dead QR on the feed, and
   // voteOriginUnusable tells the studio to explain why.
   const voteUrl = enabled && originUsable ? `${origin}/vote/${room}` : null;

@@ -88,6 +88,6 @@ describe("decideUpdate", () => {
 describe("endpoints", () => {
   it("pins both URLs to https: the download goes straight to shell.openExternal", () => {
     expect(UPDATE_FEED_URL.startsWith("https://api.github.com/")).toBe(true);
-    expect(UPDATE_DOWNLOAD_URL).toBe("https://www.capturia.dev/download");
+    expect(UPDATE_DOWNLOAD_URL).toBe("https://github.com/AndresCarreonDiaz/capturia/releases/latest");
   });
 });

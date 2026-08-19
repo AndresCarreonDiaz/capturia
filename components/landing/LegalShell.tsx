@@ -72,8 +72,13 @@ export default function LegalShell({
           <Link href="/terms" className="hover:text-white transition-colors">
             Terms
           </Link>
-          <a href="mailto:capturia@andresio.com" className="hover:text-white transition-colors">
-            capturia@andresio.com
+          <a
+            href="https://github.com/AndresCarreonDiaz/capturia/issues"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-white transition-colors"
+          >
+            GitHub issues
           </a>
         </div>
       </footer>
