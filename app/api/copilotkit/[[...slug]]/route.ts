@@ -18,6 +18,16 @@ import {
   canonicalProvider,
   isNoThinkingModel,
 } from "@/lib/server-keys";
+import {
+  checkDemoGate,
+  clientIpFrom,
+  demoGateFromEnv,
+  demoLimitMessage,
+  memoryGateStore,
+  redisGateStore,
+  type DemoGateStore,
+} from "@/lib/demo-gate";
+import { createRedisRunner, upstashFromEnv } from "@/lib/upstash";
 
 function buildAgent(model: string, apiKey: string | undefined) {
   return new BuiltInAgent({
@@ -46,12 +56,14 @@ function buildAgent(model: string, apiKey: string | undefined) {
 //      caller's own key; nothing is shared across requests. CAPTURIA_MODEL is
 //      honored only when it stays on the provider the user chose, so their key
 //      is never sent to a different provider.
-//   2. Server / dev fallback (no headers): CAPTURIA_MODEL pins an exact spec,
-//      otherwise CAPTURIA_PROVIDER picks the default (gemini, so the public web
-//      demo stays free + fast). The env key is chosen by the MODEL's provider
-//      prefix, not the provider name, so a pinned cross-provider model never
-//      receives the gemini project key. To run dev/self-host on a better model,
-//      set CAPTURIA_PROVIDER=claude (with ANTHROPIC_API_KEY already in your env).
+//   2. Server / dev fallback (no headers): the self-hoster's own env key powers
+//      the request. CAPTURIA_MODEL pins an exact spec, otherwise
+//      CAPTURIA_PROVIDER picks the default (gemini, whose free tier keeps a
+//      self-hosted browser demo free + fast). The env key is chosen by the
+//      MODEL's provider prefix, not the provider name, so a pinned
+//      cross-provider model never receives the gemini env key. To run
+//      dev/self-host on a better model, set CAPTURIA_PROVIDER=claude (with
+//      ANTHROPIC_API_KEY already in your env).
 const runtime = new CopilotRuntime({
   agents: ({ request }) => {
     const byokProvider = request.headers.get("x-capturia-provider");
@@ -88,6 +100,27 @@ const handler = createCopilotRuntimeHandler({
   mode: "single-route",
 });
 
+// Demo spend brake (lib/demo-gate.ts): counters live in the same Upstash the
+// vote rooms use when that env exists (serverless instances share nothing),
+// else best-effort in-process. Module-level so a warm instance reuses it —
+// and so the two misconfigurations that silently weaken the brake warn once
+// at startup instead of never.
+const gateStore: DemoGateStore = (() => {
+  const cfg = upstashFromEnv();
+  const limits = demoGateFromEnv();
+  if (limits && !cfg) {
+    console.warn(
+      "capturia demo gate: no Redis configured, so counters are per-process. On a serverless deploy every instance counts separately and the daily budget is NOT global — set UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN."
+    );
+  }
+  if (limits && limits.ipPerMinute !== null && limits.dailyTotal === null) {
+    console.warn(
+      "capturia demo gate: only CAPTURIA_DEMO_IP_RPM is set. The per-IP limit rides on a spoofable header and is a courtesy throttle, not a spend cap — set CAPTURIA_DEMO_DAILY_REQUESTS for a hard budget."
+    );
+  }
+  return cfg ? redisGateStore(createRedisRunner(cfg)) : memoryGateStore();
+})();
+
 export async function POST(request: Request): Promise<Response> {
   // Fail fast with a readable message when the server has no usable model key,
   // instead of constructing a doomed agent (resolveModel would otherwise throw
@@ -120,6 +153,35 @@ export async function POST(request: Request): Promise<Response> {
     // 503, not 400: a missing server key is a server misconfiguration, not a
     // malformed request. The body names the exact env var to set.
     if (error) return Response.json({ error }, { status: 503 });
+
+    // Demo spend brake, opt-in via CAPTURIA_DEMO_IP_RPM /
+    // CAPTURIA_DEMO_DAILY_REQUESTS: every method that COULD spend the env
+    // key is braked, deliberately including unknown/junk methods the runtime
+    // would 400 (fail-safe against a future runtime adding a spending
+    // method). info and capturia-keycheck returned above; BYOK callers
+    // below spend their own key, never the deployer's.
+    const byok =
+      request.headers.get("x-capturia-provider") &&
+      request.headers.get("x-capturia-key");
+    const gateConfig = demoGateFromEnv();
+    if (!byok && gateConfig) {
+      const verdict = await checkDemoGate({
+        config: gateConfig,
+        store: gateStore,
+        ip: clientIpFrom(request.headers),
+        nowMs: Date.now(),
+        salt: process.env.CAPTURIA_DEMO_SALT,
+      });
+      if (!verdict.allowed) {
+        return Response.json(
+          { error: demoLimitMessage(verdict.reason ?? "ip") },
+          {
+            status: 429,
+            headers: { "retry-after": String(verdict.retryAfterSeconds ?? 60) },
+          }
+        );
+      }
+    }
   }
   return handler(request);
 }

@@ -32,6 +32,24 @@ import { randomToken } from "@/lib/random-id";
 // failed one, each useAgent() call site holds its OWN provisional agent with
 // its own thread; two call sites would then run divergent conversations with
 // inconsistent busy signals.
+// The AG-UI client wraps a non-OK response as `HTTP <status>: <json body>`,
+// which buries the route's human-written { error } messages (the 503 key
+// guard, the 429 demo brake) inside an escaped JSON blob. When that shape is
+// recognizable, show the server's sentence alone; anything else keeps the
+// raw `code: message` for debuggability.
+function readableRunError(code: unknown, message: string): string {
+  const start = message.indexOf("{");
+  if (start !== -1) {
+    try {
+      const body = JSON.parse(message.slice(start)) as { error?: unknown };
+      if (typeof body.error === "string" && body.error) return body.error;
+    } catch {
+      // fall through to the raw message
+    }
+  }
+  return `${String(code)}: ${message}`;
+}
+
 export function useAgentRun() {
   const { agent } = useAgent({ updates: [UseAgentUpdate.OnRunStatusChanged] });
   const { copilotkit } = useCopilotKit();
@@ -40,7 +58,7 @@ export function useAgentRun() {
   useEffect(() => {
     const subscription = copilotkit.subscribe({
       onError: ({ error, code }) => {
-        setRunError(`${String(code)}: ${error?.message ?? "unknown error"}`);
+        setRunError(readableRunError(code, error?.message ?? "unknown error"));
       },
     });
     return () => subscription.unsubscribe();

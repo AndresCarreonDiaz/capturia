@@ -1,0 +1,17 @@
+# Weekly dependency-update PRs, grouped so routine bumps arrive as one
+# reviewable PR instead of twenty. Vulnerability ALERTS are a repository
+# setting (Settings > Advanced Security), not something this file can enable —
+# turn them on there to back SECURITY.md's Dependabot claim.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

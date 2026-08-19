@@ -1,0 +1,35 @@
+# Zero-secret CI: type-check, unit tests, and a production Next build on every
+# push/PR. Installs with --ignore-scripts (electron's binary download and
+# nodejs-whisper's model fetch are packaging concerns, not check concerns; the
+# platform binaries next/tailwind/esbuild need ship as optional deps), then
+# runs the one postinstall step the build really needs (the vendored pdf.js
+# worker). Lint is non-blocking for now: the repo carries known react-hooks
+# findings that predate CI (see the tracked count in eslint output) — tighten
+# to blocking once they are burned down.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: node scripts/copy-pdf-worker.mjs
+      - name: Type-check
+        run: npx tsc --noEmit
+      - name: Unit tests
+        run: npm test
+      - name: Production build
+        run: npm run build
+      - name: Lint (non-blocking)
+        run: npm run lint
+        continue-on-error: true
