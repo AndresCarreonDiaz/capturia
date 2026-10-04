@@ -21,6 +21,12 @@
 // Dependency-injected (keychain, isDev, env) and free of electron requires, so
 // plain Node can start it for smoke tests (scripts/smoke-runtime-server.mjs).
 
+// CopilotKit builds its Scarf telemetry client when @copilotkit/runtime is
+// first required and reads this then, so it is set at load, ahead of the lazy
+// require in startRuntimeServer. The real process.env, not the injected env:
+// that is what the runtime reads. Unconditional, like lib/no-telemetry.ts.
+process.env.COPILOTKIT_TELEMETRY_DISABLED = "1";
+
 const http = require("http");
 const crypto = require("crypto");
 const fs = require("fs");

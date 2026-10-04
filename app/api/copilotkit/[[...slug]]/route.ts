@@ -1,3 +1,6 @@
+// Must stay the first import: it disables CopilotKit telemetry before the
+// runtime module below evaluates (see lib/no-telemetry.ts).
+import "@/lib/no-telemetry";
 import {
   CopilotRuntime,
   createCopilotRuntimeHandler,
@@ -28,6 +31,11 @@ import {
   type DemoGateStore,
 } from "@/lib/demo-gate";
 import { createRedisRunner, upstashFromEnv } from "@/lib/upstash";
+import {
+  MAX_OUTPUT_TOKENS,
+  MAX_RUNTIME_BODY_BYTES,
+  readBodyCapped,
+} from "@/lib/limits";
 
 function buildAgent(model: string, apiKey: string | undefined) {
   return new BuiltInAgent({
@@ -41,6 +49,9 @@ function buildAgent(model: string, apiKey: string | undefined) {
     maxSteps: 1,
     // Lower temp = faster decoding + more deterministic tool selection.
     temperature: 0,
+    // Per-reply spend ceiling (lib/limits.ts). Not client-overridable: no
+    // overridableProperties are set.
+    maxOutputTokens: MAX_OUTPUT_TOKENS,
     // Gemini 2.5 Flash with default thinking returns EMPTY responses against
     // Capturia's system prompt (see isNoThinkingModel in lib/server-keys.ts
     // for the full story and why it is an allowlist).
@@ -122,6 +133,19 @@ const gateStore: DemoGateStore = (() => {
 })();
 
 export async function POST(request: Request): Promise<Response> {
+  // Size cap first, because sniffing the method below buffers the body. It
+  // covers every caller, BYOK included: it protects this server's memory as
+  // well as the operator key. Reads the real body, not a clone, so an
+  // oversized upload is cancelled at the source rather than left buffering in
+  // a tee; the runtime gets a copy rebuilt from the text at the end.
+  const body = await readBodyCapped(request, MAX_RUNTIME_BODY_BYTES);
+  if (body === null) {
+    return Response.json(
+      { error: `Capturia: request body exceeds ${MAX_RUNTIME_BODY_BYTES} bytes.` },
+      { status: 413 }
+    );
+  }
+
   // Fail fast with a readable message when the server has no usable model key,
   // instead of constructing a doomed agent (resolveModel would otherwise throw
   // a cryptic auth error deep in the stream). Two constraints shape this:
@@ -134,7 +158,7 @@ export async function POST(request: Request): Promise<Response> {
   //     factory above exactly (see lib/server-keys.ts).
   let method: unknown;
   try {
-    method = ((await request.clone().json()) as { method?: unknown })?.method;
+    method = (JSON.parse(body) as { method?: unknown })?.method;
   } catch {
     method = undefined; // non-JSON body: let the runtime answer it
   }
@@ -183,5 +207,16 @@ export async function POST(request: Request): Promise<Response> {
       }
     }
   }
-  return handler(request);
+  // Same url, method, headers and abort signal; only the spent body is
+  // replaced. Built from fields, not new Request(request, ...): Next's request
+  // isn't an instance of the global Request, whose constructor then throws on
+  // its private fields.
+  return handler(
+    new Request(request.url, {
+      method: request.method,
+      headers: request.headers,
+      body,
+      signal: request.signal,
+    })
+  );
 }
