@@ -43,7 +43,7 @@
     "@copilotkit/react-ui": "^1.57.1",
     "@copilotkit/runtime": "^1.57.1",
     "ai": "^6.0.177",
-    "next": "16.2.6",
+    "next": "16.3.8",
     "nodejs-whisper": "^0.3.0",
     "pdfjs-dist": "^5.7.284",
     "pptx-text-parser": "^1.1.1",

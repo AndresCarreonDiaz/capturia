@@ -45,6 +45,10 @@ yarn-error.log*
 # vercel
 .vercel
 
+# supabase CLI local state (.temp/ holds linked-project.json, which ties the
+# checkout to whatever project was last linked); this app has no supabase
+/supabase/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
